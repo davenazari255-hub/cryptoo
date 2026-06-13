@@ -180,9 +180,10 @@
     .coin-logo { border-radius:50%; object-fit:cover; flex-shrink:0; background:#1e2130; }
     .coin-fallback { display:flex; align-items:center; justify-content:center; flex-shrink:0; font-weight:600; }
     /* bonus button (futures) */
-    .bonus-btn { width:100%; padding:9px; border-radius:9px; border:0.5px solid #2e3347; background:#181b25; color:#b0b7c9; font-size:12px; cursor:pointer; margin-bottom:10px; display:flex; align-items:center; justify-content:center; gap:6px; }
-    .bonus-btn.active { border-color:#4eeaa0; color:#4eeaa0; background:rgba(78,234,160,0.08); }
-    .bonus-btn i { font-size:15px; }
+    .bonus-btn { width:100%; padding:10px; border-radius:10px; border:0.5px solid #3a4a40; background:linear-gradient(135deg, rgba(78,234,160,0.10), rgba(240,185,11,0.07)); color:#cfe9dd; font-size:12.5px; font-weight:500; cursor:pointer; margin-bottom:10px; display:flex; align-items:center; justify-content:center; gap:7px; transition:all .15s; }
+    .bonus-btn i { font-size:16px; color:#f0b90b; }
+    .bonus-btn.active { border-color:#4eeaa0; color:#0d0e12; background:linear-gradient(135deg, #4eeaa0, #8fe6c0); font-weight:600; }
+    .bonus-btn.active i { color:#0d0e12; }
     /* assets internal tabs */
     .assets-tabs { display:flex; gap:20px; padding:14px 16px 0; border-bottom:0.5px solid #1e2130; overflow-x:auto; }
     .atab { font-size:15px; color:#7a8299; padding-bottom:12px; cursor:pointer; white-space:nowrap; }
@@ -218,6 +219,27 @@
     .bonus-card .lab { font-size:13px; color:#7aa893; margin-bottom:6px; }
     .bonus-card .val { font-size:30px; font-weight:700; color:#4eeaa0; }
     .bonus-card .desc { font-size:11.5px; color:#7a8299; margin-top:10px; line-height:1.5; }
+    /* chart fullscreen */
+    #chartOverlay { position:fixed; inset:0; background:#0d0e12; z-index:300; display:none; flex-direction:column; }
+    .ch-head { display:flex; align-items:center; gap:12px; padding:14px 16px 8px; }
+    .ch-head .bk { font-size:22px; color:#e2e8f0; cursor:pointer; }
+    .ch-head .ttl { font-size:18px; font-weight:700; color:#e2e8f0; flex:1; }
+    .ch-head i.act { color:#7a8299; font-size:20px; cursor:pointer; }
+    .ch-stats { display:grid; grid-template-columns:1.4fr 1fr 1fr; gap:4px 12px; padding:4px 16px 8px; }
+    .ch-last { font-size:27px; font-weight:700; line-height:1.1; }
+    .ch-sub { font-size:12px; color:#7a8299; margin-top:2px; }
+    .ch-kv .k { font-size:11px; color:#7a8299; } .ch-kv .vv { font-size:13px; color:#e2e8f0; margin-top:1px; }
+    .ch-tf { display:flex; gap:4px; padding:8px 12px; border-top:0.5px solid #1e2130; border-bottom:0.5px solid #1e2130; }
+    .ch-tf div { padding:5px 11px; font-size:13px; color:#7a8299; border-radius:7px; cursor:pointer; }
+    .ch-tf div.active { background:#262a38; color:#e2e8f0; font-weight:600; }
+    .ch-canvas-wrap { flex:1; position:relative; overflow:hidden; }
+    .ch-canvas-wrap canvas { display:block; }
+    .ch-loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#4a5068; font-size:13px; }
+    .ch-bottom { display:flex; align-items:center; gap:14px; padding:12px 16px max(12px,env(safe-area-inset-bottom)); border-top:0.5px solid #1e2130; }
+    .ch-tool { display:flex; flex-direction:column; align-items:center; gap:3px; color:#7a8299; font-size:10px; cursor:pointer; }
+    .ch-tool i { font-size:20px; }
+    .ch-open { flex:1; padding:13px; border:none; border-radius:11px; background:#4eeaa0; color:#0d0e12; font-size:15px; font-weight:600; cursor:pointer; }
+    .ch-close { flex:1; padding:13px; border:none; border-radius:11px; background:#ff5a5a; color:#fff; font-size:15px; font-weight:600; cursor:pointer; }
   </style>
 </head>
 <body>
@@ -327,7 +349,7 @@
               <span class="unit" id="spot-amt-unit2">BTC</span>
               <button onclick="stepSpot('amount',1)">+</button>
             </div>
-            <div class="slider" id="spot-slider" onclick="sliderClick(event,'spot')">
+            <div class="slider" id="spot-slider">
               <div class="slider-track"></div><div class="slider-fill" id="spot-slider-fill"></div>
               <div class="slider-dot" style="left:0%"></div><div class="slider-dot" style="left:25%"></div>
               <div class="slider-dot" style="left:50%"></div><div class="slider-dot" style="left:75%"></div>
@@ -365,7 +387,10 @@
             </div>
             <div style="font-size:12px;margin-top:4px;" id="fut-chg-label">--</div>
           </div>
-          <i class="ti ti-chart-candle" style="color:#7a8299;font-size:20px;"></i>
+          <div style="display:flex;align-items:center;gap:14px;color:#7a8299;font-size:20px;">
+            <i class="ti ti-chart-candle" style="cursor:pointer;" onclick="openChart()"></i>
+            <i class="ti ti-dots"></i>
+          </div>
         </div>
         <div style="font-size:11px;color:#7a8299;margin-bottom:12px;">
           Funding/Countdown <span style="color:#4eeaa0;">0.0102%</span> / <span style="color:#e2e8f0;" id="fut-countdown">--:--:--</span>
@@ -409,7 +434,7 @@
               <span class="unit">Cont</span>
               <button onclick="stepFut('amount',1)">+</button>
             </div>
-            <div class="slider" id="fut-slider" onclick="sliderClick(event,'fut')">
+            <div class="slider" id="fut-slider">
               <div class="slider-track"></div><div class="slider-fill" id="fut-slider-fill"></div>
               <div class="slider-dot" style="left:0%"></div><div class="slider-dot" style="left:25%"></div>
               <div class="slider-dot" style="left:50%"></div><div class="slider-dot" style="left:75%"></div>
@@ -466,6 +491,7 @@
   <div class="sheet" id="sheetBody" onclick="event.stopPropagation()"></div>
 </div>
 <div class="toast-wrap" id="toastWrap"></div>
+<div id="chartOverlay"></div>
 
 <script>
   // ─────────────────────────────────────────────
@@ -501,7 +527,7 @@
   const SYM_TO_KEY = {};
   COIN_KEYS.forEach(k => SYM_TO_KEY[COINS[k].binance] = k);
 
-  const FEE = 0.001;
+  const FEE = 0.0001;
   const LS_KEY = 'kolono_state_v3';
   const prices = {}; const prevPx = {};
 
@@ -626,13 +652,20 @@
     const me=document.getElementById(which==='spot'?'spot-mid-price':'fut-mid-price'); if(me){ me.textContent=fmtNum(last,d); me.className='big'+(prices[k]&&prices[k].chg<0?' dn':''); }
     setText(which==='spot'?'spot-mid-usd':'fut-mid-usd','≈ '+fmtUSD(last)); }
 
-  // ── SLIDER ──
-  function snapPct(r){ const s=[0,.25,.5,.75,1]; let b=0,bd=9; s.forEach(x=>{const d=Math.abs(x-r); if(d<bd){bd=d;b=x;}}); return b; }
+  // ── SLIDER (drag + tap) ──
   function setSliderUI(which,pct){ const f=document.getElementById(which+'-slider-fill'),kn=document.getElementById(which+'-slider-knob');
     if(f) f.style.width=(pct*100)+'%'; if(kn) kn.style.left=(pct*100)+'%';
     document.querySelectorAll('#'+which+'-slider .slider-dot').forEach((d,i)=>{ d.classList.toggle('on',(i*0.25)<=pct+1e-6); }); }
-  function sliderClick(e,which){ const el=document.getElementById(which+'-slider'); const r=clamp((e.clientX-el.getBoundingClientRect().left)/el.offsetWidth,0,1); const pct=snapPct(r);
-    setSliderUI(which,pct); if(which==='spot') applySpotPct(pct); else applyFutPct(pct); }
+  function bindSlider(el,onRatio){ if(!el||el._bound) return; el._bound=true; let drag=false;
+    const get=e=>{ const r=el.getBoundingClientRect(); const cx=(e.touches&&e.touches[0]?e.touches[0].clientX:e.clientX); return clamp((cx-r.left)/r.width,0,1); };
+    const start=e=>{ drag=true; onRatio(get(e)); if(e.cancelable) e.preventDefault(); };
+    const move=e=>{ if(drag){ onRatio(get(e)); if(e.cancelable) e.preventDefault(); } };
+    const end=()=>{ drag=false; };
+    if(window.PointerEvent){ el.addEventListener('pointerdown',start); window.addEventListener('pointermove',move); window.addEventListener('pointerup',end); }
+    else { el.addEventListener('touchstart',start,{passive:false}); window.addEventListener('touchmove',move,{passive:false}); window.addEventListener('touchend',end);
+      el.addEventListener('mousedown',start); window.addEventListener('mousemove',move); window.addEventListener('mouseup',end); } }
+  function bindPctSliders(){ bindSlider(document.getElementById('spot-slider'), r=>{ setSliderUI('spot',r); applySpotPct(r); });
+    bindSlider(document.getElementById('fut-slider'), r=>{ setSliderUI('fut',r); applyFutPct(r); }); }
 
   // ── SPOT FORM ──
   function setSpotSide(s){ ui.spotSide=s; document.querySelectorAll('#spot-side-seg > div').forEach(d=>d.classList.remove('active'));
@@ -758,11 +791,11 @@
       return '<div class="pos-card"><div class="pos-top">'+coinLogo(p.pair,24)+'<span class="pos-pair">'+tkr(p.pair)+'USDT Perp</span><span class="pos-mode '+p.side+'">'+p.side.toUpperCase()+' · Cross '+p.lev+'x</span></div>'
         +'<div class="pos-pnlrow"><div><div class="lbl">PNL (USDT)</div><div class="big '+cls+'">'+(u>=0?'+':'')+fmtNum(u,2)+'</div></div><div style="text-align:right;"><div class="lbl">ROE</div><div class="big '+cls+'">'+(roe>=0?'+':'')+roe.toFixed(2)+'%</div></div></div>'
         +'<div class="pos-grid3"><div class="cell"><div class="lbl">Size (Cont)</div><div class="val">'+fmtNum(p.notional,2)+'</div></div>'
-        +'<div class="cell hl"><div class="lbl">Margin (USDT) <span class="addm" onclick="openAddMargin('+p.id+')">⊕</span></div><div class="val">'+fmtNum(p.margin,2)+'</div></div>'
+        +'<div class="cell"><div class="lbl">Margin (USDT) <span class="addm" onclick="openAddMargin('+p.id+')">⊕</span></div><div class="val">'+fmtNum(p.margin,2)+'</div></div>'
         +'<div class="cell rt"><div class="lbl">Risk</div><div class="val '+riskCls+'">'+risk.toFixed(2)+'%</div></div>'
         +'<div class="cell"><div class="lbl">Entry Price</div><div class="val">'+fmtNum(p.entry,dp(p.pair))+'</div></div>'
         +'<div class="cell"><div class="lbl">Mark Price</div><div class="val">'+(mark?fmtNum(mark,dp(p.pair)):'--')+'</div></div>'
-        +'<div class="cell hl rt"><div class="lbl">Liq.Price</div><div class="val pnl-neg">'+fmtNum(liq,dp(p.pair))+'</div></div></div>'
+        +'<div class="cell rt"><div class="lbl">Liq.Price</div><div class="val">'+fmtNum(liq,dp(p.pair))+'</div></div></div>'
         +((p.tp||p.sl)?'<div class="formline" style="margin-bottom:10px;"><span>TP / SL</span><span class="rt">'+(p.tp?fmtNum(p.tp,dp(p.pair)):'—')+' / '+(p.sl?fmtNum(p.sl,dp(p.pair)):'—')+'</span></div>':'')
         +'<div class="pos-btns"><button onclick="openLevSheet()">Adjust Leverage</button><button onclick="openTPSL('+p.id+')">Stop Profit & Loss</button><button class="primary" onclick="closePos('+p.id+',false)">Close Position</button></div></div>'; }).join('');
     wrap.innerHTML=html;
@@ -863,19 +896,20 @@
   function levSection(label,which,val,color){ const pct=(val-1)/124*100;
     return '<div style="font-size:14px;color:#e2e8f0;margin:6px 0 8px;">'+label+'</div>'
       +'<div class="stepper"><button onclick="levStep(\''+which+'\',-1)">−</button><input readonly id="lev-'+which+'-val" value="'+val+' x" style="color:'+color+';font-size:20px;font-weight:700;"><button onclick="levStep(\''+which+'\',1)">+</button></div>'
-      +'<div class="slider lev-slider" id="lev-'+which+'-slider" onclick="levSlider(\''+which+'\',event)" style="margin:12px 6px 6px;"><div class="slider-track"></div><div class="slider-fill" id="lev-'+which+'-fill" style="width:'+pct+'%;background:'+color+';"></div>'
+      +'<div class="slider lev-slider" id="lev-'+which+'-slider" style="margin:12px 6px 6px;"><div class="slider-track"></div><div class="slider-fill" id="lev-'+which+'-fill" style="width:'+pct+'%;background:'+color+';"></div>'
       +LEV_STOPS.map((s,i)=>'<div class="slider-dot" style="left:'+(i*20)+'%"></div>').join('')+'<div class="slider-knob" id="lev-'+which+'-knob" style="left:'+pct+'%;"></div></div>'
       +'<div style="display:flex;justify-content:space-between;font-size:10px;color:#7a8299;margin:0 2px 4px;">'+LEV_STOPS.map(s=>'<span>'+s+'x</span>').join('')+'</div>'
       +'<div style="font-size:11px;color:#7a8299;margin-bottom:16px;">Highest leverage supported: <span id="lev-'+which+'-max">'+Math.floor((state.balances.USDT||0)*val)+'</span> Cont</div>'; }
   function openLevSheet(){ ui.tmpLL=ui.levLong; ui.tmpLS=ui.levShort;
     openSheet(sheetHead('Adjust leverage')+levSection('Long','ll',ui.tmpLL,'#4eeaa0')+levSection('Short','ls',ui.tmpLS,'#ff5a5a')
       +'<div class="warn">Choosing a higher leverage increases the risk of forced liquidation, please pay attention to the risk of the position.</div>'
-      +'<button class="buy-btn" onclick="confirmLev()">Confirm</button>'); }
+      +'<button class="buy-btn" onclick="confirmLev()">Confirm</button>');
+    bindSlider(document.getElementById('lev-ll-slider'), r=>setLevVal('ll',Math.round(1+r*124)));
+    bindSlider(document.getElementById('lev-ls-slider'), r=>setLevVal('ls',Math.round(1+r*124))); }
   function setLevVal(which,cur){ cur=clamp(cur,1,125); if(which==='ll') ui.tmpLL=cur; else ui.tmpLS=cur;
     setV('lev-'+which+'-val',cur+' x'); const pct=(cur-1)/124*100; const f=document.getElementById('lev-'+which+'-fill'),kn=document.getElementById('lev-'+which+'-knob');
     if(f) f.style.width=pct+'%'; if(kn) kn.style.left=pct+'%'; setText('lev-'+which+'-max',Math.floor((state.balances.USDT||0)*cur)); }
   function levStep(which,dir){ setLevVal(which,(which==='ll'?ui.tmpLL:ui.tmpLS)+dir); }
-  function levSlider(which,e){ const el=document.getElementById('lev-'+which+'-slider'); const r=clamp((e.clientX-el.getBoundingClientRect().left)/el.offsetWidth,0,1); setLevVal(which,Math.round(1+r*124)); }
   function confirmLev(){ ui.levLong=ui.tmpLL; ui.levShort=ui.tmpLS; setText('fut-lev-long',ui.levLong+'x'); setText('fut-lev-short',ui.levShort+'x'); closeSheet(); updateFutInfo(); toast('Leverage updated · L '+ui.levLong+'x / S '+ui.levShort+'x','ok'); }
 
   // ── Add Margin / TP-SL ──
@@ -915,7 +949,8 @@
     if(k===ui.futPair){ renderFutHead(); renderOB('fut'); if(ui.futType==='Market') setV('fut-price',p.toFixed(dp(k))); }
     matchOrders(k,p); checkLiquidations(k,p); renderHomeTotals(); renderFutPositions();
     if(document.getElementById('page-assets').classList.contains('active')) renderAssets();
-    if(document.getElementById('sheetOverlay').classList.contains('open') && document.getElementById('pair-list')) renderPairList(); }
+    if(document.getElementById('sheetOverlay').classList.contains('open') && document.getElementById('pair-list')) renderPairList();
+    if(chartOpen() && SYM_TO_KEY[chartSym.toLowerCase()]===k && chartKl && chartKl.length){ const c=chartKl[chartKl.length-1]; c[4]=String(p); if(p>+c[2]) c[2]=String(p); if(p<+c[3]) c[3]=String(p); drawChart(); updateChartStats(); } }
 
   function renderAll(){ renderHomeTotals(); renderMarket(); renderSpotHead(); renderOB('spot'); renderSpotOrders(); recalcSpotLinked('amount'); updateSpotInfo(); if(ui.spotSub==='hold') renderHolding();
     renderFutHead(); renderOB('fut'); renderFutPositions(); updateFutInfo(); renderAssets(); }
@@ -925,6 +960,45 @@
     el.textContent=String(Math.floor(r/3600)).padStart(2,'0')+':'+String(Math.floor(r%3600/60)).padStart(2,'0')+':'+String(r%60).padStart(2,'0'); } tick(); setInterval(tick,1000); }
 
   const dot=document.getElementById('wsDot');
+
+  // ── CHART (candlesticks from Binance klines) ──
+  let chartKl=null, chartSym='';
+  function chartOpen(){ return document.getElementById('chartOverlay').style.display==='flex'; }
+  function openChart(){ if(!ui.chartTf) ui.chartTf='15m'; const k=ui.futPair; const ov=document.getElementById('chartOverlay'); ov.style.display='flex';
+    ov.innerHTML='<div class="ch-head"><i class="ti ti-chevron-left bk" onclick="closeChart()"></i><span class="ttl">'+tkr(k)+'USDT Perp</span><i class="ti ti-star act"></i><i class="ti ti-share act"></i></div>'
+      +'<div class="ch-stats"><div><div class="ch-last" id="ch-last">--</div><div class="ch-sub" id="ch-sub">Mark --</div></div>'
+      +'<div class="ch-kv"><div class="k">High</div><div class="vv" id="ch-high">--</div></div>'
+      +'<div class="ch-kv"><div class="k">Low</div><div class="vv" id="ch-low">--</div><div class="k" style="margin-top:6px;">24h Vol</div><div class="vv" id="ch-vol">--</div></div></div>'
+      +'<div class="ch-tf">'+['Time','15m','1h','4h','1d'].map(t=>'<div class="'+(t===ui.chartTf?'active':'')+'" data-tf="'+t+'" onclick="setChartTf(\''+t+'\')">'+t+'</div>').join('')+'</div>'
+      +'<div class="ch-canvas-wrap"><canvas id="chCanvas"></canvas><div class="ch-loading" id="ch-loading">Loading chart…</div></div>'
+      +'<div class="ch-bottom"><div class="ch-tool"><i class="ti ti-settings"></i>Settings</div><div class="ch-tool"><i class="ti ti-bell"></i>Alert</div><div class="ch-tool" onclick="closeChart();goPage(\'trade\')"><i class="ti ti-coin"></i>Spot</div>'
+      +'<button class="ch-open" onclick="chartAction(\'open\')">Open</button><button class="ch-close" onclick="chartAction(\'close\')">Close</button></div>';
+    loadChart(); }
+  function closeChart(){ document.getElementById('chartOverlay').style.display='none'; chartKl=null; }
+  function chartAction(m){ closeChart(); switchPage('futures',null); setFutMode(m); }
+  function setChartTf(tf){ ui.chartTf=tf; document.querySelectorAll('.ch-tf div').forEach(d=>d.classList.toggle('active',d.getAttribute('data-tf')===tf)); loadChart(); }
+  function loadChart(){ const k=ui.futPair; chartSym=(tkr(k)+'USDT'); const intv=ui.chartTf==='Time'?'1m':ui.chartTf; const ld=document.getElementById('ch-loading'); if(ld){ ld.style.display='flex'; ld.textContent='Loading chart…'; }
+    fetch('https://api.binance.com/api/v3/klines?symbol='+chartSym+'&interval='+intv+'&limit=120').then(r=>r.json()).then(d=>{ if(!Array.isArray(d)) throw 0; chartKl=d; if(ld) ld.style.display='none'; requestAnimationFrame(()=>{ drawChart(); updateChartStats(); }); }).catch(()=>{ if(ld) ld.textContent='Chart unavailable'; }); }
+  function updateChartStats(){ if(!chartKl||!chartKl.length) return; const k=ui.futPair,n=chartKl.length,last=+chartKl[n-1][4]; let hi=-Infinity,lo=Infinity,vol=0; chartKl.forEach(c=>{ hi=Math.max(hi,+c[2]); lo=Math.min(lo,+c[3]); vol+=+c[5]; });
+    const chg=prices[k]?prices[k].chg:0,col=chg>=0?'#4eeaa0':'#ff5a5a'; const le=document.getElementById('ch-last'); if(le){ le.textContent=fmtNum(last,dp(k)); le.style.color=col; }
+    setText('ch-sub','≈ '+fmtUSD(last)+'  '+(chg>=0?'+':'')+chg.toFixed(2)+'%'); setText('ch-high',fmtNum(hi,dp(k))); setText('ch-low',fmtNum(lo,dp(k)));
+    setText('ch-vol',(vol>=1e6?(vol/1e6).toFixed(2)+'M':vol>=1e3?(vol/1e3).toFixed(2)+'K':vol.toFixed(1))); }
+  function sma(arr,p){ const out=[]; for(let i=0;i<arr.length;i++){ if(i<p-1){out.push(null);continue;} let s=0; for(let j=0;j<p;j++) s+=arr[i-j]; out.push(s/p);} return out; }
+  function drawChart(){ const cv=document.getElementById('chCanvas'); if(!cv||!chartKl) return; const wrap=cv.parentElement,dpr=window.devicePixelRatio||1,W=wrap.clientWidth,H=wrap.clientHeight; if(!W||!H) return;
+    cv.width=W*dpr; cv.height=H*dpr; cv.style.width=W+'px'; cv.style.height=H+'px'; const ctx=cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,W,H);
+    const kl=chartKl,n=kl.length,o=kl.map(c=>+c[1]),hi=kl.map(c=>+c[2]),lo=kl.map(c=>+c[3]),cl=kl.map(c=>+c[4]),vol=kl.map(c=>+c[5]);
+    const padR=58,plotW=W-padR,priceH=H*0.70,volTop=priceH+10,volH=H-volTop-16,d=dp(ui.futPair);
+    let mn=Math.min.apply(null,lo),mx=Math.max.apply(null,hi); const pd=(mx-mn)*0.08||1; mn-=pd; mx+=pd; const yOf=p=>priceH*(1-(p-mn)/(mx-mn)); const xw=plotW/n,bw=Math.max(1.5,xw*0.62);
+    ctx.font='10px -apple-system,sans-serif'; ctx.textAlign='left'; ctx.strokeStyle='#15171f';
+    for(let i=0;i<=4;i++){ const y=priceH*i/4; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(plotW,y); ctx.stroke(); ctx.fillStyle='#5a607a'; ctx.fillText(fmtNum(mx-(mx-mn)*i/4,d),plotW+4,y+10); }
+    for(let i=0;i<n;i++){ const x=i*xw+xw/2,up=cl[i]>=o[i]; ctx.strokeStyle=ctx.fillStyle=up?'#4eeaa0':'#ff5a5a'; ctx.beginPath(); ctx.moveTo(x,yOf(hi[i])); ctx.lineTo(x,yOf(lo[i])); ctx.stroke(); const yo=yOf(o[i]),yc=yOf(cl[i]); let hh=Math.abs(yc-yo); if(hh<1.2) hh=1.2; ctx.fillRect(x-bw/2,Math.min(yo,yc),bw,hh); }
+    [[5,'#f0b90b'],[10,'#b06ef0'],[30,'#5d7df5']].forEach(pc=>{ const m=sma(cl,pc[0]); ctx.strokeStyle=pc[1]; ctx.lineWidth=1.2; ctx.beginPath(); let st=false; for(let i=0;i<n;i++){ if(m[i]==null) continue; const x=i*xw+xw/2,y=yOf(m[i]); if(!st){ctx.moveTo(x,y);st=true;} else ctx.lineTo(x,y);} ctx.stroke(); }); ctx.lineWidth=1;
+    const vmax=Math.max.apply(null,vol)||1; for(let i=0;i<n;i++){ const x=i*xw+xw/2,up=cl[i]>=o[i]; ctx.fillStyle=up?'rgba(78,234,160,0.45)':'rgba(255,90,90,0.45)'; const vh=volH*(vol[i]/vmax); ctx.fillRect(x-bw/2,volTop+volH-vh,bw,vh); }
+    const last=cl[n-1],ly=yOf(last),up=cl[n-1]>=o[n-1]; ctx.strokeStyle=up?'#4eeaa0':'#ff5a5a'; ctx.setLineDash([4,3]); ctx.beginPath(); ctx.moveTo(0,ly); ctx.lineTo(plotW,ly); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle=up?'#4eeaa0':'#ff5a5a'; ctx.fillRect(plotW,ly-8,padR,16); ctx.fillStyle='#0d0e12'; ctx.fillText(fmtNum(last,d),plotW+4,ly+3);
+    const m5=sma(cl,5)[n-1],m10=sma(cl,10)[n-1],m30=sma(cl,30)[n-1]; ctx.font='11px -apple-system,sans-serif';
+    ctx.fillStyle='#f0b90b'; ctx.fillText('MA5 '+(m5?fmtNum(m5,d):'--'),4,14); ctx.fillStyle='#b06ef0'; ctx.fillText('MA10 '+(m10?fmtNum(m10,d):'--'),W*0.34,14); ctx.fillStyle='#5d7df5'; ctx.fillText('MA30 '+(m30?fmtNum(m30,d):'--'),W*0.66,14); }
+
   function connectWS(){ const streams=COIN_KEYS.map(k=>COINS[k].binance+'@ticker').join('/'); let ws;
     try{ ws=new WebSocket('wss://stream.binance.com:9443/stream?streams='+streams); }catch{ setTimeout(connectWS,3000); return; }
     ws.onopen=()=>dot.classList.add('connected'); ws.onclose=()=>{ dot.classList.remove('connected'); setTimeout(connectWS,3000); }; ws.onerror=()=>{ try{ws.close();}catch{} };
@@ -934,7 +1008,7 @@
     const u=tg.initDataUnsafe&&tg.initDataUnsafe.user; if(u){ setText('hUserName',u.first_name||u.username||'Trader'); const av=document.getElementById('hUserAvatar'); if(u.photo_url) av.innerHTML='<img src="'+u.photo_url+'">'; else av.textContent=(u.first_name||'K').charAt(0).toUpperCase(); } } }
 
   // boot
-  initTelegram(); buildHomeList(); setFutTab('pos'); setSpotSub('orders'); setAssetTab('overview'); setBonusBtn(); regenOB(); setInterval(regenOB,1500); renderAll(); startCountdown(); connectWS();
+  initTelegram(); buildHomeList(); setFutTab('pos'); setSpotSub('orders'); setAssetTab('overview'); setBonusBtn(); bindPctSliders(); regenOB(); setInterval(regenOB,1500); renderAll(); startCountdown(); connectWS();
 </script>
 </body>
 </html>
