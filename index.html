@@ -939,7 +939,7 @@
 
   // ── SHEETS ──
   function openSheet(html){ document.getElementById('sheetBody').innerHTML=html; document.getElementById('sheetOverlay').classList.add('open'); }
-  function closeSheet(e){ document.getElementById('sheetOverlay').classList.remove('open'); }
+  function closeSheet(e){ document.getElementById('sheetOverlay').classList.remove('open'); if(typeof depPoll!=='undefined'&&depPoll){ clearInterval(depPoll); depPoll=null; } }
   function sheetHead(title){ return '<div class="sheet-handle"></div><div class="sheet-titlebar"><div class="sheet-title">'+title+'</div><i class="ti ti-x sheet-x" onclick="closeSheet()"></i></div>'; }
 
   // pair selector (futures-style with search + favorites)
@@ -1010,11 +1010,74 @@
     p.tp=tp>0?tp:null; p.sl=sl>0?sl:null; save(); closeSheet(); toast('TP/SL updated','ok'); renderFutPositions(); }
 
   // ── Deposit / Withdraw ──
-  function openDeposit(){ openSheet(sheetHead('Deposit USDT (Demo)')+'<div style="font-size:12px;color:#7a8299;margin-bottom:10px;">Demo faucet — adds simulated USDT.</div>'
-    +'<div class="input-row"><input id="dep-amt" inputmode="decimal" placeholder="Amount" value="1000"><span class="u">USDT</span></div>'
-    +'<div class="quick-row"><div class="quick-btn" onclick="setV(\'dep-amt\',1000)">1,000</div><div class="quick-btn" onclick="setV(\'dep-amt\',5000)">5,000</div><div class="quick-btn" onclick="setV(\'dep-amt\',10000)">10,000</div></div>'
-    +'<button class="buy-btn" onclick="doDeposit()">Deposit</button>'); }
-  function doDeposit(){ const a=parseFloat(v('dep-amt'))||0; if(a<=0){ toast('Enter amount','err'); return; } state.balances.USDT+=a; state.flags.deposited=true; addTx({type:'Deposit',sub:'Demo faucet',value:a,sign:'+',coin:'USDT',isUSDT:true}); save(); closeSheet(); toast('Deposited '+fmtNum(a,2)+' USDT','ok'); renderAll(); }
+  // ── Deposit (NOWPayments — real on-chain deposits) ──
+  const DEPOSIT_COINS = [
+    {t:'btc',       sym:'BTC',  name:'Bitcoin', net:'Bitcoin'},
+    {t:'eth',       sym:'ETH',  name:'Ethereum',net:'ERC20'},
+    {t:'usdttrc20', sym:'USDT', name:'Tether',  net:'TRC20'},
+    {t:'usdterc20', sym:'USDT', name:'Tether',  net:'ERC20'},
+    {t:'bnbbsc',    sym:'BNB',  name:'BNB',     net:'BSC'},
+    {t:'sol',       sym:'SOL',  name:'Solana',  net:'Solana'},
+    {t:'trx',       sym:'TRX',  name:'TRON',    net:'TRON'},
+    {t:'ton',       sym:'TON',  name:'Toncoin', net:'TON'},
+  ];
+  let depPoll=null;
+  function getUserId(){
+    try{ const u=window.Telegram&&Telegram.WebApp&&Telegram.WebApp.initDataUnsafe&&Telegram.WebApp.initDataUnsafe.user; if(u&&u.id) return 'tg_'+u.id; }catch{}
+    try{ let g=localStorage.getItem('kolono_uid'); if(!g){ g='guest_'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); localStorage.setItem('kolono_uid',g); } return g; }catch{}
+    return 'guest_anon';
+  }
+  function escAttr(s){ return String(s).replace(/'/g,'&#39;').replace(/"/g,'&quot;'); }
+  function copyText(t){ const done=()=>toast('Copied','ok');
+    try{ if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(done,()=>fallbackCopy(t)); return; } }catch{}
+    fallbackCopy(t); }
+  function fallbackCopy(t){ try{ const ta=document.createElement('textarea'); ta.value=t; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.focus(); ta.select(); document.execCommand('copy'); ta.remove(); toast('Copied','ok'); }catch{ toast('Copy failed','err'); } }
+
+  function openDeposit(){ if(depPoll){ clearInterval(depPoll); depPoll=null; }
+    const opts=DEPOSIT_COINS.map((c,i)=>'<option value="'+i+'">'+c.sym+' · '+c.net+'</option>').join('');
+    openSheet(sheetHead('Deposit Crypto')
+    +'<div style="font-size:12px;color:#7a8299;margin-bottom:10px;">Pick a coin and amount. A dedicated deposit address is generated for you and credited automatically once received.</div>'
+    +'<div class="input-row"><span class="lab">Coin</span><select id="dep-cur" style="flex:1;background:none;border:none;color:#e2e8f0;font-size:14px;outline:none;">'+opts+'</select></div>'
+    +'<div class="input-row"><input id="dep-amt" inputmode="decimal" placeholder="Amount" value="50"><span class="u">USD</span></div>'
+    +'<div class="quick-row"><div class="quick-btn" onclick="setV(\'dep-amt\',50)">50</div><div class="quick-btn" onclick="setV(\'dep-amt\',100)">100</div><div class="quick-btn" onclick="setV(\'dep-amt\',500)">500</div></div>'
+    +'<button class="buy-btn" id="dep-gen" onclick="genDeposit()">Get Deposit Address</button>'); }
+
+  async function genDeposit(){ const idx=parseInt(v('dep-cur'),10)||0; const coin=DEPOSIT_COINS[idx]||DEPOSIT_COINS[0];
+    const amt=parseFloat(v('dep-amt'))||0; if(amt<=0){ toast('Enter amount','err'); return; }
+    const btn=document.getElementById('dep-gen'); if(btn){ btn.disabled=true; btn.textContent='Generating…'; }
+    try{ const r=await fetch('/api/get-deposit-address',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ currency:coin.t, amount:amt, userId:getUserId() }) });
+      const data=await r.json();
+      if(!r.ok){ toast(data.error||'Could not create deposit','err'); if(btn){ btn.disabled=false; btn.textContent='Get Deposit Address'; } return; }
+      showDepositAddress(coin, amt, data);
+    }catch(e){ toast('Network error','err'); if(btn){ btn.disabled=false; btn.textContent='Get Deposit Address'; } } }
+
+  function showDepositAddress(coin, usd, d){
+    const qr='https://api.qrserver.com/v1/create-qr-code/?size=190x190&margin=0&data='+encodeURIComponent(d.address);
+    const addr=escAttr(d.address);
+    const extra = d.payinExtraId ? '<div class="input-row" style="margin-top:6px;"><span class="lab">Memo/Tag</span><input readonly value="'+escAttr(d.payinExtraId)+'" style="flex:1;background:none;border:none;color:#ffc24e;font-size:13px;outline:none;"><i class="ti ti-copy" style="color:#4eeaa0;cursor:pointer;" onclick="copyText(\''+escAttr(d.payinExtraId)+'\')"></i></div>' : '';
+    openSheet(sheetHead('Deposit '+coin.sym)
+    +'<div style="text-align:center;margin:4px 0 12px;"><div style="background:#fff;border-radius:12px;padding:10px;display:inline-block;"><img src="'+qr+'" alt="QR" style="width:170px;height:170px;display:block;"></div></div>'
+    +'<div style="text-align:center;font-size:12px;color:#7a8299;">Send exactly</div>'
+    +'<div style="text-align:center;font-size:20px;font-weight:700;color:#4eeaa0;margin:2px 0 10px;">'+d.payAmount+' '+d.payCurrency+'</div>'
+    +'<div style="font-size:11px;color:#7a8299;margin-bottom:4px;">'+coin.name+' · '+coin.net+' network</div>'
+    +'<div class="input-row"><input readonly value="'+addr+'" style="flex:1;background:none;border:none;color:#e2e8f0;font-size:12px;outline:none;"><i class="ti ti-copy" style="color:#4eeaa0;cursor:pointer;" onclick="copyText(\''+addr+'\')"></i></div>'
+    +extra
+    +'<div style="font-size:11px;color:#ffae4e;margin:8px 0;line-height:1.5;">⚠ Send only '+coin.sym+' over the '+coin.net+' network. Sending another coin or network may cause permanent loss.</div>'
+    +'<div id="dep-status" style="text-align:center;font-size:13px;color:#7a8299;padding:8px 0;">⏳ Waiting for payment…</div>');
+    startDepositPoll(d.paymentId, usd); }
+
+  function startDepositPoll(paymentId, usd){ if(depPoll){ clearInterval(depPoll); depPoll=null; } let credited=false;
+    const MAP={ waiting:'⏳ Waiting for payment…', confirming:'🔄 Confirming on-chain…', confirmed:'🔄 Confirmed, processing…', sending:'🔄 Crediting…', partially_paid:'⚠ Partially paid…', finished:'✅ Payment received!', failed:'❌ Payment failed', refunded:'↩ Refunded', expired:'⌛ Payment expired' };
+    const check=async()=>{ const el=document.getElementById('dep-status'); if(!el){ if(depPoll){ clearInterval(depPoll); depPoll=null; } return; }
+      try{ const r=await fetch('/api/check-payment?paymentId='+encodeURIComponent(paymentId)); const d=await r.json(); if(!r.ok) return;
+        const st=d.status; el.textContent=MAP[st]||st;
+        if(st==='finished' && !credited){ credited=true; if(depPoll){ clearInterval(depPoll); depPoll=null; }
+          const usdCredit=parseFloat(d.priceAmount)||usd; state.balances.USDT+=usdCredit; state.flags.deposited=true;
+          addTx({type:'Deposit',sub:'NOWPayments '+String(d.payCurrency||'').toUpperCase(),value:usdCredit,sign:'+',coin:'USDT',isUSDT:true});
+          save(); renderAll(); el.style.color='#4eeaa0'; toast('Deposit credited: '+fmtNum(usdCredit,2)+' USDT','ok');
+        } else if(st==='failed'||st==='refunded'||st==='expired'){ if(depPoll){ clearInterval(depPoll); depPoll=null; } el.style.color='#ff5a5a'; }
+      }catch(e){} };
+    check(); depPoll=setInterval(check, 15000); }
   function openWithdraw(){ openSheet(sheetHead('Withdraw USDT (Demo)')+'<div style="font-size:12px;color:#7a8299;margin-bottom:10px;">Available: '+fmtNum(state.balances.USDT||0,2)+' USDT</div>'
     +'<div class="input-row"><input id="wd-amt" inputmode="decimal" placeholder="Amount"><span class="u">USDT</span></div>'
     +'<button class="buy-btn" style="margin-top:8px;" onclick="doWithdraw()">Withdraw</button>'); }
