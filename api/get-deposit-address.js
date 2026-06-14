@@ -59,6 +59,6 @@ export default async function handler(req, res) {
       network: data.network || null,
     });
   } catch (err) {
-    return res.status(500).json({ error: 'Server error contacting NOWPayments' });
+    return res.status(500).json({ error: 'Server error: ' + ((err && err.message) || 'unknown') });
   }
 }

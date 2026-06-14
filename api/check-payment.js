@@ -38,6 +38,6 @@ export default async function handler(req, res) {
       outcomeAmount: data.outcome_amount,
     });
   } catch (err) {
-    return res.status(500).json({ error: 'Server error contacting NOWPayments' });
+    return res.status(500).json({ error: 'Server error: ' + ((err && err.message) || 'unknown') });
   }
 }
