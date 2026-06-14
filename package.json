@@ -1,0 +1,7 @@
+{
+  "name": "kolonoex",
+  "private": true,
+  "engines": {
+    "node": "20.x"
+  }
+}

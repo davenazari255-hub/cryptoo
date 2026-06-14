@@ -1045,11 +1045,14 @@
   async function genDeposit(){ const idx=parseInt(v('dep-cur'),10)||0; const coin=DEPOSIT_COINS[idx]||DEPOSIT_COINS[0];
     const amt=parseFloat(v('dep-amt'))||0; if(amt<=0){ toast('Enter amount','err'); return; }
     const btn=document.getElementById('dep-gen'); if(btn){ btn.disabled=true; btn.textContent='Generating…'; }
-    try{ const r=await fetch('/api/get-deposit-address',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ currency:coin.t, amount:amt, userId:getUserId() }) });
-      const data=await r.json();
-      if(!r.ok){ toast(data.error||'Could not create deposit','err'); if(btn){ btn.disabled=false; btn.textContent='Get Deposit Address'; } return; }
-      showDepositAddress(coin, amt, data);
-    }catch(e){ toast('Network error','err'); if(btn){ btn.disabled=false; btn.textContent='Get Deposit Address'; } } }
+    const reset=()=>{ if(btn){ btn.disabled=false; btn.textContent='Get Deposit Address'; } };
+    let r;
+    try{ r=await fetch('/api/get-deposit-address',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ currency:coin.t, amount:amt, userId:getUserId() }) }); }
+    catch(e){ console.error('deposit fetch failed:',e); toast('Cannot reach /api — is the site running on Vercel?','err'); reset(); return; }
+    let text='', data=null;
+    try{ text=await r.text(); data=JSON.parse(text); }catch(e){ /* non-JSON response */ }
+    if(!r.ok || !data){ console.error('deposit response',r.status,text); toast((data&&data.error)||('Server error '+r.status),'err'); reset(); return; }
+    showDepositAddress(coin, amt, data); }
 
   function showDepositAddress(coin, usd, d){
     const qr='https://api.qrserver.com/v1/create-qr-code/?size=190x190&margin=0&data='+encodeURIComponent(d.address);
