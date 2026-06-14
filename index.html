@@ -219,6 +219,23 @@
     .bonus-card .lab { font-size:13px; color:#7aa893; margin-bottom:6px; }
     .bonus-card .val { font-size:30px; font-weight:700; color:#4eeaa0; }
     .bonus-card .desc { font-size:11.5px; color:#7a8299; margin-top:10px; line-height:1.5; }
+    /* home tasks */
+    .task-card { display:flex; align-items:center; gap:12px; background:#181b25; border-radius:12px; padding:12px; margin-bottom:9px; }
+    .task-ic { width:38px; height:38px; border-radius:10px; background:#0d0e12; display:flex; align-items:center; justify-content:center; font-size:19px; color:#4eeaa0; flex-shrink:0; }
+    .task-info { flex:1; min-width:0; }
+    .task-info .t { font-size:13px; font-weight:600; color:#e2e8f0; }
+    .task-info .s { font-size:11px; color:#7a8299; margin-top:2px; }
+    .task-reward { font-size:11px; color:#f0b90b; margin-top:3px; }
+    .task-btn { padding:7px 15px; border-radius:8px; font-size:12px; font-weight:600; border:none; cursor:pointer; flex-shrink:0; }
+    .task-btn.claim { background:#4eeaa0; color:#0d0e12; }
+    .task-btn.go { background:#262a38; color:#e2e8f0; }
+    .task-btn.done { background:transparent; color:#4eeaa0; border:0.5px solid #2e4a3a; }
+    /* transfer sheet */
+    .tf-card { background:#181b25; border-radius:12px; padding:2px 14px; margin-bottom:14px; position:relative; }
+    .tf-line { display:flex; justify-content:space-between; align-items:center; padding:13px 0; }
+    .tf-line+.tf-line { border-top:0.5px solid #1e2130; }
+    .tf-line .k { color:#7a8299; font-size:13px; } .tf-line .acc { color:#e2e8f0; font-size:14px; font-weight:500; }
+    .tf-swap { position:absolute; right:18px; top:50%; transform:translateY(-50%); width:34px; height:34px; border-radius:50%; background:#262a38; display:flex; align-items:center; justify-content:center; color:#4eeaa0; cursor:pointer; }
     /* chart fullscreen */
     #chartOverlay { position:fixed; inset:0; background:#0d0e12; z-index:300; display:none; flex-direction:column; }
     .ch-head { display:flex; align-items:center; gap:12px; padding:14px 16px 8px; }
@@ -275,7 +292,8 @@
             <button class="btn btn-outline" onclick="goPage('trade')">Trade</button>
           </div>
         </div>
-        <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+        <div id="home-tasks"></div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px;margin-top:18px;">
           <div style="display:flex;gap:16px;">
             <span style="font-size:13px;font-weight:500;color:#e2e8f0;border-bottom:2px solid #4eeaa0;padding-bottom:4px;">Popular</span>
             <span style="font-size:13px;color:#7a8299;cursor:pointer;" onclick="goPage('market')">Markets ›</span>
@@ -388,7 +406,14 @@
             <div style="font-size:12px;margin-top:4px;" id="fut-chg-label">--</div>
           </div>
           <div style="display:flex;align-items:center;gap:14px;color:#7a8299;font-size:20px;">
-            <i class="ti ti-chart-candle" style="cursor:pointer;" onclick="openChart()"></i>
+            <span onclick="openChart()" style="cursor:pointer;display:inline-flex;align-items:center;">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                <line x1="7.5" y1="3.5" x2="7.5" y2="20.5" stroke="#7a8299" stroke-width="1.6" stroke-linecap="round"/>
+                <rect x="5" y="7.5" width="5" height="9" rx="1.2" fill="#7a8299"/>
+                <line x1="16.5" y1="5.5" x2="16.5" y2="18.5" stroke="#7a8299" stroke-width="1.6" stroke-linecap="round"/>
+                <rect x="14" y="9.5" width="5" height="6.5" rx="1.2" fill="#7a8299"/>
+              </svg>
+            </span>
             <i class="ti ti-dots"></i>
           </div>
         </div>
@@ -528,14 +553,14 @@
   COIN_KEYS.forEach(k => SYM_TO_KEY[COINS[k].binance] = k);
 
   const FEE = 0.0001;
-  const LS_KEY = 'kolono_state_v3';
+  const LS_KEY = 'kolono_state_v4';
   const prices = {}; const prevPx = {};
 
   function defaultState(){ const balances={USDT:0}, cost={}; COIN_KEYS.forEach(k=>{balances[k]=0;cost[k]=0;});
-    return { balances, cost, openOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:50, snap:{day:'',equity:0}, nextId:1 }; }
+    return { balances, cost, futUSDT:0, openOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:50, bonusPrincipal:50, flags:{deposited:false,traded:false,futured:false}, taskClaimed:{}, snap:{day:'',equity:0}, nextId:1 }; }
   function loadState(){ try{ const raw=localStorage.getItem(LS_KEY); if(!raw) return defaultState();
       const s=JSON.parse(raw); const d=defaultState();
-      return Object.assign(d,s,{ balances:Object.assign(d.balances,s.balances||{}), cost:Object.assign(d.cost,s.cost||{}), snap:Object.assign(d.snap,s.snap||{}) });
+      return Object.assign(d,s,{ balances:Object.assign(d.balances,s.balances||{}), cost:Object.assign(d.cost,s.cost||{}), snap:Object.assign(d.snap,s.snap||{}), flags:Object.assign(d.flags,s.flags||{}), taskClaimed:Object.assign(d.taskClaimed,s.taskClaimed||{}) });
     }catch{ return defaultState(); } }
   let state = loadState();
   function save(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch{} }
@@ -543,7 +568,16 @@
 
   const ui = { spotPair:'BTC', futPair:'BTC', spotType:'Limit', futType:'Limit', spotSide:'buy', futMode:'open',
     levLong:125, levShort:125, tmpLL:125, tmpLS:125, spotSub:'orders', futTab:'pos', hideOther:false,
-    pairCtx:'spot', pairTab:'all', pairQuery:'', useBonus:false, assetTab:'overview', distSub:'dist', hideZero:false, spotAQ:'' };
+    pairCtx:'spot', pairTab:'all', pairQuery:'', useBonus:false, assetTab:'overview', distSub:'dist', hideZero:false, spotAQ:'',
+    tfFrom:'spot', tfTo:'futures', bonusDest:'spot', chartTf:'15m' };
+
+  // ── Home tasks (complete → bonus) ──
+  const TASKS=[
+    {id:'welcome',  icon:'ti-gift',             title:'Welcome Bonus',     desc:'Sign in to KolonoEX',             reward:10, cond:()=>true,                  go:'home'},
+    {id:'deposit',  icon:'ti-wallet',           title:'First Deposit',     desc:'Deposit any amount to your wallet',reward:5,  cond:()=>!!state.flags.deposited, go:'assets'},
+    {id:'spot',     icon:'ti-arrows-exchange',  title:'First Spot Trade',  desc:'Complete a spot buy or sell',      reward:5,  cond:()=>!!state.flags.traded,    go:'trade'},
+    {id:'futures',  icon:'ti-trending-up',      title:'First Futures Trade',desc:'Open a futures position',         reward:10, cond:()=>!!state.flags.futured,   go:'futures'},
+  ];
 
   // helpers
   function v(id){ const e=document.getElementById(id); return e?e.value:''; }
@@ -601,7 +635,8 @@
     let r=p.side==='long'?(p.entry-m)/(p.entry-liq):(m-p.entry)/(liq-p.entry); return clamp(r,0,1)*100; }
 
   function spotEquity(){ let t=state.balances.USDT||0; COIN_KEYS.forEach(k=>{ const p=px(k); if(p) t+=(state.balances[k]||0)*p; }); return t; }
-  function futEquity(){ let t=0; state.positions.forEach(p=>{ if(p.src!=='bonus') t+=p.margin+unrealized(p); }); return t; }
+  function futEquity(){ let t=state.futUSDT||0; state.positions.forEach(p=>{ if(p.src!=='bonus') t+=p.margin+unrealized(p); }); return t; }
+  function bonusTransferable(){ return Math.max(0,(state.bonus||0)-(state.bonusPrincipal||0)); }
   function bonusEquity(){ let t=state.bonus||0; state.positions.forEach(p=>{ if(p.src==='bonus') t+=p.margin+unrealized(p); }); return t; }
   function totalEquity(){ return spotEquity()+futEquity(); }
   function dayStr(){ const d=new Date(); return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate(); }
@@ -708,7 +743,7 @@
   function fillSpot(side,price,amt,kind){ const k=ui.spotPair,cost=price*amt,fee=cost*FEE;
     if(side==='buy'){ state.balances.USDT-=(cost+fee); state.balances[k]=(state.balances[k]||0)+amt; state.cost[k]=(state.cost[k]||0)+cost; }
     else { const before=state.balances[k]||0; const avg=before>0?(state.cost[k]||0)/before:0; state.balances[k]=before-amt; state.cost[k]=Math.max(0,(state.cost[k]||0)-avg*amt); state.balances.USDT+=(cost-fee); }
-    addTx({ type:(side==='buy'?'Buy ':'Sell ')+tkr(k), sub:kind+' · @'+fmtNum(price,dp(k)), amount:amt, sign:side==='buy'?'+':'-', coin:tkr(k), value:cost }); save(); }
+    addTx({ type:(side==='buy'?'Buy ':'Sell ')+tkr(k), sub:kind+' · @'+fmtNum(price,dp(k)), amount:amt, sign:side==='buy'?'+':'-', coin:tkr(k), value:cost }); state.flags.traded=true; save(); }
   function cancelOrder(id){ state.openOrders=state.openOrders.filter(o=>o.id!==id); save(); renderSpotOrders(); toast('Order cancelled','info'); }
   function setSpotSub(tab){ ui.spotSub=tab; document.getElementById('spot-sub-orders').classList.toggle('active',tab==='orders'); document.getElementById('spot-sub-hold').classList.toggle('active',tab==='hold');
     document.getElementById('spot-open-orders').style.display=tab==='orders'?'block':'none'; document.getElementById('spot-holding').style.display=tab==='hold'?'block':'none'; if(tab==='hold') renderHolding(); }
@@ -745,7 +780,7 @@
   function stepFut(field,dir){ const k=ui.futPair;
     if(field==='price'){ if(ui.futType==='Market') return; const tick=Math.pow(10,-dp(k)); let p=parseFloat(v('fut-price'))||px(k)||0; p=Math.max(0,p+dir*tick); setV('fut-price',p.toFixed(dp(k))); document.getElementById('fut-price')._touched=true; }
     else { let a=parseFloat(v('fut-amount'))||0; a=Math.max(0,a+dir); setV('fut-amount',a?String(Math.round(a)):''); recalcFutMargins(); } }
-  function futAvail(){ return ui.useBonus?(state.bonus||0):(state.balances.USDT||0); }
+  function futAvail(){ return ui.useBonus?(state.bonus||0):(state.futUSDT||0); }
   function applyFutPct(pct){ const avail=futAvail(); const maxCont=Math.floor(avail*Math.max(ui.levLong,ui.levShort)); setV('fut-amount',String(Math.floor(maxCont*pct))); recalcFutMargins(); }
   function recalcFutMargins(){ const amt=parseFloat(v('fut-amount'))||0; setText('fut-marginl',amt?fmtNum(amt/ui.levLong,2)+' USDT':'-- USDT'); setText('fut-margins',amt?fmtNum(amt/ui.levShort,2)+' USDT':'-- USDT'); }
   function updateFutInfo(){ const avail=futAvail(); setText('fut-avail',fmtNum(avail,2)+(ui.useBonus?' Bonus':' USDT')); setText('fut-maxl',Math.floor(avail*ui.levLong)+' Cont'); setText('fut-maxs',Math.floor(avail*ui.levShort)+' Cont'); recalcFutMargins(); setBonusBtn(); }
@@ -757,12 +792,12 @@
     if(ui.futMode==='close'){ closeFutSide(side); return; }
     const cont=parseFloat(v('fut-amount'))||0; if(cont<=0){ toast('Enter amount','err'); return; }
     const lev=side==='long'?ui.levLong:ui.levShort; const notional=cont,margin=notional/lev,fee=notional*FEE;
-    const useB=ui.useBonus; const pool=useB?(state.bonus||0):(state.balances.USDT||0);
-    if(margin+fee>pool+1e-9){ toast('Insufficient '+(useB?'bonus':'margin'),'err'); return; }
+    const useB=ui.useBonus; const pool=useB?(state.bonus||0):(state.futUSDT||0);
+    if(margin+fee>pool+1e-9){ toast('Insufficient '+(useB?'bonus':'futures margin'),'err'); return; }
     const entry=ui.futType==='Market'?live:(parseFloat(v('fut-price'))||live);
-    if(useB) state.bonus-=(margin+fee); else state.balances.USDT-=(margin+fee);
+    if(useB) state.bonus-=(margin+fee); else state.futUSDT-=(margin+fee);
     const pos={ id:uid(),pair:k,side,entry,notional,margin,lev,src:useB?'bonus':'wallet',time:tstamp(now()),tp:null,sl:null };
-    state.positions.push(pos);
+    state.positions.push(pos); state.flags.futured=true;
     addTx({ type:'Open '+(side==='long'?'Long':'Short')+' '+tkr(k), sub:lev+'x · @'+fmtNum(entry,dp(k))+(useB?' · Bonus':''), value:notional, neutral:true, sign:'' }); save();
     toast('Opened '+side.toUpperCase()+' '+tkr(k)+' '+lev+'x'+(useB?' (Bonus)':''),'ok'); setV('fut-amount',''); setSliderUI('fut',0); updateFutInfo(); renderFutPositions(); renderAll(); }
   function closeFutSide(side){ const m=state.positions.filter(p=>p.pair===ui.futPair&&p.side===side); if(!m.length){ toast('No '+side+' position on '+tkr(ui.futPair),'info'); return; } m.forEach(p=>closePos(p.id,false)); }
@@ -770,7 +805,7 @@
   function closePos(id,liquidated,reason){ const pos=state.positions.find(p=>p.id===id); if(!pos) return;
     const pnl=liquidated?-pos.margin:unrealized(pos); const ret=Math.max(0,pos.margin+pnl); const fee=pos.notional*FEE;
     const net=Math.max(0,ret-(liquidated?0:fee));
-    if(pos.src==='bonus') state.bonus=(state.bonus||0)+net; else state.balances.USDT+=net;
+    if(pos.src==='bonus') state.bonus=(state.bonus||0)+net; else state.futUSDT+=net;
     state.positions=state.positions.filter(p=>p.id!==id);
     pos.pnl=pnl; pos.closedTime=tstamp(now()); pos.liquidated=!!liquidated; pos.reason=reason||''; state.closed.unshift(pos); if(state.closed.length>40) state.closed.pop();
     addTx({ type:(liquidated?'Liquidated ':(reason?reason+' ':'Closed '))+pos.side+' '+tkr(pos.pair), sub:'PnL '+(pnl>=0?'+':'')+fmtNum(pnl,2)+' USDT'+(pos.src==='bonus'?' · Bonus':''), value:Math.abs(pnl), sign:pnl>=0?'+':'-', coin:'USDT', isUSDT:true }); save();
@@ -846,15 +881,59 @@
   function renderBonus(){ const be=bonusEquity(); const bpos=state.positions.filter(p=>p.src==='bonus');
     let h='<div class="bonus-card"><div class="lab"><i class="ti ti-gift"></i> Futures Bonus Balance</div><div class="val">'+fmtNum(state.bonus||0,2)+' <span style="font-size:15px;color:#7aa893;">USDT</span></div>'
       +'<div class="desc">Use this bonus as margin in Futures. Profits are credited to your wallet; the bonus principal itself is for trading only (demo).</div></div>';
-    h+='<div style="display:flex;gap:10px;margin-bottom:18px;"><button class="btn btn-green" onclick="useBonusInFutures()">Use in Futures</button><button class="btn btn-outline" onclick="claimBonus()">Claim +50 (Demo)</button></div>';
+    h+='<div class="formline"><span>Transferable profit</span><span class="rt" style="color:#4eeaa0;">'+fmtNum(bonusTransferable(),2)+' USDT</span></div>';
+    h+='<div style="display:flex;gap:8px;margin:12px 0 16px;"><button class="btn btn-green" onclick="useBonusInFutures()">Use in Futures</button><button class="btn btn-outline" onclick="openBonusTransfer()">Transfer Profit</button><button class="btn btn-outline" onclick="claimBonus()">Claim +50</button></div>';
     h+='<div class="formline"><span>Total bonus equity (incl. open PnL)</span><span class="rt">'+fmtNum(be,2)+' USDT</span></div>';
     if(bpos.length){ h+='<div class="section-title" style="margin-top:14px;">Bonus Positions</div>'; h+=bpos.map(p=>{ const u=unrealized(p); const cls=u>=0?'pnl-pos':'pnl-neg';
       return '<div class="dist-row"><div style="display:flex;align-items:center;gap:10px;">'+coinLogo(p.pair,30)+'<div><div class="nm">'+tkr(p.pair)+'USDT</div><div class="sub2" style="text-align:left;color:'+(p.side==='long'?'#4eeaa0':'#ff5a5a')+'">'+p.side.toUpperCase()+' '+p.lev+'x · Bonus</div></div></div><div><div class="amt '+cls+'">'+(u>=0?'+':'')+fmtNum(u,2)+'</div><div class="sub2">margin '+fmtNum(p.margin,2)+'</div></div></div>'; }).join(''); }
     else h+='<div class="empty" style="margin-top:14px;">No bonus positions open</div>';
     document.getElementById('at-bonus').innerHTML=h; }
-  function claimBonus(){ state.bonus=(state.bonus||0)+50; addTx({type:'Bonus Claim',sub:'Demo bonus',value:50,sign:'+',coin:'USDT',isUSDT:true}); save(); toast('+50 USDT bonus claimed','ok'); renderBonus(); setBonusBtn(); }
+  function claimBonus(){ state.bonus=(state.bonus||0)+50; state.bonusPrincipal=(state.bonusPrincipal||0)+50; addTx({type:'Bonus Claim',sub:'Demo bonus',value:50,sign:'+',coin:'USDT',isUSDT:true}); save(); toast('+50 USDT bonus claimed','ok'); renderBonus(); setBonusBtn(); }
+  // ── Home tasks ──
+  function taskStatus(t){ if(state.taskClaimed[t.id]) return 'done'; return t.cond()?'ready':'locked'; }
+  function renderTasks(){ const el=document.getElementById('home-tasks'); if(!el) return;
+    const done=TASKS.filter(t=>state.taskClaimed[t.id]).length;
+    let h='<div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 10px;"><div class="section-title" style="margin:0;">Tasks · Earn Bonus</div><span style="font-size:11px;color:#7a8299;">'+done+'/'+TASKS.length+' done</span></div>';
+    h+=TASKS.map(t=>{ const st=taskStatus(t);
+      const btn = st==='done' ? '<button class="task-btn done">Claimed ✓</button>'
+        : st==='ready' ? '<button class="task-btn claim" onclick="claimTask(\''+t.id+'\')">Claim</button>'
+        : '<button class="task-btn go" onclick="goPage(\''+t.go+'\')">Go</button>';
+      return '<div class="task-card"><div class="task-ic"><i class="ti '+t.icon+'"></i></div><div class="task-info"><div class="t">'+t.title+'</div><div class="s">'+t.desc+'</div><div class="task-reward">🎁 +'+t.reward+' USDT bonus</div></div>'+btn+'</div>'; }).join('');
+    el.innerHTML=h; }
+  function claimTask(id){ const t=TASKS.find(x=>x.id===id); if(!t||state.taskClaimed[id]||!t.cond()) return;
+    state.taskClaimed[id]=true; state.bonus=(state.bonus||0)+t.reward; state.bonusPrincipal=(state.bonusPrincipal||0)+t.reward;
+    addTx({type:'Task Reward',sub:t.title,value:t.reward,sign:'+',coin:'USDT',isUSDT:true}); save();
+    toast('+'+t.reward+' USDT bonus claimed!','ok'); renderTasks(); setBonusBtn(); renderAssets(); }
   function useBonusInFutures(){ if((state.bonus||0)<=0){ toast('Claim a bonus first','info'); return; } ui.useBonus=true; switchPage('futures',null); setBonusBtn(); toast('Bonus margin enabled in Futures','ok'); }
-  function openTransfer(){ toast('Demo: single unified wallet — transfer not required','info'); }
+  function tfBal(acc){ return acc==='spot'?(state.balances.USDT||0):(state.futUSDT||0); }
+  function accName(acc){ return acc==='spot'?'Spot Account':'Futures Account'; }
+  function openTransfer(){ if(!ui.tfFrom) ui.tfFrom='spot'; if(ui.tfFrom===ui.tfTo) ui.tfTo=ui.tfFrom==='spot'?'futures':'spot'; renderTransferSheet(); }
+  function renderTransferSheet(){ const fb=tfBal(ui.tfFrom);
+    openSheet(sheetHead('Transfer')
+      +'<div class="tf-card"><div class="tf-line"><span class="k">From</span><span class="acc">'+accName(ui.tfFrom)+'</span></div>'
+      +'<div class="tf-swap" onclick="swapTransfer()"><i class="ti ti-arrows-up-down"></i></div>'
+      +'<div class="tf-line"><span class="k">To</span><span class="acc">'+accName(ui.tfTo)+'</span></div></div>'
+      +'<div class="input-row"><input id="tf-amt" inputmode="decimal" placeholder="Amount"><span class="u">USDT</span></div>'
+      +'<div style="font-size:11px;color:#7a8299;margin:6px 0 14px;">Available: '+fmtNum(fb,2)+' USDT &nbsp;<span style="color:#4eeaa0;cursor:pointer;" onclick="setV(\'tf-amt\','+fb.toFixed(2)+')">Max</span></div>'
+      +'<button class="buy-btn" onclick="doTransfer()">Confirm Transfer</button>'); }
+  function swapTransfer(){ const a=ui.tfFrom; ui.tfFrom=ui.tfTo; ui.tfTo=a; renderTransferSheet(); }
+  function doTransfer(){ const a=parseFloat(v('tf-amt'))||0; const fb=tfBal(ui.tfFrom); if(a<=0){ toast('Enter amount','err'); return; } if(a>fb+1e-9){ toast('Insufficient '+accName(ui.tfFrom),'err'); return; }
+    if(ui.tfFrom==='spot') state.balances.USDT-=a; else state.futUSDT-=a;
+    if(ui.tfTo==='spot') state.balances.USDT+=a; else state.futUSDT+=a;
+    addTx({type:'Transfer',sub:accName(ui.tfFrom)+' → '+accName(ui.tfTo),value:a,sign:'',neutral:true,isUSDT:true}); save(); closeSheet(); toast('Transferred '+fmtNum(a,2)+' USDT','ok'); renderAssets(); updateFutInfo(); }
+  // bonus profit transfer
+  function openBonusTransfer(){ const avail=bonusTransferable(); ui.bonusDest=ui.bonusDest||'spot';
+    openSheet(sheetHead('Transfer Bonus Profit')
+      +'<div style="font-size:12px;color:#7a8299;margin-bottom:12px;">Transferable profit: <span style="color:#4eeaa0;">'+fmtNum(avail,2)+' USDT</span><br>Bonus principal stays locked for trading.</div>'
+      +'<div class="formline"><span>Destination</span><span></span></div>'
+      +'<div class="seg" id="bdest-seg"><div class="buy'+(ui.bonusDest==='spot'?' active':'')+'" onclick="setBonusDest(\'spot\')">Spot</div><div class="open'+(ui.bonusDest==='futures'?' active':'')+'" onclick="setBonusDest(\'futures\')">Futures</div></div>'
+      +'<div class="input-row"><input id="bt-amt" inputmode="decimal" placeholder="Amount"><span class="u">USDT</span></div>'
+      +'<div style="font-size:11px;color:#7a8299;margin:6px 0 14px;"><span style="color:#4eeaa0;cursor:pointer;" onclick="setV(\'bt-amt\','+avail.toFixed(2)+')">Max '+fmtNum(avail,2)+'</span></div>'
+      +'<button class="buy-btn" onclick="doBonusTransfer()">Confirm</button>'); }
+  function setBonusDest(d){ ui.bonusDest=d; const seg=document.getElementById('bdest-seg'); if(seg){ seg.children[0].classList.toggle('active',d==='spot'); seg.children[1].classList.toggle('active',d==='futures'); } }
+  function doBonusTransfer(){ const avail=bonusTransferable(); const a=parseFloat(v('bt-amt'))||0; if(a<=0){ toast('Enter amount','err'); return; } if(a>avail+1e-9){ toast('Exceeds transferable profit','err'); return; }
+    state.bonus-=a; if(ui.bonusDest==='spot') state.balances.USDT+=a; else state.futUSDT+=a;
+    addTx({type:'Bonus → '+(ui.bonusDest==='spot'?'Spot':'Futures'),sub:'Profit transfer',value:a,sign:'+',coin:'USDT',isUSDT:true}); save(); closeSheet(); toast('Transferred '+fmtNum(a,2)+' USDT to '+(ui.bonusDest==='spot'?'Spot':'Futures'),'ok'); renderAssets(); setBonusBtn(); updateFutInfo(); }
   function openRecord(){ const tx=state.transactions; openSheet(sheetHead('Transaction Record')+(tx.length?tx.map(t=>{ const col=t.neutral?'#7a8299':(t.sign==='+'?'#4eeaa0':t.sign==='-'?'#ff5a5a':'#e2e8f0'); const val=t.isUSDT?(t.sign+fmtNum(t.value,2)+' USDT'):(t.coin?(t.sign+coinAmt(t.amount||t.value)+' '+t.coin):fmtNum(t.value,2)+' USDT');
     return '<div class="tx-row"><div class="tx-left"><div class="t">'+t.type+'</div><div class="s">'+t.sub+' · '+t.time+'</div></div><div class="tx-right" style="color:'+col+'">'+val+'</div></div>'; }).join(''):'<div class="empty">No transactions yet</div>')); }
 
@@ -935,24 +1014,33 @@
     +'<div class="input-row"><input id="dep-amt" inputmode="decimal" placeholder="Amount" value="1000"><span class="u">USDT</span></div>'
     +'<div class="quick-row"><div class="quick-btn" onclick="setV(\'dep-amt\',1000)">1,000</div><div class="quick-btn" onclick="setV(\'dep-amt\',5000)">5,000</div><div class="quick-btn" onclick="setV(\'dep-amt\',10000)">10,000</div></div>'
     +'<button class="buy-btn" onclick="doDeposit()">Deposit</button>'); }
-  function doDeposit(){ const a=parseFloat(v('dep-amt'))||0; if(a<=0){ toast('Enter amount','err'); return; } state.balances.USDT+=a; addTx({type:'Deposit',sub:'Demo faucet',value:a,sign:'+',coin:'USDT',isUSDT:true}); save(); closeSheet(); toast('Deposited '+fmtNum(a,2)+' USDT','ok'); renderAll(); }
+  function doDeposit(){ const a=parseFloat(v('dep-amt'))||0; if(a<=0){ toast('Enter amount','err'); return; } state.balances.USDT+=a; state.flags.deposited=true; addTx({type:'Deposit',sub:'Demo faucet',value:a,sign:'+',coin:'USDT',isUSDT:true}); save(); closeSheet(); toast('Deposited '+fmtNum(a,2)+' USDT','ok'); renderAll(); }
   function openWithdraw(){ openSheet(sheetHead('Withdraw USDT (Demo)')+'<div style="font-size:12px;color:#7a8299;margin-bottom:10px;">Available: '+fmtNum(state.balances.USDT||0,2)+' USDT</div>'
     +'<div class="input-row"><input id="wd-amt" inputmode="decimal" placeholder="Amount"><span class="u">USDT</span></div>'
     +'<button class="buy-btn" style="margin-top:8px;" onclick="doWithdraw()">Withdraw</button>'); }
   function doWithdraw(){ const a=parseFloat(v('wd-amt'))||0; if(a<=0){ toast('Enter amount','err'); return; } if(a>(state.balances.USDT||0)+1e-9){ toast('Insufficient balance','err'); return; } state.balances.USDT-=a; addTx({type:'Withdraw',sub:'Demo',value:a,sign:'-',coin:'USDT',isUSDT:true}); save(); closeSheet(); toast('Withdrew '+fmtNum(a,2)+' USDT','ok'); renderAll(); }
 
   // ── PRICE TICK ──
-  function onTick(sym,price,chg){ const k=SYM_TO_KEY[sym]; if(!k) return; const p=parseFloat(price),c=parseFloat(chg); const up=prevPx[k]!=null?p>=prevPx[k]:true; prevPx[k]=p; prices[k]={p,chg:c};
-    ['home','mkt'].forEach(pref=>{ const pe=document.getElementById(pref+'-'+k+'-price'); if(pe){ pe.textContent=fmtUSD(p); pe.classList.remove('flash-up','flash-dn'); void pe.offsetWidth; pe.classList.add(up?'flash-up':'flash-dn'); setTimeout(()=>pe.classList.remove('flash-up','flash-dn'),600); }
-      const ce=document.getElementById(pref+'-'+k+'-chg'); if(ce){ const s=c>=0?'+':''; ce.textContent=s+c.toFixed(2)+'%'; ce.className='badge '+(c>=0?'badge-up':'badge-dn'); } });
-    if(k===ui.spotPair){ renderSpotHead(); renderOB('spot'); if(ui.spotType==='Market'){ setV('spot-price',p.toFixed(dp(k))); recalcSpotLinked('price'); } updateSpotInfo(); }
-    if(k===ui.futPair){ renderFutHead(); renderOB('fut'); if(ui.futType==='Market') setV('fut-price',p.toFixed(dp(k))); }
-    matchOrders(k,p); checkLiquidations(k,p); renderHomeTotals(); renderFutPositions();
-    if(document.getElementById('page-assets').classList.contains('active')) renderAssets();
+  function isActive(name){ const e=document.getElementById('page-'+name); return e&&e.classList.contains('active'); }
+  let heavyLast=0, heavyQueued=false;
+  function scheduleHeavy(){ const t=Date.now(); const gap=t-heavyLast; if(gap>=250){ heavyLast=t; doHeavy(); } else if(!heavyQueued){ heavyQueued=true; setTimeout(()=>{ heavyQueued=false; heavyLast=Date.now(); doHeavy(); }, 250-gap); } }
+  function doHeavy(){ renderHomeTotals();
+    if(isActive('trade')){ renderOB('spot'); if(ui.spotType==='Market') recalcSpotLinked('price'); updateSpotInfo(); }
+    if(isActive('futures')){ renderOB('fut'); renderFutPositions(); }
+    if(isActive('assets')) renderAssets();
     if(document.getElementById('sheetOverlay').classList.contains('open') && document.getElementById('pair-list')) renderPairList();
-    if(chartOpen() && SYM_TO_KEY[chartSym.toLowerCase()]===k && chartKl && chartKl.length){ const c=chartKl[chartKl.length-1]; c[4]=String(p); if(p>+c[2]) c[2]=String(p); if(p<+c[3]) c[3]=String(p); drawChart(); updateChartStats(); } }
+    if(chartOpen() && chartKl && chartKl.length){ drawChart(); updateChartStats(); } }
+  function onTick(sym,price,chg){ const k=SYM_TO_KEY[sym]; if(!k) return; const p=parseFloat(price),c=parseFloat(chg); const up=prevPx[k]!=null?p>=prevPx[k]:true; prevPx[k]=p; prices[k]={p,chg:c};
+    // cheap inline updates (text only)
+    ['home','mkt'].forEach(pref=>{ const pe=document.getElementById(pref+'-'+k+'-price'); if(pe){ pe.textContent=fmtUSD(p); pe.classList.remove('flash-up','flash-dn'); void pe.offsetWidth; pe.classList.add(up?'flash-up':'flash-dn'); setTimeout(()=>{pe.classList.remove('flash-up','flash-dn');},600); }
+      const ce=document.getElementById(pref+'-'+k+'-chg'); if(ce){ const s=c>=0?'+':''; ce.textContent=s+c.toFixed(2)+'%'; ce.className='badge '+(c>=0?'badge-up':'badge-dn'); } });
+    if(k===ui.spotPair){ renderSpotHead(); if(ui.spotType==='Market') setV('spot-price',p.toFixed(dp(k))); }
+    if(k===ui.futPair){ renderFutHead(); if(ui.futType==='Market') setV('fut-price',p.toFixed(dp(k))); }
+    if(chartOpen() && SYM_TO_KEY[chartSym.toLowerCase()]===k && chartKl && chartKl.length){ const cc=chartKl[chartKl.length-1]; cc[4]=String(p); if(p>+cc[2]) cc[2]=String(p); if(p<+cc[3]) cc[3]=String(p); }
+    matchOrders(k,p); checkLiquidations(k,p);
+    scheduleHeavy(); }
 
-  function renderAll(){ renderHomeTotals(); renderMarket(); renderSpotHead(); renderOB('spot'); renderSpotOrders(); recalcSpotLinked('amount'); updateSpotInfo(); if(ui.spotSub==='hold') renderHolding();
+  function renderAll(){ renderHomeTotals(); renderTasks(); renderMarket(); renderSpotHead(); renderOB('spot'); renderSpotOrders(); recalcSpotLinked('amount'); updateSpotInfo(); if(ui.spotSub==='hold') renderHolding();
     renderFutHead(); renderOB('fut'); renderFutPositions(); updateFutInfo(); renderAssets(); }
 
   function startCountdown(){ const el=document.getElementById('fut-countdown'); if(!el) return; function tick(){ const n=new Date(); const nx=new Date(n);
