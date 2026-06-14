@@ -1,10 +1,34 @@
 // Creates a NOWPayments payment and returns a deposit address.
-// The user is identified by verified Telegram initData (not a client-supplied
-// id), and an ipn_callback_url is set so the webhook credits the deposit.
-// Users send ANY amount; balance is credited from actually_paid via the IPN.
-const { userIdFromReq } = require('../lib/verifyTelegram');
+// Self-contained (no cross-dir imports) for reliable Vercel bundling.
+const crypto = require('crypto');
 
 const MIN_USD = 10;
+
+// ── Telegram initData verification (inlined) ──
+function verifyTelegram(initData) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token || !initData || typeof initData !== 'string') return null;
+  let params;
+  try { params = new URLSearchParams(initData); } catch { return null; }
+  const hash = params.get('hash');
+  if (!hash) return null;
+  params.delete('hash');
+  const pairs = [];
+  for (const [k, v] of params) pairs.push(`${k}=${v}`);
+  pairs.sort();
+  const secret = crypto.createHmac('sha256', 'WebAppData').update(token).digest();
+  const calc = crypto.createHmac('sha256', secret).update(pairs.join('\n')).digest('hex');
+  try {
+    const a = Buffer.from(calc, 'hex'), b = Buffer.from(hash, 'hex');
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  } catch { return null; }
+  const authDate = parseInt(params.get('auth_date'), 10);
+  if (authDate && Date.now() / 1000 - authDate > 86400) return null;
+  try {
+    const user = JSON.parse(params.get('user') || 'null');
+    return user && user.id ? user : null;
+  } catch { return null; }
+}
 
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -17,16 +41,16 @@ module.exports = async function handler(req, res) {
   const apiKey = process.env.NOWPAYMENTS_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'NOWPAYMENTS_API_KEY is not configured' });
 
-  const { currency } = req.body || {};
+  const body = req.body || {};
+  const { currency } = body;
   if (!currency) return res.status(400).json({ error: 'currency is required' });
 
-  // Trust only a Telegram-verified user id.
-  const userId = userIdFromReq(req.body);
-  if (!userId) return res.status(401).json({ error: 'Telegram authentication failed' });
+  const user = verifyTelegram(body.initData);
+  if (!user) return res.status(401).json({ error: 'Telegram authentication failed' });
+  const userId = `tg_${user.id}`;
 
   const payCurrency = String(currency).toLowerCase();
 
-  // Build the IPN callback URL from the deployment host.
   const host = req.headers['x-forwarded-host'] || req.headers.host;
   const proto = req.headers['x-forwarded-proto'] || 'https';
   const ipnUrl = process.env.IPN_CALLBACK_URL || (host ? `${proto}://${host}/api/ipn` : undefined);
@@ -45,12 +69,10 @@ module.exports = async function handler(req, res) {
         is_fee_paid_by_user: true,
       }),
     });
-
     const data = await response.json();
     if (!response.ok) {
       return res.status(response.status).json({ error: data.message || 'NOWPayments error' });
     }
-
     return res.status(200).json({
       address: data.pay_address,
       payCurrency: (data.pay_currency || payCurrency).toUpperCase(),

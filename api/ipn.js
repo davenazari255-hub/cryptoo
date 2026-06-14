@@ -1,27 +1,49 @@
 // NOWPayments IPN (Instant Payment Notification) webhook.
 // NOWPayments POSTs here on every payment status change. We verify the
 // HMAC-SHA512 signature, and on `finished` credit the user idempotently.
-// Required env: NOWPAYMENTS_IPN_SECRET (the "IPN secret key" from NOWPayments).
+// Self-contained (no cross-dir imports) for reliable Vercel bundling.
+// Required env: NOWPAYMENTS_IPN_SECRET, UPSTASH_REDIS_REST_URL/TOKEN.
 const crypto = require('crypto');
-const { creditDeposit } = require('../lib/store');
 
 const MIN_USD = 10;
 
-// Read the raw request body (needed for an exact signature check).
+async function upstash(args) {
+  const URL = process.env.UPSTASH_REDIS_REST_URL, TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!URL || !TOKEN) throw new Error('Upstash not configured');
+  const res = await fetch(URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(args),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error('Upstash: ' + (data.error || res.status));
+  return data.result;
+}
+
+// Idempotently credit a finished deposit; returns false if already processed.
+async function creditDeposit(userId, paymentId, usd, meta) {
+  const added = await upstash(['SADD', `seen:${userId}`, String(paymentId)]);
+  if (added === 0) return false;
+  const amount = Math.round((parseFloat(usd) || 0) * 100) / 100;
+  await upstash(['INCRBYFLOAT', `bal:${userId}`, amount]);
+  await upstash(['LPUSH', `ledger:${userId}`, JSON.stringify({ paymentId: String(paymentId), usd: amount, ...meta })]);
+  await upstash(['LTRIM', `ledger:${userId}`, 0, 99]);
+  return true;
+}
+
 function readRawBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
-    req.on('data', (chunk) => { data += chunk; });
+    req.on('data', (c) => { data += c; });
     req.on('end', () => resolve(data));
     req.on('error', reject);
   });
 }
 
-// Recursively sort object keys, matching NOWPayments' signature scheme.
 function sortObject(obj) {
   if (Array.isArray(obj)) return obj.map(sortObject);
   if (obj && typeof obj === 'object') {
-    return Object.keys(obj).sort().reduce((acc, k) => { acc[k] = sortObject(obj[k]); return acc; }, {});
+    return Object.keys(obj).sort().reduce((a, k) => { a[k] = sortObject(obj[k]); return a; }, {});
   }
   return obj;
 }
@@ -38,13 +60,10 @@ module.exports = async function handler(req, res) {
   let payload;
   try { payload = JSON.parse(raw); } catch { return res.status(400).json({ error: 'bad json' }); }
 
-  // Verify signature over the key-sorted JSON.
-  const sorted = JSON.stringify(sortObject(payload));
-  const expected = crypto.createHmac('sha512', secret).update(sorted).digest('hex');
+  const expected = crypto.createHmac('sha512', secret).update(JSON.stringify(sortObject(payload))).digest('hex');
   const sig = req.headers['x-nowpayments-sig'];
   try {
-    const a = Buffer.from(expected, 'hex');
-    const b = Buffer.from(String(sig || ''), 'hex');
+    const a = Buffer.from(expected, 'hex'), b = Buffer.from(String(sig || ''), 'hex');
     if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
       return res.status(401).json({ error: 'bad signature' });
     }
@@ -52,12 +71,10 @@ module.exports = async function handler(req, res) {
     return res.status(401).json({ error: 'bad signature' });
   }
 
-  // order_id is "user_<userId>" as set when creating the payment.
   const orderId = String(payload.order_id || '');
   const userId = orderId.startsWith('user_') ? orderId.slice(5) : null;
 
   if (payload.payment_status === 'finished' && userId) {
-    // USD value actually received = actually_paid / pay_amount * price_amount.
     const paid = parseFloat(payload.actually_paid) || 0;
     const expect = parseFloat(payload.pay_amount) || 0;
     const price = parseFloat(payload.price_amount) || 0;
@@ -70,13 +87,11 @@ module.exports = async function handler(req, res) {
           at: payload.updated_at || payload.created_at || null,
         });
       } catch (e) {
-        // Returning 500 makes NOWPayments retry the IPN later.
-        return res.status(500).json({ error: 'credit failed' });
+        return res.status(500).json({ error: 'credit failed' }); // triggers NOWPayments retry
       }
     }
   }
 
-  // Always 200 for accepted-but-ignored statuses so NOWPayments stops retrying.
   return res.status(200).json({ ok: true });
 };
 
