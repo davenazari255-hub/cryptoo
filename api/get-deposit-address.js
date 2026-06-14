@@ -1,7 +1,12 @@
-// Creates a NOWPayments payment and returns a dedicated deposit address.
-// Standard NOWPayments flow: each call generates a fresh pay_address for the
-// given (currency, amount). The frontend polls /api/check-payment for status.
-export default async function handler(req, res) {
+// Creates a NOWPayments payment and returns a deposit address.
+// The user is identified by verified Telegram initData (not a client-supplied
+// id), and an ipn_callback_url is set so the webhook credits the deposit.
+// Users send ANY amount; balance is credited from actually_paid via the IPN.
+const { userIdFromReq } = require('../lib/verifyTelegram');
+
+const MIN_USD = 10;
+
+module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -12,53 +17,49 @@ export default async function handler(req, res) {
   const apiKey = process.env.NOWPAYMENTS_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'NOWPAYMENTS_API_KEY is not configured' });
 
-  const { currency, amount, userId } = req.body || {};
+  const { currency } = req.body || {};
+  if (!currency) return res.status(400).json({ error: 'currency is required' });
 
-  if (!currency || !userId) {
-    return res.status(400).json({ error: 'currency and userId are required' });
-  }
-
-  const usd = parseFloat(amount);
-  if (!usd || usd <= 0) {
-    return res.status(400).json({ error: 'A positive amount is required' });
-  }
+  // Trust only a Telegram-verified user id.
+  const userId = userIdFromReq(req.body);
+  if (!userId) return res.status(401).json({ error: 'Telegram authentication failed' });
 
   const payCurrency = String(currency).toLowerCase();
+
+  // Build the IPN callback URL from the deployment host.
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  const proto = req.headers['x-forwarded-proto'] || 'https';
+  const ipnUrl = process.env.IPN_CALLBACK_URL || (host ? `${proto}://${host}/api/ipn` : undefined);
 
   try {
     const response = await fetch('https://api.nowpayments.io/v1/payment', {
       method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'Content-Type': 'application/json',
-      },
+      headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        price_amount: usd,
+        price_amount: MIN_USD,
         price_currency: 'usd',
         pay_currency: payCurrency,
         order_id: `user_${userId}`,
-        order_description: `Deposit for user ${userId}`,
+        order_description: `Deposit for ${userId}`,
+        ipn_callback_url: ipnUrl,
         is_fee_paid_by_user: true,
       }),
     });
 
     const data = await response.json();
-
     if (!response.ok) {
-      // NOWPayments returns a descriptive `message` (e.g. amount below minimum).
       return res.status(response.status).json({ error: data.message || 'NOWPayments error' });
     }
 
     return res.status(200).json({
       address: data.pay_address,
-      payAmount: data.pay_amount,
       payCurrency: (data.pay_currency || payCurrency).toUpperCase(),
-      priceAmount: data.price_amount,
       paymentId: data.payment_id,
-      payinExtraId: data.payin_extra_id || null, // memo/tag for chains that need it (TON, etc.)
+      payinExtraId: data.payin_extra_id || null,
       network: data.network || null,
+      minUsd: MIN_USD,
     });
   } catch (err) {
     return res.status(500).json({ error: 'Server error: ' + ((err && err.message) || 'unknown') });
   }
-}
+};

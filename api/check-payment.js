@@ -1,6 +1,6 @@
 // Returns the current status of a NOWPayments payment, so the frontend can
-// poll and credit the user's balance once the deposit is finished.
-export default async function handler(req, res) {
+// show live progress. Crediting is handled by the IPN webhook, not here.
+module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
