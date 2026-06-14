@@ -557,7 +557,7 @@
   const prices = {}; const prevPx = {};
 
   function defaultState(){ const balances={USDT:0}, cost={}; COIN_KEYS.forEach(k=>{balances[k]=0;cost[k]=0;});
-    return { balances, cost, futUSDT:0, openOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:50, bonusPrincipal:50, flags:{deposited:false,traded:false,futured:false}, taskClaimed:{}, snap:{day:'',equity:0}, nextId:1 }; }
+    return { balances, cost, futUSDT:0, openOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:50, bonusPrincipal:50, flags:{deposited:false,traded:false,futured:false}, taskClaimed:{}, snap:{day:'',equity:0}, nextId:1, creditedDeposits:0 }; }
   function loadState(){ try{ const raw=localStorage.getItem(LS_KEY); if(!raw) return defaultState();
       const s=JSON.parse(raw); const d=defaultState();
       return Object.assign(d,s,{ balances:Object.assign(d.balances,s.balances||{}), cost:Object.assign(d.cost,s.cost||{}), snap:Object.assign(d.snap,s.snap||{}), flags:Object.assign(d.flags,s.flags||{}), taskClaimed:Object.assign(d.taskClaimed,s.taskClaimed||{}) });
@@ -1009,8 +1009,7 @@
   function doTPSL(id){ const p=state.positions.find(x=>x.id===id); if(!p) return; const tp=parseFloat(v('tp-price'))||0,sl=parseFloat(v('sl-price'))||0;
     p.tp=tp>0?tp:null; p.sl=sl>0?sl:null; save(); closeSheet(); toast('TP/SL updated','ok'); renderFutPositions(); }
 
-  // ── Deposit / Withdraw ──
-  // ── Deposit (NOWPayments — real on-chain deposits) ──
+  // ── Deposit (NOWPayments — real on-chain deposits, server-credited) ──
   const DEPOSIT_COINS = [
     {t:'btc',       sym:'BTC',  name:'Bitcoin', net:'Bitcoin'},
     {t:'eth',       sym:'ETH',  name:'Ethereum',net:'ERC20'},
@@ -1022,63 +1021,70 @@
     {t:'ton',       sym:'TON',  name:'Toncoin', net:'TON'},
   ];
   let depPoll=null;
-  function getUserId(){
-    try{ const u=window.Telegram&&Telegram.WebApp&&Telegram.WebApp.initDataUnsafe&&Telegram.WebApp.initDataUnsafe.user; if(u&&u.id) return 'tg_'+u.id; }catch{}
-    try{ let g=localStorage.getItem('kolono_uid'); if(!g){ g='guest_'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); localStorage.setItem('kolono_uid',g); } return g; }catch{}
-    return 'guest_anon';
-  }
+  function tgInitData(){ try{ return (window.Telegram&&Telegram.WebApp&&Telegram.WebApp.initData)||''; }catch{ return ''; } }
+  function hasTgAuth(){ return !!tgInitData(); }
   function escAttr(s){ return String(s).replace(/'/g,'&#39;').replace(/"/g,'&quot;'); }
   function copyText(t){ const done=()=>toast('Copied','ok');
     try{ if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(done,()=>fallbackCopy(t)); return; } }catch{}
     fallbackCopy(t); }
   function fallbackCopy(t){ try{ const ta=document.createElement('textarea'); ta.value=t; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.focus(); ta.select(); document.execCommand('copy'); ta.remove(); toast('Copied','ok'); }catch{ toast('Copy failed','err'); } }
 
+  // Pull the real server balance and apply only the newly-credited delta to USDT.
+  // Idempotent: state.creditedDeposits tracks what was already applied locally.
+  async function syncBalance(){ if(!hasTgAuth()) return;
+    try{ const r=await fetch('/api/balance',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData() }) });
+      const d=await r.json(); if(!r.ok) return;
+      const server=parseFloat(d.balance)||0; const applied=parseFloat(state.creditedDeposits)||0;
+      const delta=Math.round((server-applied)*100)/100;
+      if(delta>0){ state.balances.USDT+=delta; state.creditedDeposits=server; state.flags.deposited=true;
+        addTx({type:'Deposit',sub:'On-chain deposit',value:delta,sign:'+',coin:'USDT',isUSDT:true});
+        save(); renderAll(); toast('Deposit credited: '+fmtNum(delta,2)+' USDT','ok');
+      } else if(server!==applied){ state.creditedDeposits=server; save(); }
+    }catch(e){} }
+
   function openDeposit(){ if(depPoll){ clearInterval(depPoll); depPoll=null; }
+    if(!hasTgAuth()){ openSheet(sheetHead('Deposit Crypto')+'<div style="font-size:13px;color:#ff5a5a;line-height:1.6;padding:8px 0;">Real deposits require opening the app from your Telegram bot, so your account can be verified. Please launch KolonoEX inside Telegram.</div>'); return; }
     const opts=DEPOSIT_COINS.map((c,i)=>'<option value="'+i+'">'+c.sym+' · '+c.net+'</option>').join('');
     openSheet(sheetHead('Deposit Crypto')
-    +'<div style="font-size:12px;color:#7a8299;margin-bottom:10px;">Pick a coin and amount. A dedicated deposit address is generated for you and credited automatically once received.</div>'
+    +'<div style="font-size:12px;color:#7a8299;margin-bottom:10px;">Pick a coin and get a deposit address. Send any amount — it is credited automatically at the received value. Deposits under $10 are not credited.</div>'
     +'<div class="input-row"><span class="lab">Coin</span><select id="dep-cur" style="flex:1;background:none;border:none;color:#e2e8f0;font-size:14px;outline:none;">'+opts+'</select></div>'
-    +'<div class="input-row"><input id="dep-amt" inputmode="decimal" placeholder="Amount" value="50"><span class="u">USD</span></div>'
-    +'<div class="quick-row"><div class="quick-btn" onclick="setV(\'dep-amt\',50)">50</div><div class="quick-btn" onclick="setV(\'dep-amt\',100)">100</div><div class="quick-btn" onclick="setV(\'dep-amt\',500)">500</div></div>'
     +'<button class="buy-btn" id="dep-gen" onclick="genDeposit()">Get Deposit Address</button>'); }
 
   async function genDeposit(){ const idx=parseInt(v('dep-cur'),10)||0; const coin=DEPOSIT_COINS[idx]||DEPOSIT_COINS[0];
-    const amt=parseFloat(v('dep-amt'))||0; if(amt<=0){ toast('Enter amount','err'); return; }
     const btn=document.getElementById('dep-gen'); if(btn){ btn.disabled=true; btn.textContent='Generating…'; }
     const reset=()=>{ if(btn){ btn.disabled=false; btn.textContent='Get Deposit Address'; } };
     let r;
-    try{ r=await fetch('/api/get-deposit-address',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ currency:coin.t, amount:amt, userId:getUserId() }) }); }
+    try{ r=await fetch('/api/get-deposit-address',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ currency:coin.t, initData:tgInitData() }) }); }
     catch(e){ console.error('deposit fetch failed:',e); toast('Cannot reach /api — is the site running on Vercel?','err'); reset(); return; }
     let text='', data=null;
     try{ text=await r.text(); data=JSON.parse(text); }catch(e){ /* non-JSON response */ }
     if(!r.ok || !data){ console.error('deposit response',r.status,text); toast((data&&data.error)||('Server error '+r.status),'err'); reset(); return; }
-    showDepositAddress(coin, amt, data); }
+    showDepositAddress(coin, data); }
 
-  function showDepositAddress(coin, usd, d){
+  function showDepositAddress(coin, d){
     const qr='https://api.qrserver.com/v1/create-qr-code/?size=190x190&margin=0&data='+encodeURIComponent(d.address);
     const addr=escAttr(d.address);
     const extra = d.payinExtraId ? '<div class="input-row" style="margin-top:6px;"><span class="lab">Memo/Tag</span><input readonly value="'+escAttr(d.payinExtraId)+'" style="flex:1;background:none;border:none;color:#ffc24e;font-size:13px;outline:none;"><i class="ti ti-copy" style="color:#4eeaa0;cursor:pointer;" onclick="copyText(\''+escAttr(d.payinExtraId)+'\')"></i></div>' : '';
     openSheet(sheetHead('Deposit '+coin.sym)
     +'<div style="text-align:center;margin:4px 0 12px;"><div style="background:#fff;border-radius:12px;padding:10px;display:inline-block;"><img src="'+qr+'" alt="QR" style="width:170px;height:170px;display:block;"></div></div>'
-    +'<div style="text-align:center;font-size:12px;color:#7a8299;">Send exactly</div>'
-    +'<div style="text-align:center;font-size:20px;font-weight:700;color:#4eeaa0;margin:2px 0 10px;">'+d.payAmount+' '+d.payCurrency+'</div>'
-    +'<div style="font-size:11px;color:#7a8299;margin-bottom:4px;">'+coin.name+' · '+coin.net+' network</div>'
+    +'<div style="text-align:center;font-size:13px;color:#e2e8f0;margin-bottom:2px;">Send any amount of '+coin.sym+'</div>'
+    +'<div style="text-align:center;font-size:11px;color:#7a8299;margin-bottom:10px;">'+coin.name+' · '+coin.net+' network · min $'+(d.minUsd||10)+'</div>'
     +'<div class="input-row"><input readonly value="'+addr+'" style="flex:1;background:none;border:none;color:#e2e8f0;font-size:12px;outline:none;"><i class="ti ti-copy" style="color:#4eeaa0;cursor:pointer;" onclick="copyText(\''+addr+'\')"></i></div>'
     +extra
-    +'<div style="font-size:11px;color:#ffae4e;margin:8px 0;line-height:1.5;">⚠ Send only '+coin.sym+' over the '+coin.net+' network. Sending another coin or network may cause permanent loss.</div>'
+    +'<div style="font-size:11px;color:#ffae4e;margin:8px 0;line-height:1.5;">⚠ Send only '+coin.sym+' over the '+coin.net+' network. Sending another coin or network may cause permanent loss. Deposits under $'+(d.minUsd||10)+' are not credited.</div>'
     +'<div id="dep-status" style="text-align:center;font-size:13px;color:#7a8299;padding:8px 0;">⏳ Waiting for payment…</div>');
-    startDepositPoll(d.paymentId, usd); }
+    startDepositPoll(d.paymentId, d.minUsd||10); }
 
-  function startDepositPoll(paymentId, usd){ if(depPoll){ clearInterval(depPoll); depPoll=null; } let credited=false;
-    const MAP={ waiting:'⏳ Waiting for payment…', confirming:'🔄 Confirming on-chain…', confirmed:'🔄 Confirmed, processing…', sending:'🔄 Crediting…', partially_paid:'⚠ Partially paid…', finished:'✅ Payment received!', failed:'❌ Payment failed', refunded:'↩ Refunded', expired:'⌛ Payment expired' };
+  // Polls payment status for live UI feedback; the actual credit is done
+  // server-side by the IPN webhook, then pulled in via syncBalance().
+  function startDepositPoll(paymentId, minUsd){ if(depPoll){ clearInterval(depPoll); depPoll=null; }
+    const MAP={ waiting:'⏳ Waiting for payment…', confirming:'🔄 Confirming on-chain…', confirmed:'🔄 Confirmed, processing…', sending:'🔄 Crediting…', partially_paid:'⚠ Amount below $'+minUsd+' — not credited', finished:'✅ Payment received — crediting…', failed:'❌ Payment failed', refunded:'↩ Refunded', expired:'⌛ Payment expired' };
     const check=async()=>{ const el=document.getElementById('dep-status'); if(!el){ if(depPoll){ clearInterval(depPoll); depPoll=null; } return; }
       try{ const r=await fetch('/api/check-payment?paymentId='+encodeURIComponent(paymentId)); const d=await r.json(); if(!r.ok) return;
         const st=d.status; el.textContent=MAP[st]||st;
-        if(st==='finished' && !credited){ credited=true; if(depPoll){ clearInterval(depPoll); depPoll=null; }
-          const usdCredit=parseFloat(d.priceAmount)||usd; state.balances.USDT+=usdCredit; state.flags.deposited=true;
-          addTx({type:'Deposit',sub:'NOWPayments '+String(d.payCurrency||'').toUpperCase(),value:usdCredit,sign:'+',coin:'USDT',isUSDT:true});
-          save(); renderAll(); el.style.color='#4eeaa0'; toast('Deposit credited: '+fmtNum(usdCredit,2)+' USDT','ok');
-        } else if(st==='failed'||st==='refunded'||st==='expired'){ if(depPoll){ clearInterval(depPoll); depPoll=null; } el.style.color='#ff5a5a'; }
+        if(st==='finished'){ if(depPoll){ clearInterval(depPoll); depPoll=null; } el.style.color='#4eeaa0';
+          await syncBalance(); const el2=document.getElementById('dep-status'); if(el2) el2.textContent='✅ Credited to your balance';
+        } else if(st==='failed'||st==='refunded'||st==='expired'||st==='partially_paid'){ if(depPoll){ clearInterval(depPoll); depPoll=null; } el.style.color='#ff5a5a'; }
       }catch(e){} };
     check(); depPoll=setInterval(check, 15000); }
   function openWithdraw(){ openSheet(sheetHead('Withdraw USDT (Demo)')+'<div style="font-size:12px;color:#7a8299;margin-bottom:10px;">Available: '+fmtNum(state.balances.USDT||0,2)+' USDT</div>'
@@ -1163,6 +1169,8 @@
 
   // boot
   initTelegram(); buildHomeList(); setFutTab('pos'); setSpotSub('orders'); setAssetTab('overview'); setBonusBtn(); bindPctSliders(); regenOB(); setInterval(regenOB,1500); renderAll(); startCountdown(); connectWS();
+  // pull any deposits credited server-side while the app was closed, then keep checking
+  syncBalance(); setInterval(syncBalance, 60000);
 </script>
 </body>
 </html>
