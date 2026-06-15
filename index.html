@@ -967,6 +967,7 @@
   function openSheet(html){ document.getElementById('sheetBody').innerHTML=html; document.getElementById('sheetOverlay').classList.add('open'); }
   function closeSheet(e){ document.getElementById('sheetOverlay').classList.remove('open'); if(typeof depPoll!=='undefined'&&depPoll){ clearInterval(depPoll); depPoll=null; } }
   function sheetHead(title){ return '<div class="sheet-handle"></div><div class="sheet-titlebar"><div class="sheet-title">'+title+'</div><i class="ti ti-x sheet-x" onclick="closeSheet()"></i></div>'; }
+  function sheetHeadBack(title,backFn){ return '<div class="sheet-handle"></div><div class="sheet-titlebar"><i class="ti ti-chevron-left sheet-x" style="margin-right:auto;" onclick="'+backFn+'"></i><div class="sheet-title" style="position:absolute;left:50%;transform:translateX(-50%);">'+title+'</div><i class="ti ti-x sheet-x" onclick="closeSheet()"></i></div>'; }
 
   // pair selector (futures-style with search + favorites)
   function openPairSheet(ctx){ ui.pairCtx=ctx; ui.pairTab='all'; ui.pairQuery='';
@@ -1077,7 +1078,7 @@
   function openDeposit(){ if(depPoll){ clearInterval(depPoll); depPoll=null; }
     if(!hasTgAuth()){ openSheet(sheetHead('Deposit Crypto')+'<div class="dep-tip" style="border-color:#ff5a5a44;"><i class="ti ti-alert-triangle" style="color:#ff5a5a;"></i><span>Real deposits require opening the app from your Telegram bot so your account can be verified. Please launch KolonoEX inside Telegram.</span></div>'); return; }
     openSheet(sheetHead('Deposit Crypto')
-    +'<div class="dep-tip"><i class="ti ti-bolt"></i><span>Choose a coin to get your deposit address. Send <b style="color:#cfd6e6;">any amount</b> — it is credited automatically once received. Minimum <b style="color:#cfd6e6;">$10</b>.</span></div>'
+    +'<div class="dep-tip"><i class="ti ti-bolt"></i><span>Choose a coin to get your deposit address. Send <b style="color:#cfd6e6;">any amount</b> at or above the coin\'s minimum — it is credited automatically once received.</span></div>'
     +'<div style="font-size:12px;color:#7a8299;margin-bottom:8px;">Select coin & network</div>'
     +DEPOSIT_COINS.map(depCoinRow).join('')); }
 
@@ -1094,14 +1095,16 @@
   function showDepositAddress(coin, d){
     const qr='https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=0&data='+encodeURIComponent(d.address);
     const addr=escAttr(d.address); const min=d.minUsd||10;
+    // Prefer the coin-denominated minimum (e.g. "10 USDT") over a dollar figure.
+    const minCoin = (d.minCoin && d.minCoin>0) ? trimAmt(d.minCoin)+' '+coin.sym : ('$'+min);
     const extra = d.payinExtraId ? '<div class="dep-addr-box" style="margin-top:8px;"><div class="dab-lab"><span>⚠ Memo / Tag (required)</span><i class="ti ti-copy" style="color:#4eeaa0;cursor:pointer;font-size:15px;" onclick="copyText(\''+escAttr(d.payinExtraId)+'\')"></i></div><div class="dab-val" style="color:#ffc24e;">'+escAttr(d.payinExtraId)+'</div></div>' : '';
-    openSheet(sheetHead('Deposit '+coin.sym)
+    openSheet(sheetHeadBack('Deposit '+coin.sym,'openDeposit()')
     +'<div style="text-align:center;margin-bottom:14px;"><div class="dep-qr"><img src="'+qr+'" alt="QR" style="width:190px;height:190px;display:block;"></div></div>'
     +'<div style="text-align:center;margin-bottom:14px;"><span class="dep-net-pill">'+coin.name+' · <b>'+coin.net+'</b> network</span></div>'
-    +'<div class="dep-addr-box"><div class="dab-lab"><span>Deposit address</span><span class="dep-badge">MIN $'+min+'</span></div><div class="dab-val">'+addr+'</div></div>'
+    +'<div class="dep-addr-box"><div class="dab-lab"><span>Deposit address</span><span class="dep-badge">MIN '+minCoin+'</span></div><div class="dab-val">'+addr+'</div></div>'
     +extra
     +'<button class="dep-copy" onclick="copyText(\''+addr+'\')"><i class="ti ti-copy"></i>Copy Address</button>'
-    +'<div class="dep-tip" style="margin-top:12px;border-color:#ffae4e33;"><i class="ti ti-shield-check" style="color:#ffae4e;"></i><span>Send only <b style="color:#cfd6e6;">'+coin.sym+'</b> over the <b style="color:#cfd6e6;">'+coin.net+'</b> network. Other coins/networks may be lost. Deposits under $'+min+' are not credited.</span></div>'
+    +'<div class="dep-tip" style="margin-top:12px;border-color:#ffae4e33;"><i class="ti ti-shield-check" style="color:#ffae4e;"></i><span>Send only <b style="color:#cfd6e6;">'+coin.sym+'</b> over the <b style="color:#cfd6e6;">'+coin.net+'</b> network. Other coins/networks may be lost. Minimum deposit <b style="color:#cfd6e6;">'+minCoin+'</b>.</span></div>'
     +'<div class="dep-status" id="dep-status"><span class="dot"></span><span id="dep-status-txt">Waiting for payment…</span></div>');
     startDepositPoll(d.paymentId, min); }
 
