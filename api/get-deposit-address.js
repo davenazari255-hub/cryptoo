@@ -56,9 +56,9 @@ module.exports = async function handler(req, res) {
   const ipnUrl = process.env.IPN_CALLBACK_URL || (host ? `${proto}://${host}/api/ipn` : undefined);
 
   try {
-    // The fixed $10 floor can fall below a coin/network's own minimum (causing
-    // "amountTo is too small"). Ask NOWPayments for the real minimum in USD and
-    // open the payment at the larger of the two, with a small buffer for rate drift.
+    // Start near the coin's real minimum, then bump $1 at a time only if
+    // NOWPayments still says "too small" — finds the lowest amount it accepts
+    // instead of over-padding (which made USDT/TRX show $14).
     let priceUsd = MIN_USD;
     try {
       const mr = await fetch(
@@ -67,29 +67,34 @@ module.exports = async function handler(req, res) {
       );
       const md = await mr.json();
       const minFiat = parseFloat(md && md.fiat_equivalent);
-      if (mr.ok && minFiat > 0) {
-        // +15% headroom so floating-rate conversion doesn't dip back under the min.
-        priceUsd = Math.max(MIN_USD, Math.ceil(minFiat * 1.15));
-      }
+      if (mr.ok && minFiat > 0) priceUsd = Math.max(MIN_USD, Math.ceil(minFiat));
     } catch (e) { /* fall back to MIN_USD */ }
 
-    const response = await fetch('https://api.nowpayments.io/v1/payment', {
-      method: 'POST',
-      headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        price_amount: priceUsd,
-        price_currency: 'usd',
-        pay_currency: payCurrency,
-        order_id: `user_${userId}`,
-        order_description: `Deposit for ${userId}`,
-        ipn_callback_url: ipnUrl,
-        is_fee_paid_by_user: true,
-      }),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      return res.status(response.status).json({ error: data.message || 'NOWPayments error' });
+    let data = null, lastErr = 'NOWPayments error', status = 400;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const response = await fetch('https://api.nowpayments.io/v1/payment', {
+        method: 'POST',
+        headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          price_amount: priceUsd,
+          price_currency: 'usd',
+          pay_currency: payCurrency,
+          order_id: `user_${userId}`,
+          order_description: `Deposit for ${userId}`,
+          ipn_callback_url: ipnUrl,
+          is_fee_paid_by_user: true,
+        }),
+      });
+      const body = await response.json();
+      if (response.ok) { data = body; break; }
+      lastErr = body.message || 'NOWPayments error'; status = response.status;
+      // Only retry the "too small" case; bump the amount and try again.
+      if (/too small|too low|minim/i.test(lastErr)) { priceUsd += 1; continue; }
+      break;
     }
+
+    if (!data) return res.status(status).json({ error: lastErr });
+
     return res.status(200).json({
       address: data.pay_address,
       payCurrency: (data.pay_currency || payCurrency).toUpperCase(),
