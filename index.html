@@ -1082,15 +1082,18 @@
     +'<div style="font-size:12px;color:#7a8299;margin-bottom:8px;">Select coin & network</div>'
     +DEPOSIT_COINS.map(depCoinRow).join('')); }
 
-  async function genDeposit(idx){ const coin=DEPOSIT_COINS[idx]||DEPOSIT_COINS[0];
+  let depBusy=false;
+  async function genDeposit(idx){ if(depBusy) return; depBusy=true; const coin=DEPOSIT_COINS[idx]||DEPOSIT_COINS[0];
     openSheet(sheetHead('Deposit '+coin.sym)+'<div style="text-align:center;padding:46px 0;color:#7a8299;"><i class="ti ti-loader-2" style="font-size:30px;display:inline-block;animation:depSpin 1s linear infinite;"></i><div style="margin-top:12px;font-size:13px;">Generating your '+coin.sym+' address…</div></div>');
-    let r;
-    try{ r=await fetch('/api/get-deposit-address',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ currency:coin.t, initData:tgInitData() }) }); }
-    catch(e){ console.error('deposit fetch failed:',e); toast('Cannot reach /api — is the site on Vercel?','err'); openDeposit(); return; }
-    let text='', data=null;
-    try{ text=await r.text(); data=JSON.parse(text); }catch(e){}
-    if(!r.ok || !data || !data.address){ console.error('deposit response',r.status,text); toast((data&&data.error)||('Server error '+r.status),'err'); openDeposit(); return; }
-    showDepositAddress(coin, data); }
+    try{
+      let r;
+      try{ r=await fetch('/api/get-deposit-address',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ currency:coin.t, initData:tgInitData() }) }); }
+      catch(e){ console.error('deposit fetch failed:',e); toast('Cannot reach /api — is the site on Vercel?','err'); openDeposit(); return; }
+      let text='', data=null;
+      try{ text=await r.text(); data=JSON.parse(text); }catch(e){}
+      if(!r.ok || !data || !data.address){ console.error('deposit response',r.status,text); toast((data&&data.error)||('Server error '+r.status),'err'); openDeposit(); return; }
+      showDepositAddress(coin, data);
+    } finally { depBusy=false; } }
 
   function showDepositAddress(coin, d){
     const qr='https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=0&data='+encodeURIComponent(d.address);
