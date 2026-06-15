@@ -56,11 +56,28 @@ module.exports = async function handler(req, res) {
   const ipnUrl = process.env.IPN_CALLBACK_URL || (host ? `${proto}://${host}/api/ipn` : undefined);
 
   try {
+    // The fixed $10 floor can fall below a coin/network's own minimum (causing
+    // "amountTo is too small"). Ask NOWPayments for the real minimum in USD and
+    // open the payment at the larger of the two, with a small buffer for rate drift.
+    let priceUsd = MIN_USD;
+    try {
+      const mr = await fetch(
+        `https://api.nowpayments.io/v1/min-amount?currency_from=${encodeURIComponent(payCurrency)}&fiat_equivalent=usd`,
+        { headers: { 'x-api-key': apiKey } }
+      );
+      const md = await mr.json();
+      const minFiat = parseFloat(md && md.fiat_equivalent);
+      if (mr.ok && minFiat > 0) {
+        // +15% headroom so floating-rate conversion doesn't dip back under the min.
+        priceUsd = Math.max(MIN_USD, Math.ceil(minFiat * 1.15));
+      }
+    } catch (e) { /* fall back to MIN_USD */ }
+
     const response = await fetch('https://api.nowpayments.io/v1/payment', {
       method: 'POST',
       headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        price_amount: MIN_USD,
+        price_amount: priceUsd,
         price_currency: 'usd',
         pay_currency: payCurrency,
         order_id: `user_${userId}`,
@@ -79,7 +96,7 @@ module.exports = async function handler(req, res) {
       paymentId: data.payment_id,
       payinExtraId: data.payin_extra_id || null,
       network: data.network || null,
-      minUsd: MIN_USD,
+      minUsd: priceUsd,
     });
   } catch (err) {
     return res.status(500).json({ error: 'Server error: ' + ((err && err.message) || 'unknown') });
