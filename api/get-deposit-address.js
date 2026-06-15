@@ -4,6 +4,21 @@ const crypto = require('crypto');
 
 const MIN_USD = 10;
 
+// ── Upstash REST helper (best-effort: returns null on any failure) ──
+async function upstash(args) {
+  const URL = process.env.UPSTASH_REDIS_REST_URL, TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!URL || !TOKEN) return null;
+  try {
+    const res = await fetch(URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    const data = await res.json();
+    return data && !data.error ? data.result : null;
+  } catch { return null; }
+}
+
 // ── Telegram initData verification (inlined) ──
 function verifyTelegram(initData) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -56,6 +71,7 @@ module.exports = async function handler(req, res) {
   const ipnUrl = process.env.IPN_CALLBACK_URL || (host ? `${proto}://${host}/api/ipn` : undefined);
 
   try {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     // Safe fetch: never throw on a non-JSON (HTML error page) response.
     const jget = async (url, opts) => {
       const r = await fetch(url, opts);
@@ -64,20 +80,26 @@ module.exports = async function handler(req, res) {
       return { ok: r.ok, status: r.status, json: j, text: t };
     };
 
-    // Ask NOWPayments for the coin's real minimum (in its own units + USD).
-    let priceUsd = MIN_USD, minCoin = null;
-    const mr = await jget(
-      `https://api.nowpayments.io/v1/min-amount?currency_from=${encodeURIComponent(payCurrency)}&fiat_equivalent=usd`,
-      { headers: { 'x-api-key': apiKey } }
-    );
-    if (mr.ok && mr.json) {
-      const minFiat = parseFloat(mr.json.fiat_equivalent);
-      minCoin = parseFloat(mr.json.min_amount) || null;
+    // Determine the starting price for this coin:
+    //  1) a previously-discovered working amount cached in Redis (1 API call, no storm)
+    //  2) else the coin's USD minimum from NOWPayments
+    //  3) else the $10 floor
+    const cacheKey = `minprice:${payCurrency}`;
+    let priceUsd = MIN_USD;
+    const cached = parseFloat(await upstash(['GET', cacheKey]));
+    if (cached > 0) {
+      priceUsd = Math.max(MIN_USD, cached);
+    } else {
+      const mr = await jget(
+        `https://api.nowpayments.io/v1/min-amount?currency_from=${encodeURIComponent(payCurrency)}&fiat_equivalent=usd`,
+        { headers: { 'x-api-key': apiKey } }
+      );
+      const minFiat = mr.ok && mr.json ? parseFloat(mr.json.fiat_equivalent) : NaN;
       if (minFiat > 0) priceUsd = Math.max(MIN_USD, Math.ceil(minFiat));
     }
 
     let data = null, lastErr = 'NOWPayments error', status = 502;
-    for (let attempt = 0; attempt < 6; attempt++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
       const resp = await jget('https://api.nowpayments.io/v1/payment', {
         method: 'POST',
         headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
@@ -92,14 +114,17 @@ module.exports = async function handler(req, res) {
         }),
       });
       if (resp.ok && resp.json && resp.json.pay_address) { data = resp.json; break; }
-      lastErr = (resp.json && resp.json.message) || ('NOWPayments unavailable (' + resp.status + ')');
       status = resp.status || 502;
-      // Only retry the "too small" case; bump the amount and try again.
-      if (/too small|too low|minim/i.test(lastErr)) { priceUsd += 1; continue; }
+      lastErr = (resp.json && resp.json.message) || ('NOWPayments unavailable (' + status + ')');
+      if (status === 429) { await sleep(1500); continue; }           // rate limited: back off, retry same price
+      if (/too small|too low|minim/i.test(lastErr)) { priceUsd = Math.ceil(priceUsd * 1.3); await sleep(400); continue; }
       break;
     }
 
     if (!data) return res.status(status).json({ error: lastErr });
+
+    // Remember the working amount so future deposits for this coin are a single call.
+    await upstash(['SET', cacheKey, String(priceUsd), 'EX', 21600]);
 
     return res.status(200).json({
       address: data.pay_address,
@@ -108,7 +133,7 @@ module.exports = async function handler(req, res) {
       payinExtraId: data.payin_extra_id || null,
       network: data.network || null,
       minUsd: priceUsd,
-      minCoin: minCoin,
+      minCoin: parseFloat(data.pay_amount) || null,
     });
   } catch (err) {
     return res.status(500).json({ error: 'Server error: ' + ((err && err.message) || 'unknown') });
