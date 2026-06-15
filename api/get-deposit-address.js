@@ -80,26 +80,8 @@ module.exports = async function handler(req, res) {
       return { ok: r.ok, status: r.status, json: j, text: t };
     };
 
-    // Determine the starting price for this coin:
-    //  1) a previously-discovered working amount cached in Redis (1 API call, no storm)
-    //  2) else the coin's USD minimum from NOWPayments
-    //  3) else the $10 floor
-    const cacheKey = `minprice:${payCurrency}`;
-    let priceUsd = MIN_USD;
-    const cached = parseFloat(await upstash(['GET', cacheKey]));
-    if (cached > 0) {
-      priceUsd = Math.max(MIN_USD, cached);
-    } else {
-      const mr = await jget(
-        `https://api.nowpayments.io/v1/min-amount?currency_from=${encodeURIComponent(payCurrency)}&fiat_equivalent=usd`,
-        { headers: { 'x-api-key': apiKey } }
-      );
-      const minFiat = mr.ok && mr.json ? parseFloat(mr.json.fiat_equivalent) : NaN;
-      if (minFiat > 0) priceUsd = Math.max(MIN_USD, Math.ceil(minFiat));
-    }
-
-    let data = null, lastErr = 'NOWPayments error', status = 502;
-    for (let attempt = 0; attempt < 5; attempt++) {
+    // Try to create a payment at a given USD price. Never throws.
+    const tryCreate = async (priceUsd) => {
       const resp = await jget('https://api.nowpayments.io/v1/payment', {
         method: 'POST',
         headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
@@ -113,12 +95,59 @@ module.exports = async function handler(req, res) {
           is_fee_paid_by_user: true,
         }),
       });
-      if (resp.ok && resp.json && resp.json.pay_address) { data = resp.json; break; }
-      status = resp.status || 502;
-      lastErr = (resp.json && resp.json.message) || ('NOWPayments unavailable (' + status + ')');
-      if (status === 429) { await sleep(1500); continue; }           // rate limited: back off, retry same price
-      if (/too small|too low|minim/i.test(lastErr)) { priceUsd = Math.ceil(priceUsd * 1.3); await sleep(400); continue; }
-      break;
+      if (resp.ok && resp.json && resp.json.pay_address) return { ok: true, data: resp.json };
+      const status = resp.status || 502;
+      const msg = (resp.json && resp.json.message) || ('NOWPayments unavailable (' + status + ')');
+      return { ok: false, status, msg, tooSmall: /too small|too low|minim/i.test(msg) };
+    };
+
+    const cacheKey = `minprice:${payCurrency}`;
+    let data = null, priceUsd = 0, lastErr = 'NOWPayments error', status = 502;
+
+    // Fast path: reuse the previously-discovered working amount (single call).
+    const cached = parseFloat(await upstash(['GET', cacheKey]));
+    if (cached >= MIN_USD) {
+      const r = await tryCreate(cached);
+      if (r.ok) { data = r.data; priceUsd = cached; }
+      else { status = r.status; lastErr = r.msg; } // stale cache → fall through to discovery
+    }
+
+    if (!data) {
+      // Seed near the coin's USD minimum (best-effort), never below the floor.
+      let seed = MIN_USD;
+      const mr = await jget(
+        `https://api.nowpayments.io/v1/min-amount?currency_from=${encodeURIComponent(payCurrency)}&fiat_equivalent=usd`,
+        { headers: { 'x-api-key': apiKey } }
+      );
+      const minFiat = mr.ok && mr.json ? parseFloat(mr.json.fiat_equivalent) : NaN;
+      if (minFiat > 0) seed = Math.max(MIN_USD, Math.ceil(minFiat));
+
+      // Phase 1 — coarse: grow until NOWPayments accepts it (upper bound `hi`).
+      let lo = MIN_USD - 1, hi = null, hiData = null, p = seed;
+      for (let i = 0; i < 5 && hi === null; i++) {
+        const r = await tryCreate(p);
+        if (r.ok) { hi = p; hiData = r.data; break; }
+        status = r.status; lastErr = r.msg;
+        if (r.status === 429) { await sleep(1500); continue; }       // rate limited: retry same price
+        if (r.tooSmall) { lo = p; p = Math.ceil(p * 1.6); await sleep(300); continue; }
+        break;                                                        // other error → give up
+      }
+
+      // Phase 2 — refine: binary-search down to the true minimum (won't go below MIN_USD).
+      let refines = 0;
+      while (hi !== null && hi - lo > 1 && refines < 4) {
+        refines++;
+        const mid = Math.max(MIN_USD, Math.floor((lo + hi) / 2));
+        if (mid <= lo || mid >= hi) break;
+        await sleep(300);
+        const r = await tryCreate(mid);
+        if (r.ok) { hi = mid; hiData = r.data; }
+        else if (r.status === 429) { await sleep(1500); refines--; }  // don't count rate-limit retries
+        else if (r.tooSmall) { lo = mid; }
+        else break;
+      }
+
+      if (hi !== null) { data = hiData; priceUsd = hi; }
     }
 
     if (!data) return res.status(status).json({ error: lastErr });
