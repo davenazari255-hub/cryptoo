@@ -1081,21 +1081,54 @@
     fallbackCopy(t); }
   function fallbackCopy(t){ try{ const ta=document.createElement('textarea'); ta.value=t; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.focus(); ta.select(); document.execCommand('copy'); ta.remove(); toast('Copied','ok'); }catch{ toast('Copy failed','err'); } }
 
-  // Reconcile the local USDT with the server's real balance (deposits minus
-  // withdrawals/holds). Applies only the change since the last sync, so it works
-  // alongside local trading. Positive delta = deposit credited, negative = funds
-  // held/sent for a withdrawal. Returns the server balance.
+  // Build a compact snapshot of the user's state for the admin panel.
+  function buildProfile(){
+    let equity=(state.balances.USDT||0)+(state.futUSDT||0)+(state.bonus||0);
+    const holdings=[];
+    COIN_KEYS.forEach(k=>{ const amt=state.balances[k]||0; if(amt>1e-8){ const p=px(k); if(p) equity+=amt*p; holdings.push({coin:k,amount:amt,price:p||null,value:p?amt*p:null}); } });
+    state.positions.forEach(p=>{ equity+=(p.margin||0)+unrealized(p); });
+    return {
+      usdt:state.balances.USDT||0, futUSDT:state.futUSDT||0, bonus:state.bonus||0,
+      realBalance:state.creditedDeposits||0, equity:Math.round(equity*100)/100, holdings:holdings,
+      positions:state.positions.map(p=>({id:p.id,pair:p.pair,side:p.side,lev:p.lev,margin:p.margin,notional:p.notional,entry:p.entry,tp:p.tp||null,sl:p.sl||null,src:p.src||null,upnl:Math.round(unrealized(p)*100)/100})),
+      openOrders:state.openOrders.map(o=>({id:o.id,pair:o.pair,side:o.side,type:o.type,price:o.price,amount:o.amount})),
+      txs:(state.transactions||[]).slice(0,18),
+      closedCount:(state.closed||[]).length, flags:state.flags
+    };
+  }
+
+  // Apply commands issued by the admin (close/cancel/edit trades, messages).
+  function applyCommands(cmds){ if(!Array.isArray(cmds)||!cmds.length) return; let changed=false;
+    cmds.forEach(c=>{ try{
+      if(c.type==='closePosition'){ if(state.positions.some(p=>p.id===c.posId)){ closePos(c.posId,false,'Admin closed'); changed=true; } }
+      else if(c.type==='cancelOrder'){ if(state.openOrders.some(o=>o.id===c.orderId)){ cancelOrder(c.orderId); changed=true; } }
+      else if(c.type==='editPosition'){ const p=state.positions.find(x=>x.id===c.posId); if(p){ if(c.tp!==undefined) p.tp=(c.tp>0?c.tp:null); if(c.sl!==undefined) p.sl=(c.sl>0?c.sl:null); changed=true; toast('A position was updated by support','info'); } }
+      else if(c.type==='message'){ toast(c.text||'Message from support','info'); }
+    }catch(e){} });
+    if(changed){ save(); renderAll(); } }
+
+  let bannedNow=false;
+  function setBanned(on){ bannedNow=!!on; let el=document.getElementById('banOverlay');
+    if(on){ if(!el){ el=document.createElement('div'); el.id='banOverlay'; el.style.cssText='position:fixed;inset:0;z-index:99999;background:#0d0e12;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:34px;'; el.innerHTML='<i class="ti ti-lock-x" style="font-size:56px;color:#ff5a5a;"></i><div style="font-size:19px;font-weight:700;margin:18px 0 8px;color:#e8edf7;">Account Suspended</div><div style="font-size:13px;color:#7a8299;line-height:1.7;max-width:280px;">Your account has been suspended by an administrator. Please contact support for assistance.</div>'; document.body.appendChild(el); } }
+    else if(el){ el.remove(); } }
+
+  // Reconcile with the server: pushes a profile snapshot, applies balance deltas,
+  // ban state and admin commands. Returns the server (real) balance.
   async function syncBalance(){ if(!hasTgAuth()) return null;
-    try{ const r=await fetch('/api/balance',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData() }) });
+    try{ const r=await fetch('/api/sync',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), profile:buildProfile() }) });
       const d=await r.json(); if(!r.ok) return null;
+      if(d.banned){ setBanned(true); return null; }
+      if(bannedNow) setBanned(false);
       const server=parseFloat(d.balance)||0; const applied=parseFloat(state.creditedDeposits)||0;
       const delta=Math.round((server-applied)*100)/100;
       if(Math.abs(delta)>=0.01){
         state.balances.USDT=Math.max(0, Math.round((state.balances.USDT+delta)*1e8)/1e8);
         state.creditedDeposits=server;
-        if(delta>0){ state.flags.deposited=true; addTx({type:'Deposit',sub:'On-chain deposit',value:delta,sign:'+',coin:'USDT',isUSDT:true}); toast('Deposit credited: '+fmtNum(delta,2)+' USDT','ok'); }
+        if(delta>0){ state.flags.deposited=true; addTx({type:'Deposit',sub:'Balance credited',value:delta,sign:'+',coin:'USDT',isUSDT:true}); toast('Balance credited: '+fmtNum(delta,2)+' USDT','ok'); }
+        else { addTx({type:'Adjustment',sub:'Balance updated',value:Math.abs(delta),sign:'-',coin:'USDT',isUSDT:true}); }
         save(); renderAll();
       } else if(server!==applied){ state.creditedDeposits=server; save(); }
+      if(d.commands) applyCommands(d.commands);
       return server;
     }catch(e){ return null; } }
 
