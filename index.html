@@ -214,6 +214,24 @@
     .wd-st.approved { color:#5d9bf5; background:#5d9bf51a; }
     .wd-st.paid { color:#4eeaa0; background:#4eeaa01a; }
     .wd-st.rejected { color:#ff5a5a; background:#ff5a5a1a; }
+    /* records */
+    .rec-tabs { display:flex; gap:8px; margin-bottom:12px; }
+    .rec-tab { flex:1; text-align:center; padding:9px 0; border-radius:10px; border:0.5px solid #2e3347; background:#161922; color:#9aa3b8; font-size:13px; font-weight:600; cursor:pointer; }
+    .rec-tab.on { border-color:#4eeaa0; color:#4eeaa0; background:#4eeaa01a; }
+    .rec-card { background:#161922; border:0.5px solid #232838; border-radius:12px; padding:12px 14px; margin-bottom:9px; }
+    .rec-top { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:8px; }
+    .rec-ic { display:flex; align-items:center; gap:10px; }
+    .rec-ic .ic { width:34px; height:34px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:17px; flex-shrink:0; }
+    .rec-ic .ic.in { background:#4eeaa01a; color:#4eeaa0; } .rec-ic .ic.out { background:#ff5a5a1a; color:#ff5a5a; } .rec-ic .ic.neu { background:#5d9bf51a; color:#5d9bf5; }
+    .rec-ic .tt { font-size:14px; font-weight:600; color:#e8edf7; } .rec-ic .ss { font-size:11px; color:#7a8299; margin-top:2px; }
+    .rec-val { font-size:15px; font-weight:700; text-align:right; white-space:nowrap; }
+    .rec-kv { display:flex; justify-content:space-between; gap:10px; font-size:11.5px; padding:3px 0; border-top:0.5px solid #1c2030; }
+    .rec-kv:first-of-type { border-top:none; }
+    .rec-kv .k { color:#7a8299; } .rec-kv .v { color:#cfd6e6; word-break:break-all; text-align:right; }
+    .rec-kv .v .cp { color:#4eeaa0; cursor:pointer; margin-left:5px; }
+    .rec-refresh { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:#9aa3b8; cursor:pointer; padding:5px 10px; border:0.5px solid #2e3347; border-radius:8px; background:#161922; }
+    .rec-refresh.spin i { animation:depSpin .8s linear infinite; }
+    .live-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:#4eeaa0; margin-right:5px; animation:depPulse 1.3s infinite; }
     /* pair sheet */
     .pair-search { display:flex; align-items:center; gap:8px; background:#181b25; border:0.5px solid #2e3347; border-radius:10px; padding:10px 14px; margin-bottom:12px; }
     .pair-search input { flex:1; background:none; border:none; color:#e2e8f0; font-size:14px; outline:none; }
@@ -983,12 +1001,71 @@
   function doBonusTransfer(){ const avail=bonusTransferable(); const a=parseFloat(v('bt-amt'))||0; if(a<=0){ toast('Enter amount','err'); return; } if(a>avail+1e-9){ toast('Exceeds transferable profit','err'); return; }
     state.bonus-=a; if(ui.bonusDest==='spot') state.balances.USDT+=a; else state.futUSDT+=a;
     addTx({type:'Bonus → '+(ui.bonusDest==='spot'?'Spot':'Futures'),sub:'Profit transfer',value:a,sign:'+',coin:'USDT',isUSDT:true}); save(); closeSheet(); toast('Transferred '+fmtNum(a,2)+' USDT to '+(ui.bonusDest==='spot'?'Spot':'Futures'),'ok'); renderAssets(); setBonusBtn(); updateFutInfo(); }
-  function openRecord(){ const tx=state.transactions; openSheet(sheetHead('Transaction Record')+(tx.length?tx.map(t=>{ const col=t.neutral?'#7a8299':(t.sign==='+'?'#4eeaa0':t.sign==='-'?'#ff5a5a':'#e2e8f0'); const val=t.isUSDT?(t.sign+fmtNum(t.value,2)+' USDT'):(t.coin?(t.sign+coinAmt(t.amount||t.value)+' '+t.coin):fmtNum(t.value,2)+' USDT');
-    return '<div class="tx-row"><div class="tx-left"><div class="t">'+t.type+'</div><div class="s">'+t.sub+' · '+t.time+'</div></div><div class="tx-right" style="color:'+col+'">'+val+'</div></div>'; }).join(''):'<div class="empty">No transactions yet</div>')); }
+  // ── Transaction / deposit / withdrawal records ──
+  let recTab='all', recPoll=null, recData={deposits:[],withdrawals:[]};
+  const WD_STATUS={pending:{t:'Pending review',c:'#ffae4e',i:'ti-clock-hour-4'},approved:{t:'Approved · sending',c:'#5d9bf5',i:'ti-loader'},paid:{t:'Completed',c:'#4eeaa0',i:'ti-circle-check'},rejected:{t:'Rejected · refunded',c:'#ff5a5a',i:'ti-circle-x'}};
+  function fullTime(ms){ if(!ms) return '—'; const d=new Date(typeof ms==='number'?ms:Date.parse(ms)); if(isNaN(d.getTime())) return '—'; const p=x=>String(x).padStart(2,'0'); return p(d.getDate())+'/'+p(d.getMonth()+1)+'/'+d.getFullYear()+' '+p(d.getHours())+':'+p(d.getMinutes()); }
+  function shortMid(s,head,tail){ s=String(s||''); if(s.length<=head+tail+3) return s; return s.slice(0,head)+'…'+s.slice(-tail); }
+
+  function openRecord(){ recTab='all'; if(recPoll){ clearInterval(recPoll); recPoll=null; } renderRecord(); loadRecords(); }
+
+  function renderRecord(){
+    const tabs='<div class="rec-tabs">'
+      +['all','deposits','withdrawals'].map(t=>'<div class="rec-tab'+(recTab===t?' on':'')+'" onclick="setRecTab(\''+t+'\')">'+(t==='all'?'All':t==='deposits'?'Deposits':'Withdrawals')+'</div>').join('')+'</div>';
+    const head='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;"><span style="font-size:11px;color:#7a8299;"><span class="live-dot"></span>Live · auto-updates</span>'
+      +'<span class="rec-refresh" id="rec-refresh" onclick="loadRecords(true)"><i class="ti ti-refresh"></i>Refresh</span></div>';
+    openSheet(sheetHead('Records')+tabs+head+'<div id="rec-body"></div>');
+    renderRecordBody(); }
+
+  function setRecTab(t){ recTab=t; document.querySelectorAll('.rec-tab').forEach((el,i)=>el.classList.toggle('on',['all','deposits','withdrawals'][i]===t)); renderRecordBody(); }
+
+  function depCard(x){
+    const usd=fmtNum(x.usd,2); const isAdj=(x.coin==='ADMIN'); const neg=x.usd<0;
+    const sign=neg?'-':'+'; const col=neg?'#ff5a5a':'#4eeaa0';
+    return '<div class="rec-card"><div class="rec-top"><div class="rec-ic"><div class="ic '+(neg?'out':isAdj?'neu':'in')+'"><i class="ti '+(isAdj?'ti-adjustments':'ti-arrow-down-left')+'"></i></div>'
+      +'<div><div class="tt">'+(isAdj?'Balance Adjustment':'Deposit')+'</div><div class="ss">'+(isAdj?(x.note||'By admin'):'On-chain · '+(x.network||x.coin||'')) +'</div></div></div>'
+      +'<div class="rec-val" style="color:'+col+';">'+sign+fmtNum(Math.abs(x.usd),2)+' USDT</div></div>'
+      +(x.coin&&!isAdj?'<div class="rec-kv"><span class="k">Asset · Network</span><span class="v">'+esc(x.coin)+(x.network&&x.network!==x.coin?' · '+esc(x.network):'')+'</span></div>':'')
+      +(x.actuallyPaid?'<div class="rec-kv"><span class="k">Received</span><span class="v">'+esc(x.actuallyPaid)+' '+esc(x.coin||'')+'</span></div>':'')
+      +'<div class="rec-kv"><span class="k">Credited</span><span class="v" style="color:#4eeaa0;">'+sign+usd.replace('-','')+' USDT</span></div>'
+      +(x.paymentId?'<div class="rec-kv"><span class="k">Payment ID</span><span class="v">'+esc(x.paymentId)+'<i class="ti ti-copy cp" onclick="copyText(\''+escAttr(x.paymentId)+'\')"></i></span></div>':'')
+      +'<div class="rec-kv"><span class="k">Time</span><span class="v">'+fullTime(x.at)+'</span></div></div>'; }
+
+  function wdCard(w){
+    const st=WD_STATUS[w.status]||{t:w.status,c:'#9aa3b8',i:'ti-circle'};
+    return '<div class="rec-card"><div class="rec-top"><div class="rec-ic"><div class="ic out"><i class="ti ti-arrow-up-right"></i></div>'
+      +'<div><div class="tt">Withdrawal</div><div class="ss" style="color:'+st.c+';"><i class="ti '+st.i+'" style="font-size:11px;"></i> '+st.t+'</div></div></div>'
+      +'<div class="rec-val" style="color:#ff5a5a;">-'+fmtNum(w.amount,2)+' USDT</div></div>'
+      +'<div class="rec-kv"><span class="k">Network</span><span class="v">'+esc(w.network)+'</span></div>'
+      +'<div class="rec-kv"><span class="k">Address</span><span class="v">'+esc(shortMid(w.address,10,8))+'<i class="ti ti-copy cp" onclick="copyText(\''+escAttr(w.address)+'\')"></i></span></div>'
+      +(w.memo?'<div class="rec-kv"><span class="k">Memo</span><span class="v">'+esc(w.memo)+'</span></div>':'')
+      +'<div class="rec-kv"><span class="k">Requested</span><span class="v">'+fullTime(w.createdAt)+'</span></div>'
+      +(w.decidedAt?'<div class="rec-kv"><span class="k">Updated</span><span class="v">'+fullTime(w.decidedAt)+'</span></div>':'')
+      +'<div class="rec-kv"><span class="k">Reference</span><span class="v">'+esc(shortMid(w.id,8,6))+'</span></div></div>'; }
+
+  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  function renderRecordBody(){ const body=document.getElementById('rec-body'); if(!body) return;
+    const deps=recData.deposits||[], wds=recData.withdrawals||[];
+    let items=[];
+    if(recTab==='deposits') items=deps.map(x=>({ts:x.at||0,html:depCard(x)}));
+    else if(recTab==='withdrawals') items=wds.map(x=>({ts:x.createdAt||0,html:wdCard(x)}));
+    else items=deps.map(x=>({ts:x.at||0,html:depCard(x)})).concat(wds.map(x=>({ts:x.createdAt||0,html:wdCard(x)})));
+    items.sort((a,b)=>b.ts-a.ts);
+    body.innerHTML = items.length ? items.map(i=>i.html).join('') : '<div class="empty">No '+(recTab==='all'?'records':recTab)+' yet</div>'; }
+
+  async function loadRecords(manual){ if(!hasTgAuth()){ const b=document.getElementById('rec-body'); if(b) b.innerHTML='<div class="empty">Open from Telegram to view records</div>'; return; }
+    const btn=document.getElementById('rec-refresh'); if(manual&&btn) btn.classList.add('spin');
+    try{ const r=await fetch('/api/records',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData() }) });
+      const d=await r.json(); if(r.ok&&d){ recData={deposits:d.deposits||[],withdrawals:d.withdrawals||[]}; renderRecordBody(); }
+    }catch(e){}
+    if(btn) setTimeout(()=>btn.classList.remove('spin'),500);
+    // Live refresh while the records sheet is open.
+    if(!recPoll){ recPoll=setInterval(()=>{ if(!document.getElementById('rec-body')){ clearInterval(recPoll); recPoll=null; return; } loadRecords(); }, 12000); } }
 
   // ── SHEETS ──
   function openSheet(html){ document.getElementById('sheetBody').innerHTML=html; document.getElementById('sheetOverlay').classList.add('open'); }
-  function closeSheet(e){ document.getElementById('sheetOverlay').classList.remove('open'); if(typeof depPoll!=='undefined'&&depPoll){ clearInterval(depPoll); depPoll=null; } }
+  function closeSheet(e){ document.getElementById('sheetOverlay').classList.remove('open'); if(typeof depPoll!=='undefined'&&depPoll){ clearInterval(depPoll); depPoll=null; } if(typeof recPoll!=='undefined'&&recPoll){ clearInterval(recPoll); recPoll=null; } if(typeof wdPoll!=='undefined'&&wdPoll){ clearInterval(wdPoll); wdPoll=null; } }
   function sheetHead(title){ return '<div class="sheet-handle"></div><div class="sheet-titlebar"><div class="sheet-title">'+title+'</div><i class="ti ti-x sheet-x" onclick="closeSheet()"></i></div>'; }
   function sheetHeadBack(title,backFn){ return '<div class="sheet-handle"></div><div class="sheet-titlebar"><i class="ti ti-chevron-left sheet-x" style="margin-right:auto;" onclick="'+backFn+'"></i><div class="sheet-title" style="position:absolute;left:50%;transform:translateX(-50%);">'+title+'</div><i class="ti ti-x sheet-x" onclick="closeSheet()"></i></div>'; }
 
@@ -1170,11 +1247,15 @@
     +extra
     +'<button class="dep-copy" onclick="copyText(\''+addr+'\')"><i class="ti ti-copy"></i>Copy Address</button>'
     +'<div class="dep-tip" style="margin-top:12px;border-color:#ffae4e33;"><i class="ti ti-shield-check" style="color:#ffae4e;"></i><span>Send only <b style="color:#cfd6e6;">'+coin.sym+'</b> over the <b style="color:#cfd6e6;">'+coin.net+'</b> network. Other coins/networks may be lost. Minimum deposit <b style="color:#cfd6e6;">'+minCoin+'</b>.</span></div>'
-    +'<div class="dep-status" id="dep-status"><span class="dot"></span><span id="dep-status-txt">Waiting for payment…</span></div>');
+    +'<div style="display:flex;align-items:center;justify-content:space-between;margin:12px 2px 0;"><span style="font-size:11px;color:#7a8299;"><span class="live-dot"></span>Live · checking automatically</span>'
+    +'<span class="rec-refresh" id="dep-refresh" onclick="depCheckNow()"><i class="ti ti-refresh"></i>Refresh</span></div>'
+    +'<div class="dep-status" id="dep-status" style="margin-top:8px;"><span class="dot"></span><span id="dep-status-txt">Waiting for payment…</span></div>');
     startDepositPoll(d.paymentId, min); }
 
   // Polls payment status for live UI feedback; the actual credit is done
   // server-side by the IPN webhook, then pulled in via syncBalance().
+  let depCheckFn=null;
+  function depCheckNow(){ const btn=document.getElementById('dep-refresh'); if(btn) btn.classList.add('spin'); if(depCheckFn) depCheckFn(); if(btn) setTimeout(()=>btn.classList.remove('spin'),500); }
   function startDepositPoll(paymentId, minUsd){ if(depPoll){ clearInterval(depPoll); depPoll=null; }
     const MAP={ waiting:'Waiting for payment…', confirming:'Confirming on-chain…', confirmed:'Confirmed, processing…', sending:'Crediting…', partially_paid:'Amount below $'+minUsd+' — not credited', finished:'Payment received — crediting…', failed:'Payment failed', refunded:'Refunded', expired:'Payment expired' };
     const setStat=(txt,cls)=>{ const box=document.getElementById('dep-status'), t=document.getElementById('dep-status-txt'); if(t) t.textContent=txt; if(box){ box.className='dep-status'+(cls?' '+cls:''); } };
@@ -1186,11 +1267,11 @@
         } else if(st==='failed'||st==='refunded'||st==='expired'||st==='partially_paid'){ if(depPoll){ clearInterval(depPoll); depPoll=null; } setStat(MAP[st]||st,'err');
         } else { setStat(MAP[st]||st); }
       }catch(e){} };
-    check(); depPoll=setInterval(check, 15000); }
+    depCheckFn=check; check(); depPoll=setInterval(check, 15000); }
   // ── Withdraw (USDT, manual admin approval) ──
   const WD_MIN=10;
   const WD_NETWORKS=[{net:'TRC20',k:'usdttrc20'},{net:'ERC20',k:'usdterc20'},{net:'BEP20',k:'usdtbsc'}];
-  let wdNet='TRC20', wdAvail=0, wdBusy=false;
+  let wdNet='TRC20', wdAvail=0, wdBusy=false, wdPoll=null;
   const WD_ST={pending:'Pending review',approved:'Approved · sending',paid:'Completed',rejected:'Rejected · refunded'};
 
   async function openWithdraw(){ if(depPoll){ clearInterval(depPoll); depPoll=null; }
@@ -1231,14 +1312,39 @@
     }catch(e){ toast('Network error','err'); if(btn){ btn.disabled=false; btn.innerHTML='<i class="ti ti-arrow-up-circle"></i>Request Withdrawal'; } }
     finally{ wdBusy=false; } }
 
-  function showWithdrawDone(w){
-    openSheet(sheetHeadBack('Withdrawal Requested','openWithdraw()')
-    +'<div style="text-align:center;padding:14px 0 6px;"><i class="ti ti-clock-hour-4" style="font-size:46px;color:#ffae4e;"></i></div>'
-    +'<div style="text-align:center;font-size:18px;font-weight:700;margin-bottom:4px;">'+fmtNum(w.amount,2)+' USDT</div>'
-    +'<div style="text-align:center;font-size:12px;color:#7a8299;margin-bottom:16px;">'+w.network+' network · pending review</div>'
-    +'<div class="dep-addr-box"><div class="dab-lab"><span>Destination</span></div><div class="dab-val">'+escAttr(w.address)+'</div></div>'
-    +'<div class="dep-tip" style="margin-top:12px;"><i class="ti ti-info-circle"></i><span>Your request is queued for review. Funds are sent manually after approval — you can track the status below in your withdrawal history.</span></div>'
-    +'<button class="dep-copy ghost" style="margin-top:12px;" onclick="openWithdraw()">Done</button>'); }
+  function showWithdrawDone(w){ if(wdPoll){ clearInterval(wdPoll); wdPoll=null; }
+    const st=WD_STATUS[w.status]||{t:w.status,c:'#ffae4e',i:'ti-clock-hour-4'};
+    openSheet(sheetHeadBack('Withdrawal Status','openWithdraw()')
+    +'<div style="text-align:center;padding:14px 0 6px;"><i class="ti '+st.i+'" id="wdd-icon" style="font-size:46px;color:'+st.c+';"></i></div>'
+    +'<div style="text-align:center;font-size:20px;font-weight:700;margin-bottom:4px;">'+fmtNum(w.amount,2)+' USDT</div>'
+    +'<div style="text-align:center;font-size:12px;color:#7a8299;margin-bottom:6px;">'+w.network+' network</div>'
+    +'<div style="text-align:center;margin-bottom:16px;"><span class="wd-st '+w.status+'" id="wdd-badge" style="font-size:12px;padding:5px 12px;">'+st.t+'</span></div>'
+    +'<div class="rec-card"><div class="rec-kv"><span class="k">Destination</span><span class="v">'+esc(shortMid(w.address,12,10))+'<i class="ti ti-copy cp" onclick="copyText(\''+escAttr(w.address)+'\')"></i></span></div>'
+    +(w.memo?'<div class="rec-kv"><span class="k">Memo</span><span class="v">'+esc(w.memo)+'</span></div>':'')
+    +'<div class="rec-kv"><span class="k">Requested</span><span class="v">'+fullTime(w.createdAt)+'</span></div>'
+    +'<div class="rec-kv"><span class="k">Reference</span><span class="v">'+esc(shortMid(w.id,8,6))+'</span></div></div>'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;margin:12px 2px 0;"><span style="font-size:11px;color:#7a8299;"><span class="live-dot"></span>Live · updates automatically</span>'
+    +'<span class="rec-refresh" id="wdd-refresh" onclick="refreshWithdrawStatus(\''+w.id+'\',true)"><i class="ti ti-refresh"></i>Refresh</span></div>'
+    +'<div class="dep-tip" style="margin-top:12px;" id="wdd-tip"><i class="ti ti-info-circle"></i><span>Your request is queued for review. Funds are sent manually after approval.</span></div>'
+    +'<button class="dep-copy ghost" style="margin-top:12px;" onclick="openWithdraw()">Back</button>');
+    // Live-poll this withdrawal's status until it reaches a final state.
+    wdPoll=setInterval(()=>{ if(!document.getElementById('wdd-badge')){ clearInterval(wdPoll); wdPoll=null; return; } refreshWithdrawStatus(w.id); }, 10000); }
+
+  async function refreshWithdrawStatus(id,manual){ if(!hasTgAuth()) return;
+    const btn=document.getElementById('wdd-refresh'); if(manual&&btn) btn.classList.add('spin');
+    try{ const r=await fetch('/api/withdraw',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), action:'list' }) });
+      const d=await r.json(); const w=((d&&d.withdrawals)||[]).find(x=>x.id===id);
+      if(w){ const st=WD_STATUS[w.status]||{t:w.status,c:'#9aa3b8',i:'ti-circle'};
+        const badge=document.getElementById('wdd-badge'), icon=document.getElementById('wdd-icon'), tip=document.getElementById('wdd-tip');
+        if(badge){ badge.className='wd-st '+w.status; badge.style.cssText='font-size:12px;padding:5px 12px;'; badge.textContent=st.t; }
+        if(icon){ icon.className='ti '+st.i; icon.style.color=st.c; }
+        if(w.status==='rejected'){ if(tip) tip.querySelector('span').textContent='This withdrawal was rejected and the amount has been refunded to your balance.'; await syncBalance(); }
+        else if(w.status==='paid'){ if(tip) tip.querySelector('span').textContent='Completed — the funds have been sent to your address.'; }
+        else if(w.status==='approved'){ if(tip) tip.querySelector('span').textContent='Approved — your withdrawal is being processed and sent.'; }
+        if(w.status==='paid'||w.status==='rejected'){ if(wdPoll){ clearInterval(wdPoll); wdPoll=null; } }
+      }
+    }catch(e){}
+    if(btn) setTimeout(()=>btn.classList.remove('spin'),500); }
 
   async function loadWithdrawHistory(){
     try{ const r=await fetch('/api/withdraw',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), action:'list' }) });
