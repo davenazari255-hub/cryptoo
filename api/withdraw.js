@@ -51,6 +51,8 @@ module.exports = async function handler(req, res) {
   const userId = `tg_${user.id}`;
 
   try {
+    if (await upstash(['GET', `banned:${userId}`])) return res.status(403).json({ error: 'Account suspended' });
+
     // List this user's own withdrawal history.
     if (body.action === 'list') {
       const ids = (await upstash(['LRANGE', `wd:user:${userId}`, 0, 29])) || [];

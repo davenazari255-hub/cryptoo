@@ -37,6 +37,82 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ pending });
     }
 
+    // ── User management ──
+    if (body.action === 'users') {
+      const ids = (await upstash(['SMEMBERS', 'users'])) || [];
+      if (!ids.length) return res.status(200).json({ users: [] });
+      const [profiles, bals, bans] = await Promise.all([
+        upstash(['MGET', ...ids.map((id) => `profile:${id}`)]),
+        upstash(['MGET', ...ids.map((id) => `bal:${id}`)]),
+        upstash(['MGET', ...ids.map((id) => `banned:${id}`)]),
+      ]);
+      const users = ids.map((id, i) => {
+        const p = parseJSON(profiles[i]) || {};
+        return {
+          userId: id, username: p.username || null, name: p.name || null,
+          joinedAt: p.joinedAt || null, lastSeen: p.lastSeen || null,
+          balance: parseFloat(bals[i]) || 0, equity: p.equity || 0,
+          positions: (p.positions || []).length, openOrders: (p.openOrders || []).length,
+          banned: !!bans[i],
+        };
+      }).sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+      return res.status(200).json({ users });
+    }
+
+    if (body.action === 'user') {
+      const id = String(body.id || '');
+      if (!id) return res.status(400).json({ error: 'id required' });
+      const [profile, bal, banned, wdIds, ledger] = await Promise.all([
+        upstash(['GET', `profile:${id}`]),
+        upstash(['GET', `bal:${id}`]),
+        upstash(['GET', `banned:${id}`]),
+        upstash(['LRANGE', `wd:user:${id}`, 0, 29]),
+        upstash(['LRANGE', `ledger:${id}`, 0, 29]),
+      ]);
+      let withdrawals = [];
+      if (wdIds && wdIds.length) {
+        const items = await upstash(['MGET', ...wdIds.map((w) => `wd:item:${w}`)]);
+        withdrawals = (items || []).map(parseJSON).filter(Boolean);
+      }
+      return res.status(200).json({
+        profile: parseJSON(profile) || { userId: id },
+        balance: parseFloat(bal) || 0,
+        banned: !!banned,
+        withdrawals,
+        deposits: (ledger || []).map(parseJSON).filter(Boolean),
+      });
+    }
+
+    if (body.action === 'adjust') {
+      const id = String(body.id || '');
+      const amount = Math.round((parseFloat(body.amount) || 0) * 100) / 100;
+      if (!id || !amount) return res.status(400).json({ error: 'id and non-zero amount required' });
+      const newBal = parseFloat(await upstash(['INCRBYFLOAT', `bal:${id}`, amount]));
+      if (newBal < 0) { await upstash(['INCRBYFLOAT', `bal:${id}`, -amount]); return res.status(400).json({ error: 'Would make balance negative' }); }
+      await upstash(['LPUSH', `ledger:${id}`, JSON.stringify({ usd: amount, coin: 'ADMIN', note: String(body.note || 'Admin adjustment'), at: Date.now() })]);
+      await upstash(['LTRIM', `ledger:${id}`, 0, 99]);
+      return res.status(200).json({ ok: true, balance: newBal });
+    }
+
+    if (body.action === 'ban' || body.action === 'unban') {
+      const id = String(body.id || '');
+      if (!id) return res.status(400).json({ error: 'id required' });
+      if (body.action === 'ban') await upstash(['SET', `banned:${id}`, '1']);
+      else await upstash(['DEL', `banned:${id}`]);
+      return res.status(200).json({ ok: true, banned: body.action === 'ban' });
+    }
+
+    // Queue a trade command for the user's app to apply on next sync.
+    if (body.action === 'command') {
+      const id = String(body.id || '');
+      const cmd = body.command;
+      const valid = cmd && ['closePosition', 'cancelOrder', 'editPosition', 'message'].includes(cmd.type);
+      if (!id || !valid) return res.status(400).json({ error: 'id and a valid command required' });
+      await upstash(['LPUSH', `cmd:${id}`, JSON.stringify(cmd)]);
+      await upstash(['LTRIM', `cmd:${id}`, 0, 99]);
+      return res.status(200).json({ ok: true });
+    }
+
     if (body.action === 'decide') {
       const id = String(body.id || '');
       const decision = String(body.decision || ''); // approve | reject | paid

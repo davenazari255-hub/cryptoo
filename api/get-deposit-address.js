@@ -64,6 +64,8 @@ module.exports = async function handler(req, res) {
   if (!user) return res.status(401).json({ error: 'Telegram authentication failed' });
   const userId = `tg_${user.id}`;
 
+  if (await upstash(['GET', `banned:${userId}`])) return res.status(403).json({ error: 'Account suspended' });
+
   const payCurrency = String(currency).toLowerCase();
 
   const host = req.headers['x-forwarded-host'] || req.headers.host;
