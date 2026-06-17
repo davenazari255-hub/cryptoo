@@ -82,9 +82,13 @@ module.exports = async function handler(req, res) {
 
     if (usd >= MIN_USD) {
       try {
+        const tsRaw = payload.updated_at || payload.created_at || null;
+        const ts = tsRaw ? (Date.parse(tsRaw) || null) : null;
         await creditDeposit(userId, payload.payment_id, usd, {
           coin: String(payload.pay_currency || '').toUpperCase(),
-          at: payload.updated_at || payload.created_at || null,
+          network: String(payload.network || payload.pay_currency || '').toUpperCase(),
+          actuallyPaid: payload.actually_paid != null ? String(payload.actually_paid) : null,
+          at: ts,
         });
       } catch (e) {
         return res.status(500).json({ error: 'credit failed' }); // triggers NOWPayments retry
