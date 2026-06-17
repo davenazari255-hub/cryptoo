@@ -191,6 +191,29 @@
     .dep-status.err .dot { background:#ff5a5a; animation:none; }
     @keyframes depPulse { 0%,100%{opacity:.35;} 50%{opacity:1;} }
     @keyframes depSpin { to{ transform:rotate(360deg); } }
+    /* withdraw */
+    .wd-bal { background:linear-gradient(135deg,#13261d,#161922); border:0.5px solid #2a4d3a; border-radius:14px; padding:14px 16px; margin-bottom:14px; }
+    .wd-bal .lab { font-size:11px; color:#7aa893; margin-bottom:4px; }
+    .wd-bal .val { font-size:24px; font-weight:700; color:#e8edf7; }
+    .wd-bal .val small { font-size:13px; color:#7a8299; font-weight:500; }
+    .wd-chips { display:flex; gap:8px; margin-bottom:12px; }
+    .wd-chip { flex:1; text-align:center; padding:10px 0; border-radius:10px; border:0.5px solid #2e3347; background:#161922; color:#9aa3b8; font-size:13px; font-weight:600; cursor:pointer; }
+    .wd-chip.on { border-color:#4eeaa0; color:#4eeaa0; background:#4eeaa01a; }
+    .wd-field { margin-bottom:6px; }
+    .wd-field .fl { font-size:11px; color:#7a8299; margin:10px 2px 5px; }
+    .wd-input { display:flex; align-items:center; gap:8px; background:#161922; border:0.5px solid #232838; border-radius:11px; padding:12px 14px; }
+    .wd-input input { flex:1; background:none; border:none; color:#e8edf7; font-size:14px; outline:none; min-width:0; }
+    .wd-max { font-size:12px; font-weight:700; color:#4eeaa0; cursor:pointer; }
+    .wd-hist { margin-top:18px; }
+    .wd-hist .ht { font-size:12px; color:#7a8299; margin-bottom:8px; }
+    .wd-item { display:flex; justify-content:space-between; align-items:center; padding:10px 12px; background:#161922; border:0.5px solid #232838; border-radius:11px; margin-bottom:7px; }
+    .wd-item .wi-a { font-size:14px; font-weight:600; color:#e8edf7; }
+    .wd-item .wi-s { font-size:11px; color:#7a8299; margin-top:2px; }
+    .wd-st { font-size:10px; font-weight:700; border-radius:6px; padding:3px 8px; text-transform:uppercase; }
+    .wd-st.pending { color:#ffae4e; background:#ffae4e1a; }
+    .wd-st.approved { color:#5d9bf5; background:#5d9bf51a; }
+    .wd-st.paid { color:#4eeaa0; background:#4eeaa01a; }
+    .wd-st.rejected { color:#ff5a5a; background:#ff5a5a1a; }
     /* pair sheet */
     .pair-search { display:flex; align-items:center; gap:8px; background:#181b25; border:0.5px solid #2e3347; border-radius:10px; padding:10px 14px; margin-bottom:12px; }
     .pair-search input { flex:1; background:none; border:none; color:#e2e8f0; font-size:14px; outline:none; }
@@ -1058,18 +1081,23 @@
     fallbackCopy(t); }
   function fallbackCopy(t){ try{ const ta=document.createElement('textarea'); ta.value=t; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.focus(); ta.select(); document.execCommand('copy'); ta.remove(); toast('Copied','ok'); }catch{ toast('Copy failed','err'); } }
 
-  // Pull the real server balance and apply only the newly-credited delta to USDT.
-  // Idempotent: state.creditedDeposits tracks what was already applied locally.
-  async function syncBalance(){ if(!hasTgAuth()) return;
+  // Reconcile the local USDT with the server's real balance (deposits minus
+  // withdrawals/holds). Applies only the change since the last sync, so it works
+  // alongside local trading. Positive delta = deposit credited, negative = funds
+  // held/sent for a withdrawal. Returns the server balance.
+  async function syncBalance(){ if(!hasTgAuth()) return null;
     try{ const r=await fetch('/api/balance',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData() }) });
-      const d=await r.json(); if(!r.ok) return;
+      const d=await r.json(); if(!r.ok) return null;
       const server=parseFloat(d.balance)||0; const applied=parseFloat(state.creditedDeposits)||0;
       const delta=Math.round((server-applied)*100)/100;
-      if(delta>0){ state.balances.USDT+=delta; state.creditedDeposits=server; state.flags.deposited=true;
-        addTx({type:'Deposit',sub:'On-chain deposit',value:delta,sign:'+',coin:'USDT',isUSDT:true});
-        save(); renderAll(); toast('Deposit credited: '+fmtNum(delta,2)+' USDT','ok');
+      if(Math.abs(delta)>=0.01){
+        state.balances.USDT=Math.max(0, Math.round((state.balances.USDT+delta)*1e8)/1e8);
+        state.creditedDeposits=server;
+        if(delta>0){ state.flags.deposited=true; addTx({type:'Deposit',sub:'On-chain deposit',value:delta,sign:'+',coin:'USDT',isUSDT:true}); toast('Deposit credited: '+fmtNum(delta,2)+' USDT','ok'); }
+        save(); renderAll();
       } else if(server!==applied){ state.creditedDeposits=server; save(); }
-    }catch(e){} }
+      return server;
+    }catch(e){ return null; } }
 
   function depCoinRow(c,i){ return '<div class="dep-coin" onclick="genDeposit('+i+')">'+depLogo(c)
     +'<div class="dc-meta"><div class="dc-name">'+c.sym+' <span style="color:#7a8299;font-weight:400;font-size:12px;">'+c.name+'</span></div>'
@@ -1126,10 +1154,67 @@
         } else { setStat(MAP[st]||st); }
       }catch(e){} };
     check(); depPoll=setInterval(check, 15000); }
-  function openWithdraw(){ openSheet(sheetHead('Withdraw USDT (Demo)')+'<div style="font-size:12px;color:#7a8299;margin-bottom:10px;">Available: '+fmtNum(state.balances.USDT||0,2)+' USDT</div>'
-    +'<div class="input-row"><input id="wd-amt" inputmode="decimal" placeholder="Amount"><span class="u">USDT</span></div>'
-    +'<button class="buy-btn" style="margin-top:8px;" onclick="doWithdraw()">Withdraw</button>'); }
-  function doWithdraw(){ const a=parseFloat(v('wd-amt'))||0; if(a<=0){ toast('Enter amount','err'); return; } if(a>(state.balances.USDT||0)+1e-9){ toast('Insufficient balance','err'); return; } state.balances.USDT-=a; addTx({type:'Withdraw',sub:'Demo',value:a,sign:'-',coin:'USDT',isUSDT:true}); save(); closeSheet(); toast('Withdrew '+fmtNum(a,2)+' USDT','ok'); renderAll(); }
+  // ── Withdraw (USDT, manual admin approval) ──
+  const WD_MIN=10;
+  const WD_NETWORKS=[{net:'TRC20',k:'usdttrc20'},{net:'ERC20',k:'usdterc20'},{net:'BEP20',k:'usdtbsc'}];
+  let wdNet='TRC20', wdAvail=0, wdBusy=false;
+  const WD_ST={pending:'Pending review',approved:'Approved · sending',paid:'Completed',rejected:'Rejected · refunded'};
+
+  async function openWithdraw(){ if(depPoll){ clearInterval(depPoll); depPoll=null; }
+    if(!hasTgAuth()){ openSheet(sheetHead('Withdraw USDT')+'<div class="dep-tip" style="border-color:#ff5a5a44;"><i class="ti ti-alert-triangle" style="color:#ff5a5a;"></i><span>Withdrawals require opening the app from your Telegram bot so your account can be verified. Please launch KolonoEX inside Telegram.</span></div>'); return; }
+    openSheet(sheetHead('Withdraw USDT')+'<div style="text-align:center;padding:46px 0;color:#7a8299;"><i class="ti ti-loader-2" style="font-size:30px;display:inline-block;animation:depSpin 1s linear infinite;"></i><div style="margin-top:12px;font-size:13px;">Loading your balance…</div></div>');
+    const sb=await syncBalance(); wdAvail=(sb==null)?(state.creditedDeposits||0):sb;
+    renderWithdrawForm(); }
+
+  function renderWithdrawForm(){
+    const chips=WD_NETWORKS.map(n=>'<div class="wd-chip'+(n.net===wdNet?' on':'')+'" data-net="'+n.net+'" onclick="setWdNet(\''+n.net+'\')">'+n.net+'</div>').join('');
+    openSheet(sheetHead('Withdraw USDT')
+    +'<div class="wd-bal"><div class="lab">Withdrawable balance</div><div class="val">'+fmtNum(wdAvail,2)+' <small>USDT</small></div></div>'
+    +'<div class="wd-field"><div class="fl">Network</div><div class="wd-chips">'+chips+'</div></div>'
+    +'<div class="wd-field"><div class="fl">Amount</div><div class="wd-input"><input id="wd-amt" inputmode="decimal" placeholder="Min '+WD_MIN+' USDT"><span class="wd-max" onclick="wdSetMax()">MAX</span><span style="font-size:13px;color:#7a8299;">USDT</span></div></div>'
+    +'<div class="wd-field"><div class="fl">Destination address</div><div class="wd-input"><input id="wd-addr" placeholder="Paste USDT '+wdNet+' address" autocomplete="off" spellcheck="false"><i class="ti ti-clipboard" style="color:#7a8299;cursor:pointer;" onclick="wdPaste()"></i></div></div>'
+    +'<div class="dep-tip" style="margin:10px 0;border-color:#ffae4e33;"><i class="ti ti-alert-triangle" style="color:#ffae4e;"></i><span>Make sure the address matches the <b style="color:#cfd6e6;">'+wdNet+'</b> network. Requests are reviewed and paid manually — funds arrive after approval.</span></div>'
+    +'<button class="dep-copy" id="wd-submit" onclick="submitWithdraw()"><i class="ti ti-arrow-up-circle"></i>Request Withdrawal</button>'
+    +'<div class="wd-hist" id="wd-hist"></div>');
+    loadWithdrawHistory(); }
+
+  function setWdNet(n){ wdNet=n; document.querySelectorAll('.wd-chip').forEach(c=>c.classList.toggle('on', c.dataset.net===n));
+    const a=document.getElementById('wd-addr'); if(a) a.placeholder='Paste USDT '+n+' address'; }
+  function wdSetMax(){ setV('wd-amt', Math.floor((wdAvail||0)*100)/100); }
+  async function wdPaste(){ try{ const t=await navigator.clipboard.readText(); if(t) setV('wd-addr', t.trim()); }catch{ toast('Paste not available','err'); } }
+
+  async function submitWithdraw(){ if(wdBusy) return;
+    const amt=parseFloat(v('wd-amt'))||0; const addr=(v('wd-addr')||'').trim();
+    if(amt<WD_MIN){ toast('Minimum withdrawal is '+WD_MIN+' USDT','err'); return; }
+    if(amt>wdAvail+1e-9){ toast('Amount exceeds withdrawable balance','err'); return; }
+    if(addr.length<16){ toast('Enter a valid destination address','err'); return; }
+    wdBusy=true; const btn=document.getElementById('wd-submit'); if(btn){ btn.disabled=true; btn.innerHTML='<i class="ti ti-loader-2" style="display:inline-block;animation:depSpin 1s linear infinite;"></i>Submitting…'; }
+    try{
+      const r=await fetch('/api/withdraw',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), network:wdNet, address:addr, amount:amt }) });
+      let text='',d=null; try{ text=await r.text(); d=JSON.parse(text); }catch(e){}
+      if(!r.ok || !d || !d.ok){ console.error('withdraw',r.status,text); toast((d&&d.error)||('Server error '+r.status),'err'); if(btn){ btn.disabled=false; btn.innerHTML='<i class="ti ti-arrow-up-circle"></i>Request Withdrawal'; } wdBusy=false; return; }
+      await syncBalance(); wdAvail=parseFloat(d.balance)||0;
+      showWithdrawDone(d.withdrawal);
+    }catch(e){ toast('Network error','err'); if(btn){ btn.disabled=false; btn.innerHTML='<i class="ti ti-arrow-up-circle"></i>Request Withdrawal'; } }
+    finally{ wdBusy=false; } }
+
+  function showWithdrawDone(w){
+    openSheet(sheetHeadBack('Withdrawal Requested','openWithdraw()')
+    +'<div style="text-align:center;padding:14px 0 6px;"><i class="ti ti-clock-hour-4" style="font-size:46px;color:#ffae4e;"></i></div>'
+    +'<div style="text-align:center;font-size:18px;font-weight:700;margin-bottom:4px;">'+fmtNum(w.amount,2)+' USDT</div>'
+    +'<div style="text-align:center;font-size:12px;color:#7a8299;margin-bottom:16px;">'+w.network+' network · pending review</div>'
+    +'<div class="dep-addr-box"><div class="dab-lab"><span>Destination</span></div><div class="dab-val">'+escAttr(w.address)+'</div></div>'
+    +'<div class="dep-tip" style="margin-top:12px;"><i class="ti ti-info-circle"></i><span>Your request is queued for review. Funds are sent manually after approval — you can track the status below in your withdrawal history.</span></div>'
+    +'<button class="dep-copy ghost" style="margin-top:12px;" onclick="openWithdraw()">Done</button>'); }
+
+  async function loadWithdrawHistory(){
+    try{ const r=await fetch('/api/withdraw',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), action:'list' }) });
+      const d=await r.json(); const el=document.getElementById('wd-hist'); if(!el) return;
+      const list=(d&&d.withdrawals)||[]; if(!list.length){ el.innerHTML=''; return; }
+      el.innerHTML='<div class="ht">Recent withdrawals</div>'+list.slice(0,8).map(w=>
+        '<div class="wd-item"><div><div class="wi-a">'+fmtNum(w.amount,2)+' USDT</div><div class="wi-s">'+w.network+' · '+(w.address||'').slice(0,10)+'…</div></div>'
+        +'<span class="wd-st '+w.status+'">'+(WD_ST[w.status]||w.status)+'</span></div>').join('');
+    }catch(e){} }
 
   // ── PRICE TICK ──
   function isActive(name){ const e=document.getElementById('page-'+name); return e&&e.classList.contains('active'); }
