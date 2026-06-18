@@ -286,6 +286,28 @@
     .bonus-card .lab { font-size:13px; color:#7aa893; margin-bottom:6px; }
     .bonus-card .val { font-size:30px; font-weight:700; color:#4eeaa0; }
     .bonus-card .desc { font-size:11.5px; color:#7a8299; margin-top:10px; line-height:1.5; }
+    /* invite banner */
+    .invite-banner { position:relative; overflow:hidden; display:flex; align-items:center; gap:13px; background:linear-gradient(110deg,#1a2030,#191c27); border:0.5px solid #34406b; border-radius:14px; padding:14px 15px; margin-top:12px; cursor:pointer; }
+    .invite-banner:active { background:linear-gradient(110deg,#1d2436,#1b1f2c); }
+    .ib-glow { position:absolute; top:-40px; right:-30px; width:120px; height:120px; background:radial-gradient(circle,#5d7df577,transparent 70%); pointer-events:none; }
+    .ib-ic { width:42px; height:42px; border-radius:12px; background:linear-gradient(135deg,#5d7df5,#8a5df5); display:flex; align-items:center; justify-content:center; font-size:21px; color:#fff; flex-shrink:0; z-index:1; }
+    .ib-txt { flex:1; z-index:1; } .ib-t { font-size:14px; font-weight:700; color:#eef1f8; } .ib-s { font-size:11.5px; color:#9aa6c4; margin-top:2px; } .ib-s b { color:#7e9bff; }
+    .ib-chev { color:#5d6b95; font-size:20px; z-index:1; }
+    /* invite sheet */
+    .iv-hero { text-align:center; padding:6px 0 16px; }
+    .iv-hero .ring { width:74px; height:74px; border-radius:50%; background:linear-gradient(135deg,#5d7df5,#8a5df5); display:inline-flex; align-items:center; justify-content:center; font-size:34px; color:#fff; box-shadow:0 8px 26px rgba(93,125,245,.4); }
+    .iv-hero .h { font-size:19px; font-weight:700; margin-top:12px; } .iv-hero .p { font-size:12.5px; color:#8b93a7; margin-top:5px; line-height:1.6; }
+    .iv-stats { display:flex; gap:10px; margin-bottom:16px; }
+    .iv-stat { flex:1; background:#161922; border:0.5px solid #232838; border-radius:13px; padding:14px 10px; text-align:center; }
+    .iv-stat .n { font-size:24px; font-weight:700; color:#7e9bff; } .iv-stat .n.green { color:#4eeaa0; } .iv-stat .l { font-size:11px; color:#7a8299; margin-top:3px; }
+    .iv-link-box { background:#161922; border:0.5px solid #232838; border-radius:12px; padding:11px 13px; display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+    .iv-link-box .lk { flex:1; font-size:12px; color:#cfd6e6; word-break:break-all; min-width:0; }
+    .iv-share { display:flex; gap:10px; }
+    .iv-share .btn { flex:1; display:flex; align-items:center; justify-content:center; gap:7px; padding:13px; border:none; border-radius:12px; font-size:14px; font-weight:600; cursor:pointer; }
+    .iv-share .tg { background:#229ed9; color:#fff; } .iv-share .cp { background:#1c2030; color:#cfd6e6; border:0.5px solid #2e3347; }
+    .iv-step { display:flex; gap:11px; align-items:flex-start; padding:9px 0; }
+    .iv-step .num { width:24px; height:24px; border-radius:50%; background:#5d7df51a; color:#7e9bff; font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+    .iv-step .tx { font-size:12.5px; color:#cfd6e6; line-height:1.5; }
     /* home tasks */
     .task-card { display:flex; align-items:center; gap:12px; background:#181b25; border-radius:12px; padding:12px; margin-bottom:9px; }
     .task-ic { width:38px; height:38px; border-radius:10px; background:#0d0e12; display:flex; align-items:center; justify-content:center; font-size:19px; color:#4eeaa0; flex-shrink:0; }
@@ -360,6 +382,12 @@
           </div>
         </div>
         <div id="home-tasks"></div>
+        <div class="invite-banner" onclick="openInvite()">
+          <div class="ib-glow"></div>
+          <div class="ib-ic"><i class="ti ti-users-plus"></i></div>
+          <div class="ib-txt"><div class="ib-t">Invite Friends</div><div class="ib-s">Earn <b>$0.5</b> for every friend who joins</div></div>
+          <i class="ti ti-chevron-right ib-chev"></i>
+        </div>
         <div style="display:flex;justify-content:space-between;margin-bottom:8px;margin-top:18px;">
           <div style="display:flex;gap:16px;">
             <span style="font-size:13px;font-weight:500;color:#e2e8f0;border-bottom:2px solid #4eeaa0;padding-bottom:4px;">Popular</span>
@@ -624,7 +652,7 @@
   const prices = {}; const prevPx = {};
 
   function defaultState(){ const balances={USDT:0}, cost={}; COIN_KEYS.forEach(k=>{balances[k]=0;cost[k]=0;});
-    return { balances, cost, futUSDT:0, openOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:50, bonusPrincipal:50, flags:{deposited:false,traded:false,futured:false}, taskClaimed:{}, snap:{day:'',equity:0}, nextId:1, creditedDeposits:0 }; }
+    return { balances, cost, futUSDT:0, openOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:50, bonusPrincipal:50, flags:{deposited:false,traded:false,futured:false}, taskClaimed:{}, snap:{day:'',equity:0}, nextId:1, creditedDeposits:0, referralCount:0, referralEarned:0 }; }
   function loadState(){ try{ const raw=localStorage.getItem(LS_KEY); if(!raw) return defaultState();
       const s=JSON.parse(raw); const d=defaultState();
       return Object.assign(d,s,{ balances:Object.assign(d.balances,s.balances||{}), cost:Object.assign(d.cost,s.cost||{}), snap:Object.assign(d.snap,s.snap||{}), flags:Object.assign(d.flags,s.flags||{}), taskClaimed:Object.assign(d.taskClaimed,s.taskClaimed||{}) });
@@ -644,6 +672,7 @@
     {id:'deposit',  icon:'ti-wallet',           title:'First Deposit',     desc:'Deposit any amount to your wallet',reward:5,  cond:()=>!!state.flags.deposited, go:'assets'},
     {id:'spot',     icon:'ti-arrows-exchange',  title:'First Spot Trade',  desc:'Complete a spot buy or sell',      reward:5,  cond:()=>!!state.flags.traded,    go:'trade'},
     {id:'futures',  icon:'ti-trending-up',      title:'First Futures Trade',desc:'Open a futures position',         reward:10, cond:()=>!!state.flags.futured,   go:'futures'},
+    {id:'invite',   icon:'ti-users-plus',       title:'Invite a Friend',   desc:'Invite friends · earn $0.5 each',  reward:5,  cond:()=>(state.referralCount||0)>0, go:'invite'},
   ];
 
   // helpers
@@ -962,9 +991,10 @@
     const done=TASKS.filter(t=>state.taskClaimed[t.id]).length;
     let h='<div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 10px;"><div class="section-title" style="margin:0;">Tasks · Earn Bonus</div><span style="font-size:11px;color:#7a8299;">'+done+'/'+TASKS.length+' done</span></div>';
     h+=TASKS.map(t=>{ const st=taskStatus(t);
+      const goAction = t.go==='invite' ? 'openInvite()' : 'goPage(\''+t.go+'\')';
       const btn = st==='done' ? '<button class="task-btn done">Claimed ✓</button>'
         : st==='ready' ? '<button class="task-btn claim" onclick="claimTask(\''+t.id+'\')">Claim</button>'
-        : '<button class="task-btn go" onclick="goPage(\''+t.go+'\')">Go</button>';
+        : '<button class="task-btn go" onclick="'+goAction+'">Go</button>';
       return '<div class="task-card"><div class="task-ic"><i class="ti '+t.icon+'"></i></div><div class="task-info"><div class="t">'+t.title+'</div><div class="s">'+t.desc+'</div><div class="task-reward">🎁 +'+t.reward+' USDT bonus</div></div>'+btn+'</div>'; }).join('');
     el.innerHTML=h; }
   function claimTask(id){ const t=TASKS.find(x=>x.id===id); if(!t||state.taskClaimed[id]||!t.cond()) return;
@@ -1020,14 +1050,16 @@
   function setRecTab(t){ recTab=t; document.querySelectorAll('.rec-tab').forEach((el,i)=>el.classList.toggle('on',['all','deposits','withdrawals'][i]===t)); renderRecordBody(); }
 
   function depCard(x){
-    const usd=fmtNum(x.usd,2); const isAdj=(x.coin==='ADMIN'); const neg=x.usd<0;
+    const isAdj=(x.coin==='ADMIN'), isRef=(x.coin==='REFERRAL'); const neg=x.usd<0;
     const sign=neg?'-':'+'; const col=neg?'#ff5a5a':'#4eeaa0';
-    return '<div class="rec-card"><div class="rec-top"><div class="rec-ic"><div class="ic '+(neg?'out':isAdj?'neu':'in')+'"><i class="ti '+(isAdj?'ti-adjustments':'ti-arrow-down-left')+'"></i></div>'
-      +'<div><div class="tt">'+(isAdj?'Balance Adjustment':'Deposit')+'</div><div class="ss">'+(isAdj?(x.note||'By admin'):'On-chain · '+(x.network||x.coin||'')) +'</div></div></div>'
+    const title=isRef?'Referral Bonus':isAdj?'Balance Adjustment':'Deposit';
+    const icon=isRef?'ti-users-plus':isAdj?'ti-adjustments':'ti-arrow-down-left';
+    const sub=isRef?'Invite reward':isAdj?(x.note||'By admin'):('On-chain · '+(x.network||x.coin||''));
+    return '<div class="rec-card"><div class="rec-top"><div class="rec-ic"><div class="ic '+(neg?'out':(isAdj||isRef)?'neu':'in')+'"><i class="ti '+icon+'"></i></div>'
+      +'<div><div class="tt">'+title+'</div><div class="ss">'+esc(sub)+'</div></div></div>'
       +'<div class="rec-val" style="color:'+col+';">'+sign+fmtNum(Math.abs(x.usd),2)+' USDT</div></div>'
-      +(x.coin&&!isAdj?'<div class="rec-kv"><span class="k">Asset · Network</span><span class="v">'+esc(x.coin)+(x.network&&x.network!==x.coin?' · '+esc(x.network):'')+'</span></div>':'')
+      +(x.coin&&!isAdj&&!isRef?'<div class="rec-kv"><span class="k">Asset · Network</span><span class="v">'+esc(x.coin)+(x.network&&x.network!==x.coin?' · '+esc(x.network):'')+'</span></div>':'')
       +(x.actuallyPaid?'<div class="rec-kv"><span class="k">Received</span><span class="v">'+esc(x.actuallyPaid)+' '+esc(x.coin||'')+'</span></div>':'')
-      +'<div class="rec-kv"><span class="k">Credited</span><span class="v" style="color:#4eeaa0;">'+sign+usd.replace('-','')+' USDT</span></div>'
       +(x.paymentId?'<div class="rec-kv"><span class="k">Payment ID</span><span class="v">'+esc(x.paymentId)+'<i class="ti ti-copy cp" onclick="copyText(\''+escAttr(x.paymentId)+'\')"></i></span></div>':'')
       +'<div class="rec-kv"><span class="k">Time</span><span class="v">'+fullTime(x.at)+'</span></div></div>'; }
 
@@ -1136,6 +1168,38 @@
   function doTPSL(id){ const p=state.positions.find(x=>x.id===id); if(!p) return; const tp=parseFloat(v('tp-price'))||0,sl=parseFloat(v('sl-price'))||0;
     p.tp=tp>0?tp:null; p.sl=sl>0?sl:null; save(); closeSheet(); toast('TP/SL updated','ok'); renderFutPositions(); }
 
+  // ── Invite / Referral ──
+  const BOT_USERNAME='kolonoex_bot';
+  const REF_BONUS=0.5;
+  function myUserId(){ try{ const u=window.Telegram&&Telegram.WebApp&&Telegram.WebApp.initDataUnsafe&&Telegram.WebApp.initDataUnsafe.user; if(u&&u.id) return 'tg_'+u.id; }catch{} return null; }
+  function getRefLink(){ const id=myUserId(); const payload=id?('ref_'+id):''; return 'https://t.me/'+BOT_USERNAME+'/app'+(payload?('?startapp='+payload):''); }
+
+  function openInvite(){ closeSheet();
+    const link=getRefLink(); const count=state.referralCount||0; const earned=state.referralEarned||0;
+    const noAuth=!hasTgAuth();
+    openSheet(sheetHead('Invite Friends')
+    +'<div class="iv-hero"><div class="ring"><i class="ti ti-users-plus"></i></div>'
+    +'<div class="h">Invite & Earn</div><div class="p">Share your link and earn <b style="color:#7e9bff;">$'+REF_BONUS+'</b> in bonus for every friend who joins KolonoEX through it.</div></div>'
+    +'<div class="iv-stats"><div class="iv-stat"><div class="n">'+count+'</div><div class="l">Friends invited</div></div>'
+    +'<div class="iv-stat"><div class="n green">$'+fmtNum(earned,2)+'</div><div class="l">Bonus earned</div></div></div>'
+    +(noAuth
+      ? '<div class="dep-tip" style="border-color:#ff5a5a44;"><i class="ti ti-alert-triangle" style="color:#ff5a5a;"></i><span>Open the app from your Telegram bot to get your personal invite link.</span></div>'
+      : '<div style="font-size:11px;color:#7a8299;margin:2px 2px 6px;">Your invite link</div>'
+        +'<div class="iv-link-box"><span class="lk" id="iv-link">'+esc(link)+'</span><i class="ti ti-copy" style="color:#7e9bff;font-size:18px;cursor:pointer;" onclick="copyText(\''+escAttr(link)+'\')"></i></div>'
+        +'<div class="iv-share"><button class="tg" onclick="shareInvite()"><i class="ti ti-brand-telegram"></i>Share</button>'
+        +'<button class="cp" onclick="copyText(\''+escAttr(link)+'\')"><i class="ti ti-copy"></i>Copy Link</button></div>')
+    +'<div style="margin-top:20px;"><div class="section-title" style="margin-bottom:6px;">How it works</div>'
+    +'<div class="iv-step"><div class="num">1</div><div class="tx">Share your unique invite link with friends.</div></div>'
+    +'<div class="iv-step"><div class="num">2</div><div class="tx">They open KolonoEX through your link inside Telegram.</div></div>'
+    +'<div class="iv-step"><div class="num">3</div><div class="tx">You instantly receive <b style="color:#7e9bff;">$'+REF_BONUS+'</b> bonus per friend — track it above.</div></div></div>');
+    if(hasTgAuth()) syncBalance(); }
+
+  function shareInvite(){ const link=getRefLink();
+    const text='Join me on KolonoEX — trade crypto right inside Telegram! 🚀';
+    const url='https://t.me/share/url?url='+encodeURIComponent(link)+'&text='+encodeURIComponent(text);
+    try{ if(window.Telegram&&Telegram.WebApp&&Telegram.WebApp.openTelegramLink){ Telegram.WebApp.openTelegramLink(url); return; } }catch{}
+    try{ window.open(url,'_blank'); }catch{ copyText(link); } }
+
   // ── Deposit (NOWPayments — real on-chain deposits, server-credited) ──
   const DEPOSIT_COINS = [
     {t:'btc',       sym:'BTC',  name:'Bitcoin', net:'Bitcoin', color:'#f7931a'},
@@ -1205,9 +1269,16 @@
         else { addTx({type:'Adjustment',sub:'Balance updated',value:Math.abs(delta),sign:'-',coin:'USDT',isUSDT:true}); }
         save(); renderAll();
       } else if(server!==applied){ state.creditedDeposits=server; save(); }
+      // Referral stats from the server.
+      if(d.referral){ const rc=parseInt(d.referral.count,10)||0; const re=parseFloat(d.referral.earned)||0;
+        if(rc!==state.referralCount || re!==state.referralEarned){ state.referralCount=rc; state.referralEarned=re; save(); renderTasks(); updateInviteSheet(); } }
       if(d.commands) applyCommands(d.commands);
       return server;
     }catch(e){ return null; } }
+
+  // Refresh the invite sheet's stats in place if it's currently open.
+  function updateInviteSheet(){ const linkEl=document.getElementById('iv-link'); if(!linkEl) return;
+    const stats=document.querySelectorAll('.iv-stat .n'); if(stats.length>=2){ stats[0].textContent=state.referralCount||0; stats[1].textContent='$'+fmtNum(state.referralEarned||0,2); } }
 
   function depCoinRow(c,i){ return '<div class="dep-coin" onclick="genDeposit('+i+')">'+depLogo(c)
     +'<div class="dc-meta"><div class="dc-name">'+c.sym+' <span style="color:#7a8299;font-weight:400;font-size:12px;">'+c.name+'</span></div>'

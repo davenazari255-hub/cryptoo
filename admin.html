@@ -191,7 +191,10 @@
         + '<div><div class="u-name">' + esc(p.name || p.username || 'User') + '</div><div class="u-id">' + (p.username ? '@' + esc(p.username) + ' · ' : '') + esc(id) + '</div></div>'
         + '<div style="margin-left:auto;">' + (d.banned ? '<span class="st banned">banned</span>' : '<span class="st paid">active</span>') + '</div></div>'
         + '<div class="row"><span class="k">Joined</span><span class="val">' + when(p.joinedAt) + '</span></div>'
-        + '<div class="row"><span class="k">Last seen</span><span class="val">' + when(p.lastSeen) + '</span></div></div>';
+        + '<div class="row"><span class="k">Last seen</span><span class="val">' + when(p.lastSeen) + '</span></div>'
+        + '<div class="row"><span class="k">Invited friends</span><span class="val">' + (d.referral ? d.referral.count : 0) + '</span></div>'
+        + (d.referral && d.referral.referredBy ? '<div class="row"><span class="k">Referred by</span><span class="val">' + esc(d.referral.referredBy) + '</span></div>' : '')
+        + '</div>';
 
       // Balances
       h += '<div class="grid2">'
