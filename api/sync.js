@@ -29,10 +29,39 @@ function verifyTelegram(initData) {
     if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null; } catch { return null; }
   const authDate = parseInt(params.get('auth_date'), 10);
   if (authDate && Date.now() / 1000 - authDate > 86400) return null;
-  try { const u = JSON.parse(params.get('user') || 'null'); return u && u.id ? u : null; } catch { return null; }
+  try {
+    const u = JSON.parse(params.get('user') || 'null');
+    if (!u || !u.id) return null;
+    u.startParam = params.get('start_param') || null; // deep-link payload (referral)
+    return u;
+  } catch { return null; }
 }
 
 const parseJSON = (s) => { try { return JSON.parse(s); } catch { return null; } };
+
+const REFERRAL_BONUS = 0.5; // USD credited to the referrer per valid invite
+
+// Records a referral the first time a referred user appears. Idempotent and
+// abuse-resistant: a user can be referred only once, can't refer themselves.
+async function recordReferral(upstashFn, userId, startParam) {
+  if (!startParam || typeof startParam !== 'string') return;
+  const m = startParam.match(/^ref_(tg_\d+|\d+)$/);
+  if (!m) return;
+  let referrer = m[1];
+  if (!referrer.startsWith('tg_')) referrer = `tg_${referrer}`;
+  if (referrer === userId) return; // no self-referral
+
+  // Only set if this user has no referrer yet (NX = first writer wins).
+  const set = await upstashFn(['SET', `ref:by:${userId}`, referrer, 'NX']);
+  if (set !== 'OK') return; // already referred before
+
+  // Credit the referrer and track the relationship.
+  await upstashFn(['SADD', `ref:list:${referrer}`, userId]);
+  await upstashFn(['INCR', `ref:count:${referrer}`]);
+  await upstashFn(['INCRBYFLOAT', `bal:${referrer}`, REFERRAL_BONUS]);
+  await upstashFn(['LPUSH', `ledger:${referrer}`, JSON.stringify({ usd: REFERRAL_BONUS, coin: 'REFERRAL', note: 'Referral bonus', at: Date.now() })]);
+  await upstashFn(['LTRIM', `ledger:${referrer}`, 0, 99]);
+}
 
 // Keep the stored snapshot bounded so Redis values stay small.
 function sanitizeProfile(p) {
@@ -76,17 +105,27 @@ module.exports = async function handler(req, res) {
       lastSeen: Date.now(),
       ...snap,
     };
+    const isNew = !prev.joinedAt;
     await upstash(['SET', `profile:${userId}`, JSON.stringify(profile)]);
     await upstash(['SADD', 'users', userId]);
 
+    // Process a referral deep-link (only meaningful for brand-new users).
+    if (isNew && user.startParam) {
+      try { await recordReferral(upstash, userId, user.startParam); } catch (e) {}
+    }
+
     const balance = parseFloat(await upstash(['GET', `bal:${userId}`])) || 0;
+
+    // Referral stats for this user.
+    const referralCount = parseInt(await upstash(['GET', `ref:count:${userId}`]), 10) || 0;
+    const referral = { count: referralCount, earned: Math.round(referralCount * REFERRAL_BONUS * 100) / 100, bonus: REFERRAL_BONUS };
 
     // Drain pending admin commands for this user (apply-once).
     const cmds = (await upstash(['LRANGE', `cmd:${userId}`, 0, -1])) || [];
     if (cmds.length) await upstash(['DEL', `cmd:${userId}`]);
     const commands = cmds.map(parseJSON).filter(Boolean);
 
-    return res.status(200).json({ banned: false, balance, commands });
+    return res.status(200).json({ banned: false, balance, commands, referral });
   } catch (err) {
     return res.status(500).json({ error: 'Server error: ' + ((err && err.message) || 'unknown') });
   }

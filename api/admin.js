@@ -62,12 +62,14 @@ module.exports = async function handler(req, res) {
     if (body.action === 'user') {
       const id = String(body.id || '');
       if (!id) return res.status(400).json({ error: 'id required' });
-      const [profile, bal, banned, wdIds, ledger] = await Promise.all([
+      const [profile, bal, banned, wdIds, ledger, refCount, refBy] = await Promise.all([
         upstash(['GET', `profile:${id}`]),
         upstash(['GET', `bal:${id}`]),
         upstash(['GET', `banned:${id}`]),
         upstash(['LRANGE', `wd:user:${id}`, 0, 29]),
         upstash(['LRANGE', `ledger:${id}`, 0, 29]),
+        upstash(['GET', `ref:count:${id}`]),
+        upstash(['GET', `ref:by:${id}`]),
       ]);
       let withdrawals = [];
       if (wdIds && wdIds.length) {
@@ -80,6 +82,7 @@ module.exports = async function handler(req, res) {
         banned: !!banned,
         withdrawals,
         deposits: (ledger || []).map(parseJSON).filter(Boolean),
+        referral: { count: parseInt(refCount, 10) || 0, referredBy: refBy || null },
       });
     }
 
