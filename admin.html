@@ -199,14 +199,16 @@
       // Balances
       h += '<div class="grid2">'
         + '<div class="stat"><div class="l">Real balance</div><div class="v" style="color:#4eeaa0;">$' + fmt(d.balance) + '</div></div>'
+        + '<div class="stat"><div class="l">Bonus</div><div class="v" style="color:#f0b90b;">' + fmt(p.bonus) + '</div></div>'
         + '<div class="stat"><div class="l">Equity ≈</div><div class="v">$' + fmt(p.equity) + '</div></div>'
-        + '<div class="stat"><div class="l">Spot USDT</div><div class="v">' + fmt(p.usdt) + '</div></div>'
-        + '<div class="stat"><div class="l">Futures USDT</div><div class="v">' + fmt(p.futUSDT) + '</div></div></div>';
+        + '<div class="stat"><div class="l">Spot / Fut USDT</div><div class="v">' + fmt(p.usdt) + ' / ' + fmt(p.futUSDT) + '</div></div></div>';
 
       // Controls
       h += '<div class="sec-title">Controls</div><div class="card">'
         + '<div class="row"><span class="k">Adjust real balance (USDT)</span></div>'
         + '<div class="adj"><input id="adj-amt" inputmode="decimal" placeholder="+50 or -20"><input id="adj-note" placeholder="note (optional)" style="flex:1.4;"><button class="btn" onclick="doAdjust(\'' + esc(id) + '\')">Apply</button></div>'
+        + '<div class="row" style="margin-top:12px;"><span class="k">Adjust bonus (USDT) — notifies user</span></div>'
+        + '<div class="adj"><input id="bon-amt" inputmode="decimal" placeholder="+10 or -5"><input id="bon-note" placeholder="note to user (optional)" style="flex:1.4;"><button class="btn amber" onclick="doBonus(\'' + esc(id) + '\')">Send</button></div>'
         + '<div class="acts" style="margin-top:12px;">'
         + (d.banned ? '<button class="btn" onclick="doBan(\'' + esc(id) + '\',\'unban\')">Unban user</button>' : '<button class="btn red" onclick="doBan(\'' + esc(id) + '\',\'ban\')">Ban user</button>')
         + '<button class="btn sec" onclick="cmdMessage(\'' + esc(id) + '\')">Send message</button></div></div>';
@@ -225,6 +227,12 @@
       if (!amount) return alert('Enter a non-zero amount (e.g. 50 or -20)');
       if (!confirm((amount > 0 ? 'Add ' : 'Deduct ') + Math.abs(amount) + ' USDT?')) return;
       try { await api({ action: 'adjust', id, amount, note }); openUser(id); } catch (e) { alert(e.message); }
+    }
+    async function doBonus(id) {
+      const amount = parseFloat($('bon-amt').value); const note = $('bon-note').value.trim();
+      if (!amount) return alert('Enter a non-zero bonus amount (e.g. 10 or -5)');
+      if (!confirm((amount > 0 ? 'Add ' : 'Deduct ') + Math.abs(amount) + ' USDT bonus? The user will be notified.')) return;
+      try { await api({ action: 'bonus', id, amount, note }); alert('Bonus queued — applies on the user\'s next sync; a bot message was sent now.'); openUser(id); } catch (e) { alert(e.message); }
     }
     async function doBan(id, action) {
       if (!confirm(action === 'ban' ? 'Ban this user? They will be locked out.' : 'Unban this user?')) return;
