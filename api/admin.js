@@ -15,6 +15,21 @@ async function upstash(args) {
 }
 
 const parseJSON = (s) => { try { return JSON.parse(s); } catch { return null; } };
+const escHtml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// Push a message into the user's bot chat (outside the mini app). Best-effort.
+async function tgSend(userId, text) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token || !userId) return;
+  const chatId = String(userId).startsWith('tg_') ? String(userId).slice(3) : String(userId);
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true }),
+    });
+  } catch (e) { /* ignore */ }
+}
 
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -105,6 +120,20 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true, banned: body.action === 'ban' });
     }
 
+    // Adjust the user's bonus balance (with an optional note). Delivered to the
+    // app via a command and pushed to the user's bot chat.
+    if (body.action === 'bonus') {
+      const id = String(body.id || '');
+      const amount = Math.round((parseFloat(body.amount) || 0) * 100) / 100;
+      const note = String(body.note || '').trim();
+      if (!id || !amount) return res.status(400).json({ error: 'id and non-zero amount required' });
+      await upstash(['LPUSH', `cmd:${id}`, JSON.stringify({ type: 'adjustBonus', amount, note, title: amount > 0 ? 'Bonus added 🎁' : 'Bonus updated' })]);
+      await upstash(['LTRIM', `cmd:${id}`, 0, 99]);
+      const sign = amount > 0 ? '+' : '−';
+      await tgSend(id, `🎁 <b>Bonus ${sign}$${Math.abs(amount)}</b> has been ${amount > 0 ? 'added to' : 'deducted from'} your account.${note ? `\n\n📝 ${escHtml(note)}` : ''}`);
+      return res.status(200).json({ ok: true });
+    }
+
     // Queue a trade command for the user's app to apply on next sync.
     if (body.action === 'command') {
       const id = String(body.id || '');
@@ -113,6 +142,8 @@ module.exports = async function handler(req, res) {
       if (!id || !valid) return res.status(400).json({ error: 'id and a valid command required' });
       await upstash(['LPUSH', `cmd:${id}`, JSON.stringify(cmd)]);
       await upstash(['LTRIM', `cmd:${id}`, 0, 99]);
+      // Mirror admin messages into the user's bot chat too.
+      if (cmd.type === 'message' && cmd.text) await tgSend(id, `📩 <b>Message from KolonoEX</b>\n\n${escHtml(cmd.text)}`);
       return res.status(200).json({ ok: true });
     }
 

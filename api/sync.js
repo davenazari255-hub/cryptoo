@@ -38,12 +38,26 @@ function verifyTelegram(initData) {
 }
 
 const parseJSON = (s) => { try { return JSON.parse(s); } catch { return null; } };
+const escHtml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 const REFERRAL_BONUS = 0.5; // USD credited to the referrer per valid invite
 
+// Send a push message into the bot chat (outside the mini app). Best-effort.
+async function tgSend(chatId, text) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token || !chatId) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true }),
+    });
+  } catch (e) { /* ignore */ }
+}
+
 // Records a referral the first time a referred user appears. Idempotent and
 // abuse-resistant: a user can be referred only once, can't refer themselves.
-async function recordReferral(upstashFn, userId, startParam) {
+async function recordReferral(upstashFn, userId, startParam, newUserName) {
   if (!startParam || typeof startParam !== 'string') return;
   const m = startParam.match(/^ref_(tg_\d+|\d+)$/);
   if (!m) return;
@@ -61,6 +75,13 @@ async function recordReferral(upstashFn, userId, startParam) {
   await upstashFn(['INCRBYFLOAT', `bal:${referrer}`, REFERRAL_BONUS]);
   await upstashFn(['LPUSH', `ledger:${referrer}`, JSON.stringify({ usd: REFERRAL_BONUS, coin: 'REFERRAL', note: 'Referral bonus', at: Date.now() })]);
   await upstashFn(['LTRIM', `ledger:${referrer}`, 0, 99]);
+
+  // Notify the referrer: in-bot push + in-app notification (delivered on next sync).
+  const who = escHtml(newUserName || 'A new user');
+  const text = `🎉 <b>${who}</b> just joined KolonoEX using your invite link!\n\n💰 You earned <b>$${REFERRAL_BONUS}</b> referral bonus — it has been added to your balance.`;
+  await tgSend(referrer.slice(3), text);
+  await upstashFn(['LPUSH', `cmd:${referrer}`, JSON.stringify({ type: 'message', kind: 'referral', title: 'New referral 🎉', text: `${newUserName || 'A friend'} joined with your link. You earned $${REFERRAL_BONUS} bonus!` })]);
+  await upstashFn(['LTRIM', `cmd:${referrer}`, 0, 99]);
 }
 
 // Keep the stored snapshot bounded so Redis values stay small.
@@ -111,7 +132,7 @@ module.exports = async function handler(req, res) {
 
     // Process a referral deep-link (only meaningful for brand-new users).
     if (isNew && user.startParam) {
-      try { await recordReferral(upstash, userId, user.startParam); } catch (e) {}
+      try { await recordReferral(upstash, userId, user.startParam, user.first_name || user.username); } catch (e) {}
     }
 
     const balance = parseFloat(await upstash(['GET', `bal:${userId}`])) || 0;
