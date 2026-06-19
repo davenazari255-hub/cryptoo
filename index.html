@@ -1170,9 +1170,15 @@
 
   // ── Invite / Referral ──
   const BOT_USERNAME='kolonoex_bot';
+  // Mini App short name from BotFather. Set to the exact short name you created
+  // with /newapp (here: 'app' → link t.me/bot/app?startapp=...). Leave '' only
+  // if you use the bot's MAIN Mini App (link t.me/bot?startapp=...).
+  const MINI_APP_SHORT='app';
   const REF_BONUS=0.5;
   function myUserId(){ try{ const u=window.Telegram&&Telegram.WebApp&&Telegram.WebApp.initDataUnsafe&&Telegram.WebApp.initDataUnsafe.user; if(u&&u.id) return 'tg_'+u.id; }catch{} return null; }
-  function getRefLink(){ const id=myUserId(); const payload=id?('ref_'+id):''; return 'https://t.me/'+BOT_USERNAME+'/app'+(payload?('?startapp='+payload):''); }
+  function getRefLink(){ const id=myUserId(); const payload=id?('ref_'+id):'';
+    const base='https://t.me/'+BOT_USERNAME+(MINI_APP_SHORT?('/'+MINI_APP_SHORT):'');
+    return base+(payload?('?startapp='+payload):''); }
 
   function openInvite(){ closeSheet();
     const link=getRefLink(); const count=state.referralCount||0; const earned=state.referralEarned||0;
