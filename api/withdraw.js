@@ -63,10 +63,12 @@ module.exports = async function handler(req, res) {
     }
 
     // Create a withdrawal request.
+    const coin = (String(body.coin || 'USDT').trim().toUpperCase()) || 'USDT';
     const network = String(body.network || '').trim();
     const address = String(body.address || '').trim();
     const memo = body.memo ? String(body.memo).trim() : null;
-    const amt = Math.round((parseFloat(body.amount) || 0) * 100) / 100;
+    const amt = Math.round((parseFloat(body.amount) || 0) * 100) / 100; // USD value held
+    const coinAmount = body.coinAmount != null ? String(body.coinAmount) : null; // display amount in the chosen coin
 
     if (!network) return res.status(400).json({ error: 'Network is required' });
     if (!address || address.length < 16) return res.status(400).json({ error: 'A valid destination address is required' });
@@ -86,7 +88,7 @@ module.exports = async function handler(req, res) {
       const id = crypto.randomUUID();
       const rec = {
         id, userId, username: user.username || null, name: user.first_name || null,
-        coin: 'USDT', network, address, memo, amount: amt,
+        coin, coinAmount, network, address, memo, amount: amt,
         status: 'pending', createdAt: Date.now(),
       };
       await upstash(['SET', `wd:item:${id}`, JSON.stringify(rec)]);

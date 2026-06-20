@@ -56,22 +56,30 @@ module.exports = async function handler(req, res) {
     if (body.action === 'users') {
       const ids = (await upstash(['SMEMBERS', 'users'])) || [];
       if (!ids.length) return res.status(200).json({ users: [] });
-      const [profiles, bals, bans] = await Promise.all([
+      const [profiles, bals, bans, refs] = await Promise.all([
         upstash(['MGET', ...ids.map((id) => `profile:${id}`)]),
         upstash(['MGET', ...ids.map((id) => `bal:${id}`)]),
         upstash(['MGET', ...ids.map((id) => `banned:${id}`)]),
+        upstash(['MGET', ...ids.map((id) => `ref:count:${id}`)]),
       ]);
       const users = ids.map((id, i) => {
         const p = parseJSON(profiles[i]) || {};
         return {
           userId: id, username: p.username || null, name: p.name || null,
           joinedAt: p.joinedAt || null, lastSeen: p.lastSeen || null,
-          balance: parseFloat(bals[i]) || 0, equity: p.equity || 0,
+          balance: parseFloat(bals[i]) || 0, equity: p.equity || 0, bonus: p.bonus || 0,
           positions: (p.positions || []).length, openOrders: (p.openOrders || []).length,
+          referrals: parseInt(refs[i], 10) || 0,
           banned: !!bans[i],
         };
       }).sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
       return res.status(200).json({ users });
+    }
+
+    if (body.action === 'deposits') {
+      const rows = (await upstash(['LRANGE', 'deposits:all', 0, 199])) || [];
+      const deposits = rows.map(parseJSON).filter(Boolean);
+      return res.status(200).json({ deposits });
     }
 
     if (body.action === 'user') {
