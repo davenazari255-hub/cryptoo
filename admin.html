@@ -75,6 +75,7 @@
     <div class="tabs">
       <div class="tab on" id="tab-users" onclick="setTab('users')">Users</div>
       <div class="tab" id="tab-wd" onclick="setTab('wd')">Withdrawals</div>
+      <div class="tab" id="tab-dep" onclick="setTab('dep')">Deposits</div>
     </div>
     <div class="bar">
       <button class="btn sec" onclick="refresh()"><i class="ti ti-refresh"></i> Refresh</button>
@@ -107,8 +108,32 @@
       catch (e) { $('gate-err').textContent = e.message; }
     }
     function logout() { sessionStorage.removeItem('kx_admin'); location.reload(); }
-    function setTab(t) { TAB = t; $('tab-users').classList.toggle('on', t === 'users'); $('tab-wd').classList.toggle('on', t === 'wd'); refresh(); }
-    function refresh() { TAB === 'users' ? loadUsers() : loadWithdrawals(); }
+    function setTab(t) { TAB = t; $('tab-users').classList.toggle('on', t === 'users'); $('tab-wd').classList.toggle('on', t === 'wd'); $('tab-dep').classList.toggle('on', t === 'dep'); refresh(); }
+    function refresh() { TAB === 'users' ? loadUsers() : TAB === 'wd' ? loadWithdrawals() : loadDeposits(); }
+
+    /* ── Deposits report ── */
+    async function loadDeposits() {
+      $('view').innerHTML = '<div class="empty">Loading…</div>';
+      try {
+        const d = await api({ action: 'deposits' }); const list = d.deposits || [];
+        $('count').textContent = list.length + ' deposits';
+        const total = list.reduce((s, x) => s + (parseFloat(x.usd) || 0), 0);
+        const head = '<div class="card"><div class="row"><span class="k">Total (last ' + list.length + ')</span><span class="val amt" style="font-size:16px;">$' + fmt(total) + '</span></div></div>';
+        $('view').innerHTML = head + (list.length ? list.map(depCard).join('') : '<div class="empty">No deposits yet</div>');
+      } catch (e) { $('view').innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
+    }
+    function depCard(x) {
+      const isAdj = x.coin === 'ADMIN', isRef = x.coin === 'REFERRAL';
+      const title = isRef ? 'Referral bonus' : isAdj ? 'Admin credit' : 'Deposit';
+      return '<div class="card"><div class="row" style="align-items:center;"><span class="amt" style="font-size:17px;">+$' + fmt(x.usd) + '</span>'
+        + '<span class="net">' + esc(title) + '</span></div>'
+        + (x.coin && !isAdj && !isRef ? '<div class="row"><span class="k">Asset · Network</span><span class="val">' + esc(x.coin) + (x.network && x.network !== x.coin ? ' · ' + esc(x.network) : '') + '</span></div>' : '')
+        + (x.actuallyPaid ? '<div class="row"><span class="k">Received</span><span class="val">' + esc(x.actuallyPaid) + ' ' + esc(x.coin || '') + '</span></div>' : '')
+        + '<div class="row"><span class="k">User</span><span class="val" style="cursor:pointer;color:#5d9bf5;" onclick="openUser(\'' + esc(x.userId) + '\')">' + esc(x.userId) + '</span></div>'
+        + (x.paymentId ? '<div class="row"><span class="k">Payment ID</span><span class="val">' + esc(x.paymentId) + '</span></div>' : '')
+        + (x.note ? '<div class="row"><span class="k">Note</span><span class="val">' + esc(x.note) + '</span></div>' : '')
+        + '<div class="row"><span class="k">Time</span><span class="val">' + when(x.at) + '</span></div></div>';
+    }
 
     /* ── Withdrawals ── */
     async function decide(id, decision) {
@@ -145,7 +170,7 @@
         + '<span><div class="u-name" style="font-size:14px;">' + esc(u.name || u.username || 'User') + (u.username ? ' <span style="color:#7a8299;font-weight:400;font-size:12px;">@' + esc(u.username) + '</span>' : '') + '</div>'
         + '<div class="u-id">' + esc(u.userId) + ' · ' + ago(u.lastSeen) + '</div></span></span>'
         + '<span style="text-align:right;">' + (u.banned ? '<span class="st banned">banned</span><br>' : '') + '<span class="amt" style="font-size:16px;">$' + fmt(u.balance) + '</span></span></div>'
-        + '<div class="row"><span class="k">Equity ≈ $' + fmt(u.equity) + '</span><span class="k">' + u.positions + ' pos · ' + u.openOrders + ' ord</span></div></div>';
+        + '<div class="row"><span class="k">Equity ≈ $' + fmt(u.equity) + ' · 🎁 $' + fmt(u.bonus) + '</span><span class="k"><i class="ti ti-users" style="font-size:11px;"></i> ' + (u.referrals || 0) + ' · ' + u.positions + ' pos</span></div></div>';
     }
     async function loadUsers() {
       $('view').innerHTML = '<div class="search"><i class="ti ti-search" style="color:#7a8299;"></i><input id="usearch" placeholder="Search name, username or id" oninput="renderUsers()"></div><div id="ulist"><div class="empty">Loading…</div></div>';

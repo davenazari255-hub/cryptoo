@@ -261,8 +261,15 @@
     /* bonus button (futures) */
     .bonus-btn { width:100%; padding:10px; border-radius:10px; border:0.5px solid #3a4a40; background:linear-gradient(135deg, rgba(78,234,160,0.10), rgba(240,185,11,0.07)); color:#cfe9dd; font-size:12.5px; font-weight:500; cursor:pointer; margin-bottom:10px; display:flex; align-items:center; justify-content:center; gap:7px; transition:all .15s; }
     .bonus-btn i { font-size:16px; color:#f0b90b; }
-    .bonus-btn.active { border-color:#4eeaa0; color:#0d0e12; background:linear-gradient(135deg, #4eeaa0, #8fe6c0); font-weight:600; }
-    .bonus-btn.active i { color:#0d0e12; }
+    .bonus-btn.active { border-color:transparent; color:#3a2c00; background:linear-gradient(135deg,#ffe08a,#f0b90b); font-weight:700; position:relative; isolation:isolate; box-shadow:0 0 16px rgba(240,185,11,.5); }
+    .bonus-btn.active i { color:#3a2c00; }
+    .bonus-btn.active::before { content:''; position:absolute; inset:-2px; border-radius:12px; z-index:-1; padding:2px;
+      background:conic-gradient(from var(--bang,0deg), transparent 0deg, #fff6cf 35deg, #f0b90b 80deg, #ffae00 110deg, transparent 170deg, transparent 360deg);
+      -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite:xor;
+      mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite:exclude;
+      animation:bonusSpin 2.4s linear infinite; }
+    @property --bang { syntax:'<angle>'; initial-value:0deg; inherits:false; }
+    @keyframes bonusSpin { to { --bang:360deg; } }
     /* assets internal tabs */
     .assets-tabs { display:flex; gap:20px; padding:14px 16px 0; border-bottom:0.5px solid #1e2130; overflow-x:auto; }
     .atab { font-size:15px; color:#7a8299; padding-bottom:12px; cursor:pointer; white-space:nowrap; }
@@ -996,13 +1003,25 @@
     let h='<div class="bonus-card"><div class="lab"><i class="ti ti-gift"></i> Futures Bonus Balance</div><div class="val">'+fmtNum(state.bonus||0,2)+' <span style="font-size:15px;color:#7aa893;">USDT</span></div>'
       +'<div class="desc">Use this bonus as margin in Futures. Profits are credited to your wallet; the bonus principal itself is for trading only (demo).</div></div>';
     h+='<div class="formline"><span>Transferable profit</span><span class="rt" style="color:#4eeaa0;">'+fmtNum(bonusTransferable(),2)+' USDT</span></div>';
-    h+='<div style="display:flex;gap:8px;margin:12px 0 16px;"><button class="btn btn-green" onclick="useBonusInFutures()">Use in Futures</button><button class="btn btn-outline" onclick="openBonusTransfer()">Transfer Profit</button><button class="btn btn-outline" onclick="claimBonus()">Claim +50</button></div>';
+    h+='<div style="display:flex;gap:8px;margin:12px 0 16px;"><button class="btn btn-green" onclick="useBonusInFutures()">Use in Futures</button><button class="btn btn-outline" onclick="openBonusTransfer()">Transfer Profit</button><button class="btn btn-outline" onclick="openBonusRecords()">Records</button></div>';
     h+='<div class="formline"><span>Total bonus equity (incl. open PnL)</span><span class="rt">'+fmtNum(be,2)+' USDT</span></div>';
     if(bpos.length){ h+='<div class="section-title" style="margin-top:14px;">Bonus Positions</div>'; h+=bpos.map(p=>{ const u=unrealized(p); const cls=u>=0?'pnl-pos':'pnl-neg';
       return '<div class="dist-row"><div style="display:flex;align-items:center;gap:10px;">'+coinLogo(p.pair,30)+'<div><div class="nm">'+tkr(p.pair)+'USDT</div><div class="sub2" style="text-align:left;color:'+(p.side==='long'?'#4eeaa0':'#ff5a5a')+'">'+p.side.toUpperCase()+' '+p.lev+'x · Bonus</div></div></div><div><div class="amt '+cls+'">'+(u>=0?'+':'')+fmtNum(u,2)+'</div><div class="sub2">margin '+fmtNum(p.margin,2)+'</div></div></div>'; }).join(''); }
     else h+='<div class="empty" style="margin-top:14px;">No bonus positions open</div>';
     document.getElementById('at-bonus').innerHTML=h; }
-  function claimBonus(){ state.bonus=(state.bonus||0)+50; state.bonusPrincipal=(state.bonusPrincipal||0)+50; addTx({type:'Bonus Claim',sub:'Demo bonus',value:50,sign:'+',coin:'USDT',isUSDT:true}); save(); toast('+50 USDT bonus claimed','ok'); renderBonus(); setBonusBtn(); }
+  // Bonus history — bonus-related transactions (tasks, referrals, admin grants, transfers).
+  function openBonusRecords(){
+    const re=/bonus|referral|task reward/i;
+    const list=(state.transactions||[]).filter(t=>re.test(t.type||'')||re.test(t.sub||''));
+    const rows=list.length ? list.map(t=>{ const col=t.sign==='+'?'#4eeaa0':t.sign==='-'?'#ff5a5a':'#cfd6e6';
+      return '<div class="rec-card"><div class="rec-top"><div class="rec-ic"><div class="ic neu" style="background:#f0b90b1a;color:#f0b90b;"><i class="ti ti-gift"></i></div>'
+        +'<div><div class="tt">'+esc(t.type||'Bonus')+'</div><div class="ss">'+esc(t.sub||'')+'</div></div></div>'
+        +'<div class="rec-val" style="color:'+col+';">'+esc(t.sign||'')+fmtNum(t.value||0,2)+' USDT</div></div>'
+        +'<div class="rec-kv"><span class="k">Time</span><span class="v">'+esc(t.time||'')+'</span></div></div>'; }).join('')
+      : '<div class="empty"><i class="ti ti-gift" style="font-size:40px;opacity:.4;"></i><div>No bonus activity yet</div></div>';
+    openSheet(sheetHead('Bonus Records')
+      +'<div class="bonus-card" style="margin-bottom:14px;"><div class="lab"><i class="ti ti-gift"></i> Current Bonus</div><div class="val">'+fmtNum(state.bonus||0,2)+' <span style="font-size:15px;color:#c9b777;">USDT</span></div></div>'
+      +rows); }
   // ── Home tasks ──
   function taskStatus(t){ if(state.taskClaimed[t.id]) return 'done'; return t.cond()?'ready':'locked'; }
   function renderTasks(){ const el=document.getElementById('home-tasks'); if(!el) return;
@@ -1083,10 +1102,12 @@
 
   function wdCard(w){
     const st=WD_STATUS[w.status]||{t:w.status,c:'#9aa3b8',i:'ti-circle'};
+    const amtLabel=(w.coin&&w.coin!=='USDT'&&w.coinAmount)?(w.coinAmount+' '+w.coin):(fmtNum(w.amount,2)+' USDT');
     return '<div class="rec-card"><div class="rec-top"><div class="rec-ic"><div class="ic out"><i class="ti ti-arrow-up-right"></i></div>'
       +'<div><div class="tt">Withdrawal</div><div class="ss" style="color:'+st.c+';"><i class="ti '+st.i+'" style="font-size:11px;"></i> '+st.t+'</div></div></div>'
-      +'<div class="rec-val" style="color:#ff5a5a;">-'+fmtNum(w.amount,2)+' USDT</div></div>'
-      +'<div class="rec-kv"><span class="k">Network</span><span class="v">'+esc(w.network)+'</span></div>'
+      +'<div class="rec-val" style="color:#ff5a5a;">-'+amtLabel+'</div></div>'
+      +'<div class="rec-kv"><span class="k">Asset · Network</span><span class="v">'+esc(w.coin||'USDT')+' · '+esc(w.network)+'</span></div>'
+      +'<div class="rec-kv"><span class="k">Debited</span><span class="v">'+fmtNum(w.amount,2)+' USDT</span></div>'
       +'<div class="rec-kv"><span class="k">Address</span><span class="v">'+esc(shortMid(w.address,10,8))+'<i class="ti ti-copy cp" onclick="copyText(\''+escAttr(w.address)+'\')"></i></span></div>'
       +(w.memo?'<div class="rec-kv"><span class="k">Memo</span><span class="v">'+esc(w.memo)+'</span></div>':'')
       +'<div class="rec-kv"><span class="k">Requested</span><span class="v">'+fullTime(w.createdAt)+'</span></div>'
@@ -1389,43 +1410,67 @@
         } else { setStat(MAP[st]||st); }
       }catch(e){} };
     depCheckFn=check; check(); depPoll=setInterval(check, 15000); }
-  // ── Withdraw (USDT, manual admin approval) ──
+  // ── Withdraw (multi-coin, manual admin approval) ──
   const WD_MIN=10;
-  const WD_NETWORKS=[{net:'TRC20',k:'usdttrc20'},{net:'ERC20',k:'usdterc20'},{net:'BEP20',k:'usdtbsc'}];
-  let wdNet='TRC20', wdAvail=0, wdBusy=false, wdPoll=null;
+  const WITHDRAW_ASSETS=[
+    {sym:'USDT',name:'Tether',  color:'#26a17b',nets:['TRC20','ERC20','BEP20']},
+    {sym:'BTC', name:'Bitcoin', color:'#f7931a',nets:['Bitcoin']},
+    {sym:'ETH', name:'Ethereum',color:'#627eea',nets:['ERC20']},
+    {sym:'BNB', name:'BNB',     color:'#f3ba2f',nets:['BSC']},
+    {sym:'SOL', name:'Solana',  color:'#14f195',nets:['Solana']},
+    {sym:'TRX', name:'TRON',    color:'#eb0029',nets:['TRON']},
+    {sym:'TON', name:'Toncoin', color:'#0098ea',nets:['TON']},
+  ];
+  let wdAsset=null, wdNet='', wdAvail=0, wdBusy=false, wdPoll=null;
   const WD_ST={pending:'Pending review',approved:'Approved · sending',paid:'Completed',rejected:'Rejected · refunded'};
 
   async function openWithdraw(){ if(depPoll){ clearInterval(depPoll); depPoll=null; }
-    if(!hasTgAuth()){ openSheet(sheetHead('Withdraw USDT')+'<div class="dep-tip" style="border-color:#ff5a5a44;"><i class="ti ti-alert-triangle" style="color:#ff5a5a;"></i><span>Withdrawals require opening the app from your Telegram bot so your account can be verified. Please launch KolonoEX inside Telegram.</span></div>'); return; }
-    openSheet(sheetHead('Withdraw USDT')+'<div style="text-align:center;padding:46px 0;color:#7a8299;"><i class="ti ti-loader-2" style="font-size:30px;display:inline-block;animation:depSpin 1s linear infinite;"></i><div style="margin-top:12px;font-size:13px;">Loading your balance…</div></div>');
+    if(!hasTgAuth()){ openSheet(sheetHead('Withdraw')+'<div class="dep-tip" style="border-color:#ff5a5a44;"><i class="ti ti-alert-triangle" style="color:#ff5a5a;"></i><span>Withdrawals require opening the app from your Telegram bot so your account can be verified. Please launch KolonoEX inside Telegram.</span></div>'); return; }
+    openSheet(sheetHead('Withdraw')+'<div style="text-align:center;padding:46px 0;color:#7a8299;"><i class="ti ti-loader-2" style="font-size:30px;display:inline-block;animation:depSpin 1s linear infinite;"></i><div style="margin-top:12px;font-size:13px;">Loading your balance…</div></div>');
     const sb=await syncBalance(); wdAvail=(sb==null)?(state.creditedDeposits||0):sb;
-    renderWithdrawForm(); }
+    renderWithdrawCoins(); }
 
-  function renderWithdrawForm(){
-    const chips=WD_NETWORKS.map(n=>'<div class="wd-chip'+(n.net===wdNet?' on':'')+'" data-net="'+n.net+'" onclick="setWdNet(\''+n.net+'\')">'+n.net+'</div>').join('');
-    openSheet(sheetHead('Withdraw USDT')
-    +'<div class="wd-bal"><div class="lab">Withdrawable balance</div><div class="val">'+fmtNum(wdAvail,2)+' <small>USDT</small></div></div>'
-    +'<div class="wd-field"><div class="fl">Network</div><div class="wd-chips">'+chips+'</div></div>'
-    +'<div class="wd-field"><div class="fl">Amount</div><div class="wd-input"><input id="wd-amt" inputmode="decimal" placeholder="Min '+WD_MIN+' USDT"><span class="wd-max" onclick="wdSetMax()">MAX</span><span style="font-size:13px;color:#7a8299;">USDT</span></div></div>'
-    +'<div class="wd-field"><div class="fl">Destination address</div><div class="wd-input"><input id="wd-addr" placeholder="Paste USDT '+wdNet+' address" autocomplete="off" spellcheck="false"><i class="ti ti-clipboard" style="color:#7a8299;cursor:pointer;" onclick="wdPaste()"></i></div></div>'
-    +'<div class="dep-tip" style="margin:10px 0;border-color:#ffae4e33;"><i class="ti ti-alert-triangle" style="color:#ffae4e;"></i><span>Make sure the address matches the <b style="color:#cfd6e6;">'+wdNet+'</b> network. Requests are reviewed and paid manually — funds arrive after approval.</span></div>'
-    +'<button class="dep-copy" id="wd-submit" onclick="submitWithdraw()"><i class="ti ti-arrow-up-circle"></i>Request Withdrawal</button>'
-    +'<div class="wd-hist" id="wd-hist"></div>');
+  function renderWithdrawCoins(){
+    const rows=WITHDRAW_ASSETS.map((a,i)=>'<div class="dep-coin" onclick="pickWithdrawCoin('+i+')">'+logoHTML(a.sym,a.color,38)
+      +'<div class="dc-meta"><div class="dc-name">'+a.sym+' <span style="color:#7a8299;font-weight:400;font-size:12px;">'+a.name+'</span></div>'
+      +'<div class="dc-net">'+a.nets.join(' · ')+'</div></div><i class="ti ti-chevron-right dc-chev"></i></div>').join('');
+    openSheet(sheetHead('Withdraw')
+      +'<div class="wd-bal"><div class="lab">Withdrawable balance</div><div class="val">'+fmtNum(wdAvail,2)+' <small>USDT</small></div></div>'
+      +'<div style="font-size:12px;color:#7a8299;margin-bottom:8px;">Select coin to withdraw</div>'+rows
+      +'<div class="wd-hist" id="wd-hist"></div>');
     loadWithdrawHistory(); }
 
-  function setWdNet(n){ wdNet=n; document.querySelectorAll('.wd-chip').forEach(c=>c.classList.toggle('on', c.dataset.net===n));
-    const a=document.getElementById('wd-addr'); if(a) a.placeholder='Paste USDT '+n+' address'; }
-  function wdSetMax(){ setV('wd-amt', Math.floor((wdAvail||0)*100)/100); }
-  async function wdPaste(){ try{ const t=await navigator.clipboard.readText(); if(t) setV('wd-addr', t.trim()); }catch{ toast('Paste not available','err'); } }
+  function pickWithdrawCoin(i){ wdAsset=WITHDRAW_ASSETS[i]||WITHDRAW_ASSETS[0]; wdNet=wdAsset.nets[0]; renderWithdrawForm(); }
 
-  async function submitWithdraw(){ if(wdBusy) return;
+  function wdCoinPrice(){ if(!wdAsset) return null; if(wdAsset.sym==='USDT') return 1; const p=px(wdAsset.sym); return p||null; }
+  function wdEst(){ const el=document.getElementById('wd-est'); if(!el||!wdAsset) return; const amt=parseFloat(v('wd-amt'))||0; const pr=wdCoinPrice();
+    if(amt>0&&pr){ el.innerHTML='You receive ≈ <b style="color:#cfd6e6;">'+trimAmt(amt/pr)+' '+wdAsset.sym+'</b>'+(wdAsset.sym!=='USDT'?' <span style="color:#6b7488;">(at current price)</span>':''); } else el.textContent=''; }
+
+  function renderWithdrawForm(){ const a=wdAsset; if(!a){ renderWithdrawCoins(); return; }
+    const chips=a.nets.map(n=>'<div class="wd-chip'+(n===wdNet?' on':'')+'" data-net="'+n+'" onclick="setWdNet(\''+n+'\')">'+n+'</div>').join('');
+    openSheet(sheetHeadBack('Withdraw '+a.sym,'renderWithdrawCoins()')
+      +'<div class="wd-bal"><div class="lab">Withdrawable balance</div><div class="val">'+fmtNum(wdAvail,2)+' <small>USDT</small></div></div>'
+      +(a.nets.length>1?'<div class="wd-field"><div class="fl">Network</div><div class="wd-chips">'+chips+'</div></div>':'<div class="wd-field"><div class="fl">Network</div><div class="wd-chips">'+chips+'</div></div>')
+      +'<div class="wd-field"><div class="fl">Amount (USDT)</div><div class="wd-input"><input id="wd-amt" inputmode="decimal" placeholder="Min '+WD_MIN+' USDT" oninput="wdEst()"><span class="wd-max" onclick="wdSetMax()">MAX</span><span style="font-size:13px;color:#7a8299;">USDT</span></div><div id="wd-est" style="font-size:11px;color:#7a8299;margin:6px 2px 0;"></div></div>'
+      +'<div class="wd-field"><div class="fl">'+a.sym+' address ('+wdNet+')</div><div class="wd-input"><input id="wd-addr" placeholder="Paste '+a.sym+' address" autocomplete="off" spellcheck="false"><i class="ti ti-clipboard" style="color:#7a8299;cursor:pointer;" onclick="wdPaste()"></i></div></div>'
+      +'<div class="dep-tip" style="margin:10px 0;border-color:#ffae4e33;"><i class="ti ti-alert-triangle" style="color:#ffae4e;"></i><span>Send to a <b style="color:#cfd6e6;">'+a.sym+'</b> address on the <b style="color:#cfd6e6;" id="wd-net-lbl">'+wdNet+'</b> network only. Wrong coin/network means permanent loss. Requests are reviewed and paid manually.</span></div>'
+      +'<button class="dep-copy" id="wd-submit" onclick="submitWithdraw()"><i class="ti ti-arrow-up-circle"></i>Request Withdrawal</button>');
+    wdEst(); }
+
+  function setWdNet(n){ wdNet=n; document.querySelectorAll('.wd-chip').forEach(c=>c.classList.toggle('on', c.dataset.net===n));
+    const a=document.getElementById('wd-addr'); if(a) a.placeholder='Paste '+wdAsset.sym+' address'; const lbl=document.getElementById('wd-net-lbl'); if(lbl) lbl.textContent=n; }
+  function wdSetMax(){ setV('wd-amt', Math.floor((wdAvail||0)*100)/100); wdEst(); }
+  async function wdPaste(){ try{ const t=await navigator.clipboard.readText(); if(t){ setV('wd-addr', t.trim()); } }catch{ toast('Paste not available','err'); } }
+
+  async function submitWithdraw(){ if(wdBusy||!wdAsset) return; const a=wdAsset;
     const amt=parseFloat(v('wd-amt'))||0; const addr=(v('wd-addr')||'').trim();
     if(amt<WD_MIN){ toast('Minimum withdrawal is '+WD_MIN+' USDT','err'); return; }
     if(amt>wdAvail+1e-9){ toast('Amount exceeds withdrawable balance','err'); return; }
     if(addr.length<16){ toast('Enter a valid destination address','err'); return; }
+    const pr=wdCoinPrice(); const coinAmount=pr?trimAmt(amt/pr):null;
     wdBusy=true; const btn=document.getElementById('wd-submit'); if(btn){ btn.disabled=true; btn.innerHTML='<i class="ti ti-loader-2" style="display:inline-block;animation:depSpin 1s linear infinite;"></i>Submitting…'; }
     try{
-      const r=await fetch('/api/withdraw',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), network:wdNet, address:addr, amount:amt }) });
+      const r=await fetch('/api/withdraw',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), coin:a.sym, network:wdNet, address:addr, amount:amt, coinAmount:coinAmount }) });
       let text='',d=null; try{ text=await r.text(); d=JSON.parse(text); }catch(e){}
       if(!r.ok || !d || !d.ok){ console.error('withdraw',r.status,text); toast((d&&d.error)||('Server error '+r.status),'err'); if(btn){ btn.disabled=false; btn.innerHTML='<i class="ti ti-arrow-up-circle"></i>Request Withdrawal'; } wdBusy=false; return; }
       await syncBalance(); wdAvail=parseFloat(d.balance)||0;
@@ -1433,12 +1478,14 @@
     }catch(e){ toast('Network error','err'); if(btn){ btn.disabled=false; btn.innerHTML='<i class="ti ti-arrow-up-circle"></i>Request Withdrawal'; } }
     finally{ wdBusy=false; } }
 
+  function wdAmtLabel(w){ return (w.coin&&w.coin!=='USDT'&&w.coinAmount) ? (w.coinAmount+' '+w.coin) : (fmtNum(w.amount,2)+' USDT'); }
+
   function showWithdrawDone(w){ if(wdPoll){ clearInterval(wdPoll); wdPoll=null; }
     const st=WD_STATUS[w.status]||{t:w.status,c:'#ffae4e',i:'ti-clock-hour-4'};
     openSheet(sheetHeadBack('Withdrawal Status','openWithdraw()')
     +'<div style="text-align:center;padding:14px 0 6px;"><i class="ti '+st.i+'" id="wdd-icon" style="font-size:46px;color:'+st.c+';"></i></div>'
-    +'<div style="text-align:center;font-size:20px;font-weight:700;margin-bottom:4px;">'+fmtNum(w.amount,2)+' USDT</div>'
-    +'<div style="text-align:center;font-size:12px;color:#7a8299;margin-bottom:6px;">'+w.network+' network</div>'
+    +'<div style="text-align:center;font-size:20px;font-weight:700;margin-bottom:4px;">'+wdAmtLabel(w)+'</div>'
+    +'<div style="text-align:center;font-size:12px;color:#7a8299;margin-bottom:6px;">'+(w.coin||'USDT')+' · '+w.network+' network · '+fmtNum(w.amount,2)+' USDT</div>'
     +'<div style="text-align:center;margin-bottom:16px;"><span class="wd-st '+w.status+'" id="wdd-badge" style="font-size:12px;padding:5px 12px;">'+st.t+'</span></div>'
     +'<div class="rec-card"><div class="rec-kv"><span class="k">Destination</span><span class="v">'+esc(shortMid(w.address,12,10))+'<i class="ti ti-copy cp" onclick="copyText(\''+escAttr(w.address)+'\')"></i></span></div>'
     +(w.memo?'<div class="rec-kv"><span class="k">Memo</span><span class="v">'+esc(w.memo)+'</span></div>':'')
@@ -1448,7 +1495,6 @@
     +'<span class="rec-refresh" id="wdd-refresh" onclick="refreshWithdrawStatus(\''+w.id+'\',true)"><i class="ti ti-refresh"></i>Refresh</span></div>'
     +'<div class="dep-tip" style="margin-top:12px;" id="wdd-tip"><i class="ti ti-info-circle"></i><span>Your request is queued for review. Funds are sent manually after approval.</span></div>'
     +'<button class="dep-copy ghost" style="margin-top:12px;" onclick="openWithdraw()">Back</button>');
-    // Live-poll this withdrawal's status until it reaches a final state.
     wdPoll=setInterval(()=>{ if(!document.getElementById('wdd-badge')){ clearInterval(wdPoll); wdPoll=null; return; } refreshWithdrawStatus(w.id); }, 10000); }
 
   async function refreshWithdrawStatus(id,manual){ if(!hasTgAuth()) return;
@@ -1472,7 +1518,7 @@
       const d=await r.json(); const el=document.getElementById('wd-hist'); if(!el) return;
       const list=(d&&d.withdrawals)||[]; if(!list.length){ el.innerHTML=''; return; }
       el.innerHTML='<div class="ht">Recent withdrawals</div>'+list.slice(0,8).map(w=>
-        '<div class="wd-item"><div><div class="wi-a">'+fmtNum(w.amount,2)+' USDT</div><div class="wi-s">'+w.network+' · '+(w.address||'').slice(0,10)+'…</div></div>'
+        '<div class="wd-item" onclick=\'showWithdrawDone('+JSON.stringify(w).replace(/'/g,"&#39;")+')\' style="cursor:pointer;"><div><div class="wi-a">'+wdAmtLabel(w)+'</div><div class="wi-s">'+(w.coin||'USDT')+' · '+w.network+' · '+(w.address||'').slice(0,10)+'…</div></div>'
         +'<span class="wd-st '+w.status+'">'+(WD_ST[w.status]||w.status)+'</span></div>').join('');
     }catch(e){} }
 
