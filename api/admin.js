@@ -1,6 +1,9 @@
-// Admin API for managing withdrawal requests. Protected by ADMIN_SECRET.
+// Admin API for managing withdrawal requests. Protected by ADMIN_SECRET (web
+// admin.html) OR a verified Telegram admin (the mini app, owner accounts).
 // Actions: list (pending), decide (approve | reject | paid).
 // reject refunds the held balance back to the user. Self-contained for Vercel.
+const crypto = require('crypto');
+
 async function upstash(args) {
   const URL = process.env.UPSTASH_REDIS_REST_URL, TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!URL || !TOKEN) throw new Error('Upstash not configured');
@@ -16,6 +19,34 @@ async function upstash(args) {
 
 const parseJSON = (s) => { try { return JSON.parse(s); } catch { return null; } };
 const escHtml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// Verify a Telegram WebApp initData string and return the user (or null).
+function verifyTelegram(initData) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token || !initData || typeof initData !== 'string') return null;
+  let params; try { params = new URLSearchParams(initData); } catch { return null; }
+  const hash = params.get('hash'); if (!hash) return null;
+  params.delete('hash');
+  const pairs = []; for (const [k, v] of params) pairs.push(`${k}=${v}`); pairs.sort();
+  const secret = crypto.createHmac('sha256', 'WebAppData').update(token).digest();
+  const calc = crypto.createHmac('sha256', secret).update(pairs.join('\n')).digest('hex');
+  try { const a = Buffer.from(calc, 'hex'), b = Buffer.from(hash, 'hex');
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null; } catch { return null; }
+  const authDate = parseInt(params.get('auth_date'), 10);
+  if (authDate && Date.now() / 1000 - authDate > 86400) return null;
+  try { const u = JSON.parse(params.get('user') || 'null'); return (u && u.id) ? u : null; } catch { return null; }
+}
+
+// Allowlist of admin Telegram numeric IDs: built-in owner(s) + ADMIN_IDS env
+// (comma-separated). The mini app authenticates admins via verified initData.
+function adminIds() {
+  const env = String(process.env.ADMIN_IDS || '').split(',').map((s) => s.trim()).filter(Boolean);
+  return new Set(['5664533861', ...env]);
+}
+function isTelegramAdmin(initData) {
+  const u = verifyTelegram(initData);
+  return !!u && adminIds().has(String(u.id));
+}
 
 // Push a message into the user's bot chat (outside the mini app). Best-effort.
 async function tgSend(userId, text) {
@@ -40,8 +71,9 @@ module.exports = async function handler(req, res) {
 
   const secret = process.env.ADMIN_SECRET;
   const body = req.body || {};
-  if (!secret) return res.status(500).json({ error: 'ADMIN_SECRET is not configured' });
-  if (body.secret !== secret) return res.status(401).json({ error: 'Unauthorized' });
+  const secretOk = !!secret && body.secret === secret;
+  const tgOk = !!body.initData && isTelegramAdmin(body.initData);
+  if (!secretOk && !tgOk) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
     if (body.action === 'list') {
