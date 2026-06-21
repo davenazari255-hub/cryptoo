@@ -385,6 +385,7 @@
       </div>
       <div class="header-icons">
         <div class="ws-dot" id="wsDot" title="Live feed"></div>
+        <i class="ti ti-shield-lock" id="adminBtn" title="Admin panel" style="display:none;color:#f0b90b;cursor:pointer;" onclick="openAdmin()"></i>
         <i class="ti ti-scan"></i><i class="ti ti-headphones"></i>
         <div class="bell-wrap" onclick="openNotifications()"><i class="ti ti-bell"></i><span class="bell-badge" id="bellBadge" style="display:none;">0</span></div>
       </div>
@@ -1243,7 +1244,14 @@
   // if you use the bot's MAIN Mini App (link t.me/bot?startapp=...).
   const MINI_APP_SHORT='app';
   const REF_BONUS=0.5;
+  // Admin Telegram numeric IDs (server enforces the real check; this only
+  // controls whether the in-app admin shortcut is shown).
+  const ADMIN_IDS=['5664533861'];
   function myUserId(){ try{ const u=window.Telegram&&Telegram.WebApp&&Telegram.WebApp.initDataUnsafe&&Telegram.WebApp.initDataUnsafe.user; if(u&&u.id) return 'tg_'+u.id; }catch{} return null; }
+  function isAdmin(){ try{ const u=window.Telegram&&Telegram.WebApp&&Telegram.WebApp.initDataUnsafe&&Telegram.WebApp.initDataUnsafe.user; return !!(u&&u.id&&ADMIN_IDS.includes(String(u.id))); }catch{ return false; } }
+  // Open admin.html inside the Telegram webview, forwarding initData (kept across
+  // same-origin navigation) so admin.html can authenticate without a secret.
+  function openAdmin(){ const init=tgInitData(); window.location.href='admin.html'+(init?('#init='+encodeURIComponent(init)):''); }
   function getRefLink(){ const id=myUserId(); const payload=id?('ref_'+id):'';
     const base='https://t.me/'+BOT_USERNAME+(MINI_APP_SHORT?('/'+MINI_APP_SHORT):'');
     return base+(payload?('?startapp='+payload):''); }
@@ -1639,7 +1647,8 @@
     ws.onmessage=(e)=>{ try{ const m=JSON.parse(e.data); const d=m.data; if(d&&d.s&&d.c&&d.P) onTick(d.s.toLowerCase(),d.c,d.P); }catch{} }; }
 
   function initTelegram(){ if(window.Telegram&&Telegram.WebApp){ const tg=Telegram.WebApp; tg.ready(); tg.expand(); try{ tg.disableVerticalSwipes(); }catch{}
-    const u=tg.initDataUnsafe&&tg.initDataUnsafe.user; if(u){ setText('hUserName',u.first_name||u.username||'Trader'); const av=document.getElementById('hUserAvatar'); if(u.photo_url) av.innerHTML='<img src="'+u.photo_url+'">'; else av.textContent=(u.first_name||'K').charAt(0).toUpperCase(); } } }
+    const u=tg.initDataUnsafe&&tg.initDataUnsafe.user; if(u){ setText('hUserName',u.first_name||u.username||'Trader'); const av=document.getElementById('hUserAvatar'); if(u.photo_url) av.innerHTML='<img src="'+u.photo_url+'">'; else av.textContent=(u.first_name||'K').charAt(0).toUpperCase(); } }
+    if(isAdmin()){ const ab=document.getElementById('adminBtn'); if(ab) ab.style.display=''; } }
 
   // boot
   initTelegram(); buildHomeList(); setFutTab('pos'); setSpotSub('orders'); setAssetTab('overview'); setBonusBtn(); bindPctSliders(); regenOB(); setInterval(regenOB,1500); renderAll(); startCountdown(); connectWS();

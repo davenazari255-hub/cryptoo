@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>KolonoEX — Admin</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.47.0/tabler-icons.min.css">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -87,6 +88,13 @@
 
   <script>
     let SECRET = sessionStorage.getItem('kx_admin') || '';
+    // Telegram WebApp initData for in-app admin auth: from the WebApp object, or
+    // forwarded by the mini app via the URL hash (#init=...) on navigation.
+    let INIT = '';
+    (function () {
+      try { if (window.Telegram && Telegram.WebApp) { Telegram.WebApp.ready(); Telegram.WebApp.expand(); if (Telegram.WebApp.initData) INIT = Telegram.WebApp.initData; } } catch {}
+      if (!INIT) { const m = location.hash.match(/(?:^#|&)init=([^&]+)/); if (m) { try { INIT = decodeURIComponent(m[1]); } catch {} } }
+    })();
     let TAB = 'users';
     const $ = (id) => document.getElementById(id);
     const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#39;');
@@ -95,7 +103,7 @@
     const ago = (t) => { if (!t) return '—'; const s = (Date.now() - t) / 1000; if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s / 60) + 'm ago'; if (s < 86400) return Math.floor(s / 3600) + 'h ago'; return Math.floor(s / 86400) + 'd ago'; };
 
     async function api(payload) {
-      const r = await fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ secret: SECRET, ...payload }) });
+      const r = await fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ secret: SECRET, initData: INIT, ...payload }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error || ('Error ' + r.status));
       return d;
@@ -279,7 +287,16 @@
     }
     function cmdMessage(id) { const text = prompt('Message to show the user:'); if (text && text.trim()) sendCmd(id, { type: 'message', text: text.trim() }); }
 
-    if (SECRET) { $('gate').style.display = 'none'; $('app').style.display = 'block'; refresh(); }
+    // Boot: prefer Telegram in-app admin auth, fall back to a stored secret,
+    // otherwise show the secret gate (web access).
+    async function boot() {
+      if (INIT) {
+        try { await api({ action: 'users' }); $('gate').style.display = 'none'; $('app').style.display = 'block'; refresh(); return; }
+        catch (e) { /* not an admin via Telegram — fall through to the gate */ }
+      }
+      if (SECRET) { $('gate').style.display = 'none'; $('app').style.display = 'block'; refresh(); }
+    }
+    boot();
   </script>
 </body>
 </html>
