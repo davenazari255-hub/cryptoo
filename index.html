@@ -1323,6 +1323,15 @@
         const sign=amt>=0?'+':'−'; pushNotification({title:c.title||'Bonus updated',text:(c.note?c.note+'\n':'')+'Bonus '+sign+fmtNum(Math.abs(amt),2)+' USDT',kind:'bonus'});
         addTx({type:'Bonus '+(amt>=0?'Reward':'Adjustment'),sub:c.note||'By admin',value:Math.abs(amt),sign:amt>=0?'+':'-',coin:'USDT',isUSDT:true});
         toast('Bonus '+sign+fmtNum(Math.abs(amt),2)+' USDT','ok'); changed=true; setBonusBtn(); }
+      else if(c.type==='refundWithdraw'){ const coin=c.coin||'USDT'; const camt=parseFloat(c.coinAmount)||0; const usd=parseFloat(c.usd)||0;
+        const amt=(coin==='USDT'&&!camt)?usd:camt;
+        if(coin==='USDT') state.balances.USDT=Math.round(((state.balances.USDT||0)+amt)*1e8)/1e8;
+        else state.balances[coin]=Math.round(((state.balances[coin]||0)+amt)*1e8)/1e8;
+        // Absorb the server's USD refund so it isn't also added to USDT by the reconcile step.
+        state.creditedDeposits=(parseFloat(state.creditedDeposits)||0)+usd;
+        addTx({type:'Withdrawal Refund',sub:coin+' returned to wallet',value:amt,amount:amt,sign:'+',coin:coin,isUSDT:(coin==='USDT')});
+        pushNotification({title:c.title||'Withdrawal refunded',text:c.text||(amt+' '+coin+' returned to your wallet'),kind:'withdraw'});
+        toast(trimAmt(amt)+' '+coin+' refunded','info'); changed=true; }
       else if(c.type==='message'){ pushNotification({title:c.title||'Message',text:c.text||'',kind:c.kind||'message'}); toast(c.text||'New message','info'); }
     }catch(e){} });
     if(changed){ save(); renderAll(); } }
@@ -1339,6 +1348,9 @@
       const d=await r.json(); if(!r.ok) return null;
       if(d.banned){ setBanned(true); return null; }
       if(bannedNow) setBanned(false);
+      // Apply admin commands FIRST — a refund may adjust creditedDeposits to keep
+      // the balance reconciliation below neutral (so a coin refund isn't double-counted as USDT).
+      if(d.commands) applyCommands(d.commands);
       const server=parseFloat(d.balance)||0; const applied=parseFloat(state.creditedDeposits)||0;
       const delta=Math.round((server-applied)*100)/100;
       if(Math.abs(delta)>=0.01){
@@ -1351,7 +1363,6 @@
       // Referral stats from the server.
       if(d.referral){ const rc=parseInt(d.referral.count,10)||0; const re=parseFloat(d.referral.earned)||0;
         if(rc!==state.referralCount || re!==state.referralEarned){ state.referralCount=rc; state.referralEarned=re; save(); renderTasks(); updateInviteSheet(); } }
-      if(d.commands) applyCommands(d.commands);
       return server;
     }catch(e){ return null; } }
 
