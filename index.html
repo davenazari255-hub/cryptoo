@@ -1654,7 +1654,14 @@
   initTelegram(); buildHomeList(); setFutTab('pos'); setSpotSub('orders'); setAssetTab('overview'); setBonusBtn(); bindPctSliders(); regenOB(); setInterval(regenOB,1500); renderAll(); startCountdown(); connectWS();
   updateBellBadge();
   // pull any deposits credited server-side while the app was closed, then keep checking
-  syncBalance(); setInterval(syncBalance, 60000);
+  syncBalance(); setInterval(syncBalance, 20000);
+  // Also reconcile immediately whenever the app returns to the foreground, so
+  // admin-side deposits/adjustments show up without waiting for the next tick.
+  let lastFgSync=0;
+  function foregroundSync(){ const t=now(); if(t-lastFgSync<3000) return; lastFgSync=t; syncBalance(); }
+  document.addEventListener('visibilitychange',()=>{ if(!document.hidden) foregroundSync(); });
+  window.addEventListener('focus',foregroundSync);
+  try{ if(window.Telegram&&Telegram.WebApp){ Telegram.WebApp.onEvent('activated',foregroundSync); } }catch{}
 </script>
 </body>
 </html>

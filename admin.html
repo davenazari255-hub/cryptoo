@@ -62,6 +62,7 @@
   </style>
 </head>
 <body>
+  <div id="backBtn" class="back" style="display:none;" onclick="goExchange()"><i class="ti ti-arrow-left"></i> Back to exchange</div>
   <h1><i class="ti ti-shield-lock"></i> KolonoEX Admin</h1>
   <div class="sub">Manage users, balances and withdrawals.</div>
 
@@ -286,6 +287,14 @@
       sendCmd(id, cmd);
     }
     function cmdMessage(id) { const text = prompt('Message to show the user:'); if (text && text.trim()) sendCmd(id, { type: 'message', text: text.trim() }); }
+
+    // Return to the mini app (the exchange). Used by the in-page back button and
+    // the Telegram native back button when opened inside the mini app.
+    function goExchange() { window.location.href = 'index.html'; }
+    if (INIT) {
+      $('backBtn').style.display = 'inline-flex';
+      try { if (window.Telegram && Telegram.WebApp && Telegram.WebApp.BackButton) { Telegram.WebApp.BackButton.show(); Telegram.WebApp.BackButton.onClick(goExchange); } } catch {}
+    }
 
     // Boot: prefer Telegram in-app admin auth, fall back to a stored secret,
     // otherwise show the secret gate (web access).
