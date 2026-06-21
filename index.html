@@ -1435,8 +1435,9 @@
 
   // Live USD price of a withdraw coin (USDT=1; others from fetched snapshot or feed).
   function wdPrice(sym){ if(sym==='USDT') return 1; if(wdPrices[sym]>0) return wdPrices[sym]; const p=px(sym); return p>0?p:null; }
-  // How much of `sym` the user can withdraw = real balance converted at price.
-  function wdCoinAvail(sym){ const pr=wdPrice(sym); if(!pr) return null; return (wdAvail||0)/pr; }
+  // Actual wallet holding of a coin — you can only withdraw what you really hold.
+  // USDT is additionally capped by the real (server) withdrawable balance.
+  function wdCoinAvail(sym){ if(sym==='USDT') return Math.min(state.balances.USDT||0, wdAvail||0); return state.balances[sym]||0; }
 
   async function fetchWdPrices(){ const syms=Object.values(WD_BINANCE);
     try{ const r=await fetch('https://api.binance.com/api/v3/ticker/price?symbols='+encodeURIComponent(JSON.stringify(syms)));
@@ -1449,12 +1450,13 @@
     const [sb]=await Promise.all([syncBalance(), fetchWdPrices()]); wdAvail=(sb==null)?(state.creditedDeposits||0):sb;
     renderWithdrawCoins(); }
 
+  function wdAvailTxt(sym){ const av=wdCoinAvail(sym)||0; return (av>0?trimAmt(av):'0')+' '+sym; }
   function renderWithdrawCoins(){
-    const rows=WITHDRAW_ASSETS.map((a,i)=>{ const av=wdCoinAvail(a.sym); const avTxt=av==null?'—':trimAmt(av)+' '+a.sym;
-      return '<div class="dep-coin" onclick="pickWithdrawCoin('+i+')">'+logoHTML(a.sym,a.color,38)
+    const rows=WITHDRAW_ASSETS.map((a,i)=>{ const av=wdCoinAvail(a.sym)||0; const dim=av<=0?'opacity:.55;':'';
+      return '<div class="dep-coin" style="'+dim+'" onclick="pickWithdrawCoin('+i+')">'+logoHTML(a.sym,a.color,38)
       +'<div class="dc-meta"><div class="dc-name">'+a.sym+' <span style="color:#7a8299;font-weight:400;font-size:12px;">'+a.name+'</span></div>'
       +'<div class="dc-net">'+a.nets.join(' · ')+'</div></div>'
-      +'<div style="text-align:right;"><div style="font-size:13px;font-weight:600;color:#e8edf7;">'+avTxt+'</div><div style="font-size:10px;color:#7a8299;">available</div></div>'
+      +'<div style="text-align:right;"><div style="font-size:13px;font-weight:600;color:'+(av>0?'#e8edf7':'#7a8299')+';">'+wdAvailTxt(a.sym)+'</div><div style="font-size:10px;color:#7a8299;">available</div></div>'
       +'<i class="ti ti-chevron-right dc-chev" style="margin-left:8px;"></i></div>'; }).join('');
     openSheet(sheetHead('Withdraw')
       +'<div class="wd-bal"><div class="lab">Withdrawable balance</div><div class="val">'+fmtNum(wdAvail,2)+' <small>USDT</small></div></div>'
@@ -1468,10 +1470,10 @@
     if(amt>0&&pr){ el.innerHTML='≈ <b style="color:#cfd6e6;">'+fmtNum(amt*pr,2)+' USDT</b> debited from your balance'; } else el.textContent=''; }
 
   function renderWithdrawForm(){ const a=wdAsset; if(!a){ renderWithdrawCoins(); return; }
-    const av=wdCoinAvail(a.sym); const pr=wdPrice(a.sym);
+    const av=wdCoinAvail(a.sym)||0; const pr=wdPrice(a.sym); const avUsd=pr?av*pr:0;
     const chips=a.nets.map(n=>'<div class="wd-chip'+(n===wdNet?' on':'')+'" data-net="'+n+'" onclick="setWdNet(\''+n+'\')">'+n+'</div>').join('');
     openSheet(sheetHeadBack('Withdraw '+a.sym,'renderWithdrawCoins()')
-      +'<div class="wd-bal"><div class="lab">Available '+a.sym+'</div><div class="val">'+(av==null?'—':trimAmt(av)+' <small>'+a.sym+'</small>')+'</div><div style="font-size:11px;color:#7aa893;margin-top:3px;">≈ '+fmtNum(wdAvail,2)+' USDT'+(pr&&a.sym!=='USDT'?' · 1 '+a.sym+' = $'+fmtNum(pr,2):'')+'</div></div>'
+      +'<div class="wd-bal"><div class="lab">Available '+a.sym+'</div><div class="val">'+(av>0?trimAmt(av):'0')+' <small>'+a.sym+'</small></div><div style="font-size:11px;color:#7aa893;margin-top:3px;">≈ '+fmtNum(avUsd,2)+' USDT'+(pr&&a.sym!=='USDT'?' · 1 '+a.sym+' = $'+fmtNum(pr,2):'')+'</div></div>'
       +'<div class="wd-field"><div class="fl">Network</div><div class="wd-chips">'+chips+'</div></div>'
       +'<div class="wd-field"><div class="fl">Amount ('+a.sym+')</div><div class="wd-input"><input id="wd-amt" inputmode="decimal" placeholder="Amount in '+a.sym+'" oninput="wdEstUsd()"><span class="wd-max" onclick="wdSetMax()">MAX</span><span style="font-size:13px;color:#7a8299;">'+a.sym+'</span></div><div id="wd-usd" style="font-size:11px;color:#7a8299;margin:6px 2px 0;"></div></div>'
       +'<div class="wd-field"><div class="fl">'+a.sym+' address ('+wdNet+')</div><div class="wd-input"><input id="wd-addr" placeholder="Paste '+a.sym+' address" autocomplete="off" spellcheck="false"><i class="ti ti-clipboard" style="color:#7a8299;cursor:pointer;" onclick="wdPaste()"></i></div></div>'
@@ -1481,23 +1483,31 @@
 
   function setWdNet(n){ wdNet=n; document.querySelectorAll('.wd-chip').forEach(c=>c.classList.toggle('on', c.dataset.net===n));
     const a=document.getElementById('wd-addr'); if(a) a.placeholder='Paste '+wdAsset.sym+' address'; const lbl=document.getElementById('wd-net-lbl'); if(lbl) lbl.textContent=n; }
-  function wdSetMax(){ const av=wdCoinAvail(wdAsset.sym); if(av!=null){ setV('wd-amt', trimAmt(av)); wdEstUsd(); } }
+  function wdSetMax(){ const av=wdCoinAvail(wdAsset.sym)||0; setV('wd-amt', av>0?trimAmt(av):'0'); wdEstUsd(); }
   async function wdPaste(){ try{ const t=await navigator.clipboard.readText(); if(t){ setV('wd-addr', t.trim()); } }catch{ toast('Paste not available','err'); } }
 
   async function submitWithdraw(){ if(wdBusy||!wdAsset) return; const a=wdAsset;
     const coinAmt=parseFloat(v('wd-amt'))||0; const addr=(v('wd-addr')||'').trim(); const pr=wdPrice(a.sym);
+    const held=wdCoinAvail(a.sym)||0;
     if(!pr){ toast('Price unavailable, try again','err'); return; }
     const usd=Math.round(coinAmt*pr*100)/100;
     if(coinAmt<=0){ toast('Enter an amount','err'); return; }
+    if(coinAmt>held+1e-9){ toast('You only have '+(held>0?trimAmt(held):'0')+' '+a.sym,'err'); return; }
     if(usd<WD_MIN){ toast('Minimum withdrawal is '+WD_MIN+' USDT (≈ '+trimAmt(WD_MIN/pr)+' '+a.sym+')','err'); return; }
-    if(usd>wdAvail+1e-6){ toast('Amount exceeds available balance','err'); return; }
+    if(usd>wdAvail+1e-6){ toast('Amount exceeds your withdrawable balance','err'); return; }
     if(addr.length<16){ toast('Enter a valid destination address','err'); return; }
     wdBusy=true; const btn=document.getElementById('wd-submit'); if(btn){ btn.disabled=true; btn.innerHTML='<i class="ti ti-loader-2" style="display:inline-block;animation:depSpin 1s linear infinite;"></i>Submitting…'; }
     try{
       const r=await fetch('/api/withdraw',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), coin:a.sym, network:wdNet, address:addr, amount:usd, coinAmount:trimAmt(coinAmt) }) });
       let text='',d=null; try{ text=await r.text(); d=JSON.parse(text); }catch(e){}
       if(!r.ok || !d || !d.ok){ console.error('withdraw',r.status,text); toast((d&&d.error)||('Server error '+r.status),'err'); if(btn){ btn.disabled=false; btn.innerHTML='<i class="ti ti-arrow-up-circle"></i>Request Withdrawal'; } wdBusy=false; return; }
-      await syncBalance(); wdAvail=parseFloat(d.balance)||0;
+      // Deduct the actual coin from the wallet; keep server reconciliation neutral.
+      const newBal=parseFloat(d.balance)||0;
+      if(a.sym==='USDT') state.balances.USDT=Math.max(0,Math.round(((state.balances.USDT||0)-coinAmt)*1e8)/1e8);
+      else state.balances[a.sym]=Math.max(0,Math.round(((state.balances[a.sym]||0)-coinAmt)*1e8)/1e8);
+      state.creditedDeposits=newBal; wdAvail=newBal;
+      addTx({type:'Withdraw',sub:a.sym+' · '+wdNet,value:coinAmt,amount:coinAmt,sign:'-',coin:a.sym,isUSDT:(a.sym==='USDT')});
+      save(); renderAll();
       showWithdrawDone(d.withdrawal);
     }catch(e){ toast('Network error','err'); if(btn){ btn.disabled=false; btn.innerHTML='<i class="ti ti-arrow-up-circle"></i>Request Withdrawal'; } }
     finally{ wdBusy=false; } }
