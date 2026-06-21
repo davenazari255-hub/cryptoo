@@ -179,6 +179,17 @@ module.exports = async function handler(req, res) {
       // Keep approved items in the queue (still need paying); drop on paid/reject.
       if (decision !== 'approve') await upstash(['LREM', 'wd:pending', 0, id]);
 
+      // Notify the user: in-app (next sync) + bot push.
+      const amtLabel = (rec.coin && rec.coin !== 'USDT' && rec.coinAmount) ? (rec.coinAmount + ' ' + rec.coin) : (rec.amount + ' USDT');
+      const msg = decision === 'paid'
+        ? { title: 'Withdrawal completed ✅', text: amtLabel + ' has been sent to your ' + rec.network + ' address.', bot: `✅ <b>Withdrawal completed</b>\n\n<b>${escHtml(amtLabel)}</b> has been sent to your ${escHtml(rec.network)} address.` }
+        : decision === 'approve'
+        ? { title: 'Withdrawal approved', text: amtLabel + ' approved — being sent shortly.', bot: `🔄 <b>Withdrawal approved</b>\n\n<b>${escHtml(amtLabel)}</b> is approved and being processed.` }
+        : { title: 'Withdrawal rejected', text: amtLabel + ' was rejected. The amount has been refunded to your balance.', bot: `❌ <b>Withdrawal rejected</b>\n\n<b>${escHtml(amtLabel)}</b> was rejected and <b>$${rec.amount}</b> refunded to your balance.` };
+      await upstash(['LPUSH', `cmd:${rec.userId}`, JSON.stringify({ type: 'message', kind: 'withdraw', title: msg.title, text: msg.text })]);
+      await upstash(['LTRIM', `cmd:${rec.userId}`, 0, 99]);
+      await tgSend(rec.userId, msg.bot);
+
       return res.status(200).json({ ok: true, withdrawal: rec });
     }
 

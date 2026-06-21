@@ -6,6 +6,7 @@
 const crypto = require('crypto');
 
 const MIN_USD = 10;
+const escHtml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 async function upstash(args) {
   const URL = process.env.UPSTASH_REDIS_REST_URL, TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -20,6 +21,17 @@ async function upstash(args) {
   return data.result;
 }
 
+async function tgSend(userId, text) {
+  const token = process.env.TELEGRAM_BOT_TOKEN; if (!token || !userId) return;
+  const chatId = String(userId).startsWith('tg_') ? String(userId).slice(3) : String(userId);
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true }),
+    });
+  } catch (e) { /* ignore */ }
+}
+
 // Idempotently credit a finished deposit; returns false if already processed.
 async function creditDeposit(userId, paymentId, usd, meta) {
   const added = await upstash(['SADD', `seen:${userId}`, String(paymentId)]);
@@ -32,6 +44,11 @@ async function creditDeposit(userId, paymentId, usd, meta) {
   // Global deposits feed for the admin report.
   await upstash(['LPUSH', 'deposits:all', JSON.stringify({ ...entry, userId })]);
   await upstash(['LTRIM', 'deposits:all', 0, 499]);
+  // Notify the user: in-app (next sync) + bot push.
+  const coin = (meta && meta.coin) || 'crypto';
+  await upstash(['LPUSH', `cmd:${userId}`, JSON.stringify({ type: 'message', kind: 'deposit', title: 'Deposit received 💰', text: 'Your deposit of $' + amount + ' (' + coin + ') has been credited to your balance.' })]);
+  await upstash(['LTRIM', `cmd:${userId}`, 0, 99]);
+  await tgSend(userId, `💰 <b>Deposit received</b>\n\nYour ${escHtml(coin)} deposit worth <b>$${amount}</b> has been credited to your KolonoEX balance.`);
   return true;
 }
 

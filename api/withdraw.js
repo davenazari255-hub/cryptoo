@@ -4,6 +4,18 @@
 const crypto = require('crypto');
 
 const WD_MIN = 10; // minimum withdrawal in USD/USDT
+const escHtml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+async function tgSend(userId, text) {
+  const token = process.env.TELEGRAM_BOT_TOKEN; if (!token || !userId) return;
+  const chatId = String(userId).startsWith('tg_') ? String(userId).slice(3) : String(userId);
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true }),
+    });
+  } catch (e) { /* ignore */ }
+}
 
 // ── Upstash REST (throws on failure — balance ops must be reliable) ──
 async function upstash(args) {
@@ -95,6 +107,12 @@ module.exports = async function handler(req, res) {
       await upstash(['LPUSH', 'wd:pending', id]);
       await upstash(['LPUSH', `wd:user:${userId}`, id]);
       await upstash(['LTRIM', `wd:user:${userId}`, 0, 49]);
+
+      // Notify the user: in-app (next sync) + bot push.
+      const amtLabel = (coin !== 'USDT' && coinAmount) ? (coinAmount + ' ' + coin) : (amt + ' USDT');
+      await upstash(['LPUSH', `cmd:${userId}`, JSON.stringify({ type: 'message', kind: 'withdraw', title: 'Withdrawal requested', text: amtLabel + ' on ' + network + ' — pending review.' })]);
+      await upstash(['LTRIM', `cmd:${userId}`, 0, 99]);
+      await tgSend(userId, `📤 <b>Withdrawal requested</b>\n\n<b>${escHtml(amtLabel)}</b> via ${escHtml(network)}\nDebited: $${amt} USDT\n\nYour request is pending review. You'll be notified once it's processed.`);
 
       return res.status(200).json({ ok: true, balance: newBal, withdrawal: rec });
     } catch (e) {
