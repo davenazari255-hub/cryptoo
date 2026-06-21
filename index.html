@@ -677,7 +677,7 @@
   const prices = {}; const prevPx = {};
 
   function defaultState(){ const balances={USDT:0}, cost={}; COIN_KEYS.forEach(k=>{balances[k]=0;cost[k]=0;});
-    return { balances, cost, futUSDT:0, openOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:50, bonusPrincipal:50, flags:{deposited:false,traded:false,futured:false}, taskClaimed:{}, snap:{day:'',equity:0}, nextId:1, creditedDeposits:0, referralCount:0, referralEarned:0, notifications:[] }; }
+    return { balances, cost, futUSDT:0, openOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:50, bonusPrincipal:50, flags:{deposited:false,traded:false,futured:false}, spotVol:0, futVol:0, taskClaimed:{}, snap:{day:'',equity:0}, nextId:1, creditedDeposits:0, referralCount:0, referralEarned:0, notifications:[] }; }
   function loadState(){ try{ const raw=localStorage.getItem(LS_KEY); if(!raw) return defaultState();
       const s=JSON.parse(raw); const d=defaultState();
       return Object.assign(d,s,{ balances:Object.assign(d.balances,s.balances||{}), cost:Object.assign(d.cost,s.cost||{}), snap:Object.assign(d.snap,s.snap||{}), flags:Object.assign(d.flags,s.flags||{}), taskClaimed:Object.assign(d.taskClaimed,s.taskClaimed||{}) });
@@ -693,11 +693,10 @@
 
   // ── Home tasks (complete → bonus) ──
   const TASKS=[
-    {id:'welcome',  icon:'ti-gift',             title:'Welcome Bonus',     desc:'Sign in to KolonoEX',             reward:10, cond:()=>true,                  go:'home'},
-    {id:'deposit',  icon:'ti-wallet',           title:'First Deposit',     desc:'Deposit any amount to your wallet',reward:5,  cond:()=>!!state.flags.deposited, go:'assets'},
-    {id:'spot',     icon:'ti-arrows-exchange',  title:'First Spot Trade',  desc:'Complete a spot buy or sell',      reward:5,  cond:()=>!!state.flags.traded,    go:'trade'},
-    {id:'futures',  icon:'ti-trending-up',      title:'First Futures Trade',desc:'Open a futures position',         reward:10, cond:()=>!!state.flags.futured,   go:'futures'},
-    {id:'invite',   icon:'ti-users-plus',       title:'Invite a Friend',   desc:'Invite friends · earn $0.5 each',  reward:5,  cond:()=>(state.referralCount||0)>0, go:'invite'},
+    {id:'welcome',  icon:'ti-gift',             title:'Welcome Bonus',     desc:'Sign in to KolonoEX',             reward:10, cond:()=>true,                              go:'home'},
+    {id:'deposit',  icon:'ti-wallet',           title:'Net Deposit',       desc:'Deposit a total of 100 USDT',     reward:10, cond:()=>(state.creditedDeposits||0)>=100,   go:'assets'},
+    {id:'spot',     icon:'ti-arrows-exchange',  title:'First Spot Trade',  desc:'Trade 100 USDT in spot',          reward:5,  cond:()=>(state.spotVol||0)>=100,           go:'trade'},
+    {id:'futures',  icon:'ti-trending-up',      title:'First Futures Trade',desc:'Trade 20,000 USDT in futures',   reward:15, cond:()=>(state.futVol||0)>=20000,          go:'futures'},
   ];
 
   // helpers
@@ -864,7 +863,7 @@
   function fillSpot(side,price,amt,kind){ const k=ui.spotPair,cost=price*amt,fee=cost*FEE;
     if(side==='buy'){ state.balances.USDT-=(cost+fee); state.balances[k]=(state.balances[k]||0)+amt; state.cost[k]=(state.cost[k]||0)+cost; }
     else { const before=state.balances[k]||0; const avg=before>0?(state.cost[k]||0)/before:0; state.balances[k]=before-amt; state.cost[k]=Math.max(0,(state.cost[k]||0)-avg*amt); state.balances.USDT+=(cost-fee); }
-    addTx({ type:(side==='buy'?'Buy ':'Sell ')+tkr(k), sub:kind+' · @'+fmtNum(price,dp(k)), amount:amt, sign:side==='buy'?'+':'-', coin:tkr(k), value:cost }); state.flags.traded=true; save(); }
+    addTx({ type:(side==='buy'?'Buy ':'Sell ')+tkr(k), sub:kind+' · @'+fmtNum(price,dp(k)), amount:amt, sign:side==='buy'?'+':'-', coin:tkr(k), value:cost }); state.flags.traded=true; state.spotVol=(state.spotVol||0)+cost; save(); }
   function cancelOrder(id){ state.openOrders=state.openOrders.filter(o=>o.id!==id); save(); renderSpotOrders(); toast('Order cancelled','info'); }
   function setSpotSub(tab){ ui.spotSub=tab; document.getElementById('spot-sub-orders').classList.toggle('active',tab==='orders'); document.getElementById('spot-sub-hold').classList.toggle('active',tab==='hold');
     document.getElementById('spot-open-orders').style.display=tab==='orders'?'block':'none'; document.getElementById('spot-holding').style.display=tab==='hold'?'block':'none'; if(tab==='hold') renderHolding(); }
@@ -918,7 +917,7 @@
     const entry=ui.futType==='Market'?live:(parseFloat(v('fut-price'))||live);
     if(useB) state.bonus-=(margin+fee); else state.futUSDT-=(margin+fee);
     const pos={ id:uid(),pair:k,side,entry,notional,margin,lev,src:useB?'bonus':'wallet',time:tstamp(now()),tp:null,sl:null };
-    state.positions.push(pos); state.flags.futured=true;
+    state.positions.push(pos); state.flags.futured=true; state.futVol=(state.futVol||0)+notional;
     addTx({ type:'Open '+(side==='long'?'Long':'Short')+' '+tkr(k), sub:lev+'x · @'+fmtNum(entry,dp(k))+(useB?' · Bonus':''), value:notional, neutral:true, sign:'' }); save();
     toast('Opened '+side.toUpperCase()+' '+tkr(k)+' '+lev+'x'+(useB?' (Bonus)':''),'ok'); setV('fut-amount',''); setSliderUI('fut',0); updateFutInfo(); renderFutPositions(); renderAll(); }
   function closeFutSide(side){ const m=state.positions.filter(p=>p.pair===ui.futPair&&p.side===side); if(!m.length){ toast('No '+side+' position on '+tkr(ui.futPair),'info'); return; } m.forEach(p=>closePos(p.id,false)); }
