@@ -714,7 +714,7 @@
     {id:'welcome',  icon:'ti-gift',             title:'Welcome Bonus',     desc:'Sign in to KolonoEX',                 reward:10, cond:()=>true,                              go:'home'},
     {id:'deposit',  icon:'ti-wallet',           title:'Net Deposit',       desc:'Deposit a total of 100 USDT',         reward:10, cond:()=>(state.creditedDeposits||0)>=100,   go:'assets',  target:100,   cur:()=>state.creditedDeposits||0},
     {id:'spot',     icon:'ti-arrows-exchange',  title:'First Spot Trade',  desc:'Trade 100 USDT volume in Spot',       reward:5,  cond:()=>(state.spotVol||0)>=100,           go:'trade',   target:100,   cur:()=>state.spotVol||0},
-    {id:'futures',  icon:'ti-trending-up',      title:'First Futures Trade',desc:'Trade 20,000 USDT volume (size × leverage)', reward:15, cond:()=>(state.futVol||0)>=20000,     go:'futures', target:20000, cur:()=>state.futVol||0},
+    {id:'futures',  icon:'ti-trending-up',      title:'First Futures Trade',desc:'Trade 20,000 USDT volume in Futures', reward:15, cond:()=>(state.futVol||0)>=20000,     go:'futures', target:20000, cur:()=>state.futVol||0},
   ];
 
   // helpers
@@ -1069,9 +1069,9 @@
       const btn = st==='done' ? '<button class="task-btn done">Claimed ✓</button>'
         : st==='ready' ? '<button class="task-btn claim" onclick="claimTask(\''+t.id+'\')">Claim</button>'
         : '<button class="task-btn go" onclick="'+goAction+'">Go</button>';
-      // Progress bar toward a numeric target (hidden once claimed).
+      // Progress bar toward a numeric target (stays at 100% after claim).
       let prog='';
-      if(t.target && st!=='done'){ const raw=t.cur(); const cur=Math.min(raw,t.target); const pct=Math.max(0,Math.min(100,(raw/t.target)*100));
+      if(t.target){ const raw=t.cur(); const cur=Math.min(raw,t.target); const pct=Math.max(0,Math.min(100,(raw/t.target)*100));
         prog='<div class="task-prog"><div class="task-prog-bar"><span style="width:'+pct.toFixed(1)+'%;"></span></div>'
           +'<div class="task-prog-txt">'+fmtNum(cur,cur>=100?0:2)+' / '+fmtNum(t.target,0)+' USDT ('+pct.toFixed(0)+'%)</div></div>'; }
       return '<div class="task-card"><div class="task-ic"><i class="ti '+t.icon+'"></i></div><div class="task-info"><div class="t">'+t.title+'</div><div class="s">'+t.desc+'</div>'+prog+'<div class="task-reward">🎁 +'+t.reward+' USDT bonus</div></div>'+btn+'</div>'; }).join('');
