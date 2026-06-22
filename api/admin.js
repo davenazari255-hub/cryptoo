@@ -147,6 +147,8 @@ module.exports = async function handler(req, res) {
       if (!id || !amount) return res.status(400).json({ error: 'id and non-zero amount required' });
       const newBal = parseFloat(await upstash(['INCRBYFLOAT', `bal:${id}`, amount]));
       if (newBal < 0) { await upstash(['INCRBYFLOAT', `bal:${id}`, -amount]); return res.status(400).json({ error: 'Would make balance negative' }); }
+      // A positive admin credit counts as a deposit (so it unlocks withdrawals).
+      if (amount > 0) await upstash(['INCRBYFLOAT', `dep:total:${id}`, amount]);
       await upstash(['LPUSH', `ledger:${id}`, JSON.stringify({ usd: amount, coin: 'ADMIN', note: String(body.note || 'Admin adjustment'), at: Date.now() })]);
       await upstash(['LTRIM', `ledger:${id}`, 0, 99]);
       return res.status(200).json({ ok: true, balance: newBal });

@@ -136,6 +136,8 @@ module.exports = async function handler(req, res) {
     }
 
     const balance = parseFloat(await upstash(['GET', `bal:${userId}`])) || 0;
+    // Cumulative lifetime deposits (gates the first withdrawal client-side & server-side).
+    const depositTotal = parseFloat(await upstash(['GET', `dep:total:${userId}`])) || 0;
 
     // Referral stats for this user.
     const referralCount = parseInt(await upstash(['GET', `ref:count:${userId}`]), 10) || 0;
@@ -146,7 +148,7 @@ module.exports = async function handler(req, res) {
     if (cmds.length) await upstash(['DEL', `cmd:${userId}`]);
     const commands = cmds.map(parseJSON).filter(Boolean);
 
-    return res.status(200).json({ banned: false, balance, commands, referral });
+    return res.status(200).json({ banned: false, balance, commands, referral, depositTotal });
   } catch (err) {
     return res.status(500).json({ error: 'Server error: ' + ((err && err.message) || 'unknown') });
   }

@@ -86,6 +86,10 @@ module.exports = async function handler(req, res) {
     if (!address || address.length < 16) return res.status(400).json({ error: 'A valid destination address is required' });
     if (!(amt >= WD_MIN)) return res.status(400).json({ error: `Minimum withdrawal is $${WD_MIN}` });
 
+    // Gate: a user must have deposited at least WD_MIN before any withdrawal.
+    const depositTotal = parseFloat(await upstash(['GET', `dep:total:${userId}`])) || 0;
+    if (depositTotal < WD_MIN) return res.status(400).json({ error: `You must deposit at least $${WD_MIN} before withdrawing` });
+
     // Atomically hold the funds: deduct first, then verify we didn't go negative.
     let deducted = false;
     try {
