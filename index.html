@@ -139,6 +139,10 @@
     .pos-mode { font-size:10.5px; color:#7a8299; background:#1e2130; padding:2px 7px; border-radius:5px; }
     .pos-mode.long { color:#4eeaa0; background:rgba(78,234,160,0.12); }
     .pos-mode.short { color:#ff5a5a; background:rgba(255,90,90,0.12); }
+    /* bonus-funded positions stand out with a gold accent */
+    .pos-card.bonus { border-color:#5a4a1e; background:linear-gradient(180deg,#1d1a10,#181b25 60%); }
+    .pos-bonus { font-size:10px; font-weight:700; color:#3a2c00; background:linear-gradient(135deg,#ffe08a,#f0b90b); padding:2px 7px; border-radius:5px; display:inline-flex; align-items:center; gap:3px; }
+    .hist-bonus { font-size:9.5px; font-weight:700; color:#f0b90b; border:0.5px solid #5a4a1e; background:#f0b90b14; padding:1px 6px; border-radius:5px; margin-left:6px; }
     .pos-pnlrow { display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:13px; }
     .pos-pnlrow .lbl, .pos-grid3 .lbl { font-size:10.5px; color:#7a8299; margin-bottom:3px; }
     .pos-pnlrow .big { font-size:20px; font-weight:700; line-height:1; }
@@ -964,7 +968,7 @@
     if(state.positions.length){ html+='<div class="pos-bar"><span class="hide" onclick="toggleHideOther()"><i class="ti '+(ui.hideOther?'ti-eye-off':'ti-eye')+'"></i> '+(ui.hideOther?'Show All Symbols':'Hide Other Symbols')+'</span><span class="closeall" onclick="closeAllPos()">Close All</span></div>'; }
     if(!list.length) html+='<div class="empty">'+(state.positions.length?'No positions for '+tkr(ui.futPair):'No open positions')+'</div>';
     else html+=list.map(p=>{ const u=unrealized(p); const roe=(u/p.margin)*100; const cls=u>=0?'pnl-pos':'pnl-neg'; const mark=px(p.pair); const liq=liqPrice(p); const risk=posRisk(p); const riskCls=risk>70?'pnl-neg':risk>40?'':'pnl-pos';
-      return '<div class="pos-card"><div class="pos-top">'+coinLogo(p.pair,24)+'<span class="pos-pair">'+tkr(p.pair)+'USDT Perp</span><span class="pos-mode '+p.side+'">'+p.side.toUpperCase()+' · Cross '+p.lev+'x</span></div>'
+      return '<div class="pos-card'+(p.src==='bonus'?' bonus':'')+'"><div class="pos-top">'+coinLogo(p.pair,24)+'<span class="pos-pair">'+tkr(p.pair)+'USDT Perp</span><span class="pos-mode '+p.side+'">'+p.side.toUpperCase()+' · Cross '+p.lev+'x</span>'+(p.src==='bonus'?'<span class="pos-bonus"><i class="ti ti-gift" style="font-size:11px;"></i>BONUS</span>':'')+'</div>'
         +'<div class="pos-pnlrow"><div><div class="lbl">PNL (USDT)</div><div class="big '+cls+'">'+(u>=0?'+':'')+fmtNum(u,2)+'</div></div><div style="text-align:right;"><div class="lbl">ROE</div><div class="big '+cls+'">'+(roe>=0?'+':'')+roe.toFixed(2)+'%</div></div></div>'
         +'<div class="pos-grid3"><div class="cell"><div class="lbl">Size (Cont)</div><div class="val">'+fmtNum(p.notional,2)+'</div></div>'
         +'<div class="cell"><div class="lbl">Margin (USDT) <span class="addm" onclick="openAddMargin('+p.id+')">⊕</span></div><div class="val">'+fmtNum(p.margin,2)+'</div></div>'
@@ -977,7 +981,7 @@
     wrap.innerHTML=html;
     const ordEl=document.getElementById('fut-ord-list');
     ordEl.innerHTML=state.closed.length?state.closed.map(p=>{ const cls=p.pnl>=0?'pnl-pos':'pnl-neg';
-      return '<div class="order-card"><div class="order-info"><div class="t">'+(p.liquidated?'⚠ ':'')+p.side.toUpperCase()+' '+tkr(p.pair)+' '+p.lev+'x</div><div class="s">'+p.closedTime+(p.reason?' · '+p.reason:'')+' · entry '+fmtNum(p.entry,dp(p.pair))+'</div></div><div class="tx-right '+cls+'">'+(p.pnl>=0?'+':'')+fmtNum(p.pnl,2)+' USDT</div></div>'; }).join(''):'<div class="empty">No history yet</div>'; }
+      return '<div class="order-card"><div class="order-info"><div class="t">'+(p.liquidated?'⚠ ':'')+p.side.toUpperCase()+' '+tkr(p.pair)+' '+p.lev+'x'+(p.src==='bonus'?'<span class="hist-bonus">🎁 BONUS</span>':'')+'</div><div class="s">'+p.closedTime+(p.reason?' · '+p.reason:'')+' · entry '+fmtNum(p.entry,dp(p.pair))+'</div></div><div class="tx-right '+cls+'">'+(p.pnl>=0?'+':'')+fmtNum(p.pnl,2)+' USDT</div></div>'; }).join(''):'<div class="empty">No history yet</div>'; }
 
   // ── ASSETS (Overview / Spot / Futures / Bonus) ──
   const ASSET_TABS=['overview','spot','futures','bonus'];
@@ -1242,14 +1246,18 @@
   function confirmLev(){ ui.levLong=ui.tmpLL; ui.levShort=ui.tmpLS; setText('fut-lev-long',ui.levLong+'x'); setText('fut-lev-short',ui.levShort+'x'); closeSheet(); updateFutInfo(); toast('Leverage updated · L '+ui.levLong+'x / S '+ui.levShort+'x','ok'); }
 
   // ── Add Margin / TP-SL ──
-  function openAddMargin(id){ const p=state.positions.find(x=>x.id===id); if(!p) return;
-    openSheet(sheetHead('Add Margin')+'<div style="font-size:12px;color:#7a8299;margin-bottom:10px;">'+tkr(p.pair)+' · current margin '+fmtNum(p.margin,2)+' USDT · liq '+fmtNum(liqPrice(p),dp(p.pair))+'</div>'
+  // Margin is topped up from the same pool the position was opened with:
+  // bonus positions draw from the bonus balance, wallet positions from futures.
+  function posPool(p){ return p.src==='bonus' ? (state.bonus||0) : (state.futUSDT||0); }
+  function posPoolLabel(p){ return p.src==='bonus' ? 'Bonus' : 'Futures'; }
+  function openAddMargin(id){ const p=state.positions.find(x=>x.id===id); if(!p) return; const lbl=posPoolLabel(p);
+    openSheet(sheetHead('Add Margin')+'<div style="font-size:12px;color:#7a8299;margin-bottom:10px;">'+tkr(p.pair)+' · current margin '+fmtNum(p.margin,2)+' USDT · liq '+fmtNum(liqPrice(p),dp(p.pair))+(p.src==='bonus'?' · <span style="color:#f0b90b;">Bonus position</span>':'')+'</div>'
       +'<div class="input-row"><input id="am-amt" inputmode="decimal" placeholder="Amount to add"><span class="u">USDT</span></div>'
-      +'<div style="font-size:11px;color:#7a8299;margin:6px 0 12px;">Available: '+fmtNum(state.balances.USDT||0,2)+' USDT</div>'
+      +'<div style="font-size:11px;color:#7a8299;margin:6px 0 12px;">Available ('+lbl+'): '+fmtNum(posPool(p),2)+' USDT</div>'
       +'<button class="buy-btn" onclick="doAddMargin('+id+')">Add Margin</button>'); }
   function doAddMargin(id){ const p=state.positions.find(x=>x.id===id); if(!p) return; const a=parseFloat(v('am-amt'))||0;
-    if(a<=0){ toast('Enter amount','err'); return; } if(a>(state.balances.USDT||0)+1e-9){ toast('Insufficient balance','err'); return; }
-    state.balances.USDT-=a; p.margin+=a; save(); closeSheet(); toast('Added '+fmtNum(a,2)+' USDT margin','ok'); renderFutPositions(); renderAll(); }
+    if(a<=0){ toast('Enter amount','err'); return; } if(a>posPool(p)+1e-9){ toast('Insufficient '+posPoolLabel(p).toLowerCase()+' balance','err'); return; }
+    if(p.src==='bonus') state.bonus-=a; else state.futUSDT-=a; p.margin+=a; save(); closeSheet(); toast('Added '+fmtNum(a,2)+' USDT margin','ok'); renderFutPositions(); setBonusBtn(); renderAll(); }
   function openTPSL(id){ const p=state.positions.find(x=>x.id===id); if(!p) return; const mark=px(p.pair);
     openSheet(sheetHead('Stop Profit & Loss')+'<div style="font-size:12px;color:#7a8299;margin-bottom:12px;">'+tkr(p.pair)+' '+p.side.toUpperCase()+' · Mark '+(mark?fmtNum(mark,dp(p.pair)):'--')+' · Entry '+fmtNum(p.entry,dp(p.pair))+'</div>'
       +'<div class="input-row"><span class="lab">TP</span><input id="tp-price" inputmode="decimal" placeholder="Take-profit price" value="'+(p.tp||'')+'"><span class="u">USDT</span></div>'
