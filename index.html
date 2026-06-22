@@ -17,11 +17,11 @@
     .logo-anim { display:inline-flex; align-items:center; line-height:1; }
     .logo-anim .logo-k { height:2.3em; width:auto; display:block; flex-shrink:0; margin:-0.55em -0.25em -0.55em -0.3em; }
     .logo-anim .logo-rest { display:inline-block; white-space:nowrap; overflow:hidden; color:#4eeaa0; font-weight:600; letter-spacing:0.5px;
-      max-width:0; opacity:0; transform:translateX(-10px); animation: logoReveal 7s ease-in-out infinite; }
+      max-width:0; opacity:0; transform:translateX(-10px); animation: logoReveal 40s ease-in-out infinite; }
     @keyframes logoReveal {
-      0%, 6%   { max-width:0;     opacity:0; transform:translateX(-10px); }
-      22%, 70% { max-width:7em;   opacity:1; transform:translateX(0); }
-      88%,100% { max-width:0;     opacity:0; transform:translateX(-10px); }
+      0%, 4%   { max-width:0;     opacity:0; transform:translateX(-10px); }
+      8%, 90%  { max-width:7em;   opacity:1; transform:translateX(0); }   /* visible ~33s of the 40s cycle */
+      97%,100% { max-width:0;     opacity:0; transform:translateX(-10px); }
     }
     @media (prefers-reduced-motion: reduce) { .logo-anim .logo-rest { max-width:7em; opacity:1; transform:none; animation:none; } }
     .header-icons { display: flex; gap: 14px; color: #7a8299; font-size: 20px; align-items: center; }
@@ -352,6 +352,10 @@
     .task-info .t { font-size:13px; font-weight:600; color:#e2e8f0; }
     .task-info .s { font-size:11px; color:#7a8299; margin-top:2px; }
     .task-reward { font-size:11px; color:#f0b90b; margin-top:3px; }
+    .task-prog { margin-top:6px; }
+    .task-prog-bar { height:5px; border-radius:3px; background:#0d0e12; overflow:hidden; }
+    .task-prog-bar span { display:block; height:100%; border-radius:3px; background:linear-gradient(90deg,#4eeaa0,#f0b90b); transition:width .45s ease; }
+    .task-prog-txt { font-size:10px; color:#7a8299; margin-top:3px; }
     .task-btn { padding:7px 15px; border-radius:8px; font-size:12px; font-weight:600; border:none; cursor:pointer; flex-shrink:0; }
     .task-btn.claim { background:#4eeaa0; color:#0d0e12; }
     .task-btn.go { background:#262a38; color:#e2e8f0; }
@@ -707,10 +711,10 @@
 
   // ── Home tasks (complete → bonus) ──
   const TASKS=[
-    {id:'welcome',  icon:'ti-gift',             title:'Welcome Bonus',     desc:'Sign in to KolonoEX',             reward:10, cond:()=>true,                              go:'home'},
-    {id:'deposit',  icon:'ti-wallet',           title:'Net Deposit',       desc:'Deposit a total of 100 USDT',     reward:10, cond:()=>(state.creditedDeposits||0)>=100,   go:'assets'},
-    {id:'spot',     icon:'ti-arrows-exchange',  title:'First Spot Trade',  desc:'Trade 100 USDT in spot',          reward:5,  cond:()=>(state.spotVol||0)>=100,           go:'trade'},
-    {id:'futures',  icon:'ti-trending-up',      title:'First Futures Trade',desc:'Trade 20,000 USDT in futures',   reward:15, cond:()=>(state.futVol||0)>=20000,          go:'futures'},
+    {id:'welcome',  icon:'ti-gift',             title:'Welcome Bonus',     desc:'Sign in to KolonoEX',                 reward:10, cond:()=>true,                              go:'home'},
+    {id:'deposit',  icon:'ti-wallet',           title:'Net Deposit',       desc:'Deposit a total of 100 USDT',         reward:10, cond:()=>(state.creditedDeposits||0)>=100,   go:'assets',  target:100,   cur:()=>state.creditedDeposits||0},
+    {id:'spot',     icon:'ti-arrows-exchange',  title:'First Spot Trade',  desc:'Trade 100 USDT volume in Spot',       reward:5,  cond:()=>(state.spotVol||0)>=100,           go:'trade',   target:100,   cur:()=>state.spotVol||0},
+    {id:'futures',  icon:'ti-trending-up',      title:'First Futures Trade',desc:'Trade 20,000 USDT volume (size × leverage)', reward:15, cond:()=>(state.futVol||0)>=20000,     go:'futures', target:20000, cur:()=>state.futVol||0},
   ];
 
   // helpers
@@ -1065,7 +1069,12 @@
       const btn = st==='done' ? '<button class="task-btn done">Claimed ✓</button>'
         : st==='ready' ? '<button class="task-btn claim" onclick="claimTask(\''+t.id+'\')">Claim</button>'
         : '<button class="task-btn go" onclick="'+goAction+'">Go</button>';
-      return '<div class="task-card"><div class="task-ic"><i class="ti '+t.icon+'"></i></div><div class="task-info"><div class="t">'+t.title+'</div><div class="s">'+t.desc+'</div><div class="task-reward">🎁 +'+t.reward+' USDT bonus</div></div>'+btn+'</div>'; }).join('');
+      // Progress bar toward a numeric target (hidden once claimed).
+      let prog='';
+      if(t.target && st!=='done'){ const raw=t.cur(); const cur=Math.min(raw,t.target); const pct=Math.max(0,Math.min(100,(raw/t.target)*100));
+        prog='<div class="task-prog"><div class="task-prog-bar"><span style="width:'+pct.toFixed(1)+'%;"></span></div>'
+          +'<div class="task-prog-txt">'+fmtNum(cur,cur>=100?0:2)+' / '+fmtNum(t.target,0)+' USDT ('+pct.toFixed(0)+'%)</div></div>'; }
+      return '<div class="task-card"><div class="task-ic"><i class="ti '+t.icon+'"></i></div><div class="task-info"><div class="t">'+t.title+'</div><div class="s">'+t.desc+'</div>'+prog+'<div class="task-reward">🎁 +'+t.reward+' USDT bonus</div></div>'+btn+'</div>'; }).join('');
     el.innerHTML=h; }
   // Best-effort bot push for client-side events (task bonuses, etc.).
   async function botNotify(text){ if(!hasTgAuth()) return; try{ await fetch('/api/notify',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), text }) }); }catch(e){} }
@@ -1498,12 +1507,6 @@
     if(!hasTgAuth()){ openSheet(sheetHead('Withdraw')+'<div class="dep-tip" style="border-color:#ff5a5a44;"><i class="ti ti-alert-triangle" style="color:#ff5a5a;"></i><span>Withdrawals require opening the app from your Telegram bot so your account can be verified. Please launch KolonoEX inside Telegram.</span></div>'); return; }
     openSheet(sheetHead('Withdraw')+'<div style="text-align:center;padding:46px 0;color:#7a8299;"><i class="ti ti-loader-2" style="font-size:30px;display:inline-block;animation:depSpin 1s linear infinite;"></i><div style="margin-top:12px;font-size:13px;">Loading…</div></div>');
     const [sb]=await Promise.all([syncBalance(), fetchWdPrices()]); wdAvail=(sb==null)?(state.creditedDeposits||0):sb;
-    // First withdrawal requires at least one deposit of WD_MIN USDT or more.
-    if((state.depositTotal||0)<WD_MIN){
-      openSheet(sheetHead('Withdraw')
-        +'<div class="dep-tip" style="border-color:#ffae4e44;"><i class="ti ti-alert-triangle" style="color:#ffae4e;"></i><span>You need to deposit at least <b style="color:#cfd6e6;">'+WD_MIN+' USDT</b> before you can withdraw. You\'ve deposited <b style="color:#cfd6e6;">'+fmtNum(state.depositTotal||0,2)+' USDT</b> so far.</span></div>'
-        +'<button class="dep-copy" onclick="openDeposit()"><i class="ti ti-wallet"></i>Deposit now</button>');
-      return; }
     renderWithdrawCoins(); }
 
   function wdAvailTxt(sym){ const av=wdCoinAvail(sym)||0; return (av>0?trimAmt(av):'0')+' '+sym; }
@@ -1552,6 +1555,8 @@
     if(usd<WD_MIN){ toast('Minimum withdrawal is '+WD_MIN+' USDT (≈ '+trimAmt(WD_MIN/pr)+' '+a.sym+')','err'); return; }
     if(usd>wdAvail+1e-6){ toast('Amount exceeds your withdrawable balance','err'); return; }
     if(addr.length<16){ toast('Enter a valid destination address','err'); return; }
+    // Final gate: a deposit of at least WD_MIN USDT is required before the first withdrawal.
+    if((state.depositTotal||0)<WD_MIN){ toast('You must deposit at least '+WD_MIN+' USDT before withdrawing','err'); return; }
     wdBusy=true; const btn=document.getElementById('wd-submit'); if(btn){ btn.disabled=true; btn.innerHTML='<i class="ti ti-loader-2" style="display:inline-block;animation:depSpin 1s linear infinite;"></i>Submitting…'; }
     try{
       const r=await fetch('/api/withdraw',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), coin:a.sym, network:wdNet, address:addr, amount:usd, coinAmount:trimAmt(coinAmt) }) });
