@@ -13,6 +13,17 @@
     .header { background: #13151c; padding: 12px 16px 10px; border-bottom: 0.5px solid #1e2130; flex-shrink: 0; }
     .header-top { display: flex; align-items: center; justify-content: space-between; }
     .logo { font-size: 20px; font-weight: 600; color: #4eeaa0; letter-spacing: 0.5px; }
+    /* animated brand: K is the logo image, the rest slides out from inside it */
+    .logo-anim { display:inline-flex; align-items:center; overflow:hidden; line-height:1; }
+    .logo-anim .logo-k { height:1.25em; width:auto; display:block; flex-shrink:0; }
+    .logo-anim .logo-rest { display:inline-block; white-space:nowrap; overflow:hidden; color:#4eeaa0; font-weight:600; letter-spacing:0.5px;
+      max-width:0; opacity:0; transform:translateX(-10px); animation: logoReveal 7s ease-in-out infinite; }
+    @keyframes logoReveal {
+      0%, 6%   { max-width:0;     opacity:0; transform:translateX(-10px); }
+      22%, 70% { max-width:7em;   opacity:1; transform:translateX(0); }
+      88%,100% { max-width:0;     opacity:0; transform:translateX(-10px); }
+    }
+    @media (prefers-reduced-motion: reduce) { .logo-anim .logo-rest { max-width:7em; opacity:1; transform:none; animation:none; } }
     .header-icons { display: flex; gap: 14px; color: #7a8299; font-size: 20px; align-items: center; }
     .bell-wrap { position:relative; display:inline-flex; cursor:pointer; }
     .bell-badge { position:absolute; top:-6px; right:-7px; min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:#ff5a5a; color:#fff; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; border:1.5px solid #0d0e12; }
@@ -274,6 +285,8 @@
     .assets-tabs { display:flex; gap:20px; padding:14px 16px 0; border-bottom:0.5px solid #1e2130; overflow-x:auto; }
     .atab { font-size:15px; color:#7a8299; padding-bottom:12px; cursor:pointer; white-space:nowrap; }
     .atab.active { color:#e2e8f0; font-weight:600; border-bottom:2px solid #4eeaa0; }
+    @keyframes atSlideFromRight { from { opacity:0; transform:translateX(28px); } to { opacity:1; transform:translateX(0); } }
+    @keyframes atSlideFromLeft  { from { opacity:0; transform:translateX(-28px); } to { opacity:1; transform:translateX(0); } }
     .av-label { font-size:13px; color:#7a8299; display:flex; align-items:center; gap:6px; margin-bottom:6px; }
     .av-big { font-size:30px; font-weight:700; color:#e2e8f0; line-height:1.1; }
     .av-usd { font-size:13px; color:#7a8299; margin-top:3px; }
@@ -379,7 +392,7 @@
       <div class="header-user">
         <div class="header-avatar" id="hUserAvatar">K</div>
         <div>
-          <div class="logo" style="font-size:17px;">KolonoEX</div>
+          <div class="logo logo-anim" style="font-size:17px;"><img src="logo.png" class="logo-k" alt="K"><span class="logo-rest">olonoEX</span></div>
           <div class="header-name" id="hUserName" style="font-size:11px;color:#7a8299;">Guest</div>
         </div>
       </div>
@@ -678,7 +691,7 @@
   const prices = {}; const prevPx = {};
 
   function defaultState(){ const balances={USDT:0}, cost={}; COIN_KEYS.forEach(k=>{balances[k]=0;cost[k]=0;});
-    return { balances, cost, futUSDT:0, openOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:50, bonusPrincipal:50, flags:{deposited:false,traded:false,futured:false}, spotVol:0, futVol:0, taskClaimed:{}, snap:{day:'',equity:0}, nextId:1, creditedDeposits:0, referralCount:0, referralEarned:0, notifications:[] }; }
+    return { balances, cost, futUSDT:0, openOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:50, bonusPrincipal:50, flags:{deposited:false,traded:false,futured:false}, spotVol:0, futVol:0, taskClaimed:{}, snap:{day:'',equity:0}, nextId:1, creditedDeposits:0, depositTotal:0, referralCount:0, referralEarned:0, notifications:[] }; }
   function loadState(){ try{ const raw=localStorage.getItem(LS_KEY); if(!raw) return defaultState();
       const s=JSON.parse(raw); const d=defaultState();
       return Object.assign(d,s,{ balances:Object.assign(d.balances,s.balances||{}), cost:Object.assign(d.cost,s.cost||{}), snap:Object.assign(d.snap,s.snap||{}), flags:Object.assign(d.flags,s.flags||{}), taskClaimed:Object.assign(d.taskClaimed,s.taskClaimed||{}) });
@@ -960,8 +973,23 @@
       return '<div class="order-card"><div class="order-info"><div class="t">'+(p.liquidated?'⚠ ':'')+p.side.toUpperCase()+' '+tkr(p.pair)+' '+p.lev+'x</div><div class="s">'+p.closedTime+(p.reason?' · '+p.reason:'')+' · entry '+fmtNum(p.entry,dp(p.pair))+'</div></div><div class="tx-right '+cls+'">'+(p.pnl>=0?'+':'')+fmtNum(p.pnl,2)+' USDT</div></div>'; }).join(''):'<div class="empty">No history yet</div>'; }
 
   // ── ASSETS (Overview / Spot / Futures / Bonus) ──
-  function setAssetTab(t){ ui.assetTab=t; document.querySelectorAll('.atab').forEach(a=>a.classList.toggle('active',a.getAttribute('data-at')===t));
-    ['overview','spot','futures','bonus'].forEach(n=>{ const e=document.getElementById('at-'+n); if(e) e.style.display=(n===t)?'block':'none'; }); renderAssets(); }
+  const ASSET_TABS=['overview','spot','futures','bonus'];
+  function setAssetTab(t,dir){ const prev=ui.assetTab||'overview'; ui.assetTab=t;
+    document.querySelectorAll('.atab').forEach(a=>a.classList.toggle('active',a.getAttribute('data-at')===t));
+    ASSET_TABS.forEach(n=>{ const e=document.getElementById('at-'+n); if(e) e.style.display=(n===t)?'block':'none'; }); renderAssets();
+    // animate the incoming page in the direction of travel
+    if(dir===undefined){ const a=ASSET_TABS.indexOf(prev), b=ASSET_TABS.indexOf(t); dir=b>a?1:(b<a?-1:0); }
+    const act=document.getElementById('at-'+t);
+    if(act&&dir){ act.style.animation='none'; void act.offsetWidth; act.style.animation=(dir>0?'atSlideFromRight':'atSlideFromLeft')+' .24s ease'; }
+    const pill=document.querySelector('.atab[data-at="'+t+'"]'); if(pill){ try{ pill.scrollIntoView({inline:'center',block:'nearest',behavior:'smooth'}); }catch{} } }
+  // Swipe left/right on the Assets page to move between Overview ⇄ Spot ⇄ Futures ⇄ Bonus.
+  function bindAssetSwipe(){ const el=document.getElementById('page-assets'); if(!el) return;
+    let sx=0,sy=0,track=false;
+    el.addEventListener('touchstart',e=>{ if(e.touches.length!==1){ track=false; return; } sx=e.touches[0].clientX; sy=e.touches[0].clientY; track=true; },{passive:true});
+    el.addEventListener('touchend',e=>{ if(!track) return; track=false; const tch=e.changedTouches[0]; const dx=tch.clientX-sx, dy=tch.clientY-sy;
+      if(Math.abs(dx)<55 || Math.abs(dx)<Math.abs(dy)*1.4) return; // require a clear horizontal swipe
+      const cur=ASSET_TABS.indexOf(ui.assetTab||'overview'); const step=dx<0?1:-1; const nx=Math.max(0,Math.min(ASSET_TABS.length-1,cur+step));
+      if(nx!==cur) setAssetTab(ASSET_TABS[nx],step); },{passive:true}); }
   function renderAssets(){ const t=ui.assetTab||'overview';
     if(t==='overview') renderOverview(); else if(t==='spot') renderSpotAssets(); else if(t==='futures') renderFutAssets(); else renderBonus(); }
   function actIcons(items){ return '<div class="act-row">'+items.map(it=>'<div class="act-item" onclick="'+it.fn+'"><div class="act-ic"><i class="ti '+it.icon+'"></i></div><span>'+it.label+'</span></div>').join('')+'</div>'; }
@@ -976,14 +1004,16 @@
     h+='<div class="dist-sub"><div class="s '+(ui.distSub==='spot'?'active':'')+'" onclick="ui.distSub=\'spot\';renderOverview()">Spot assets</div><div class="s '+(ui.distSub==='dist'?'active':'')+'" onclick="ui.distSub=\'dist\';renderOverview()">Asset distribution</div></div>';
     const se=spotEquity(), fe=futEquity(), be=bonusEquity();
     if(ui.distSub==='dist'){
-      h+=distRow('Spot account',se)+distRow('Futures account',fe)+distRow('Bonus account',be);
+      h+=distRow('Spot account',se,'spot')+distRow('Futures account',fe,'futures')+distRow('Bonus account',be,'bonus');
     } else {
       const rows=[]; const usdt=state.balances.USDT||0; if(usdt>1e-9) rows.push(spAssetRow('USDT','Tether','#26a17b',usdt,usdt));
       COIN_KEYS.forEach(k=>{ const a=state.balances[k]||0; if(a>1e-9){ const p=px(k)||0; rows.push(spAssetRow(tkr(k),COINS[k].name,COINS[k].color,a,a*p)); } });
       h+=rows.length?rows.join(''):'<div class="empty">No spot assets</div>';
     }
     document.getElementById('at-overview').innerHTML=h; }
-  function distRow(name,usd){ return '<div class="dist-row"><div><div class="nm">'+name+'</div></div><div><div class="amt">'+btcOf(usd)+'</div><div class="sub2">'+fmtUSD(usd)+'</div></div></div>'; }
+  function distRow(name,usd,tab){ const click=tab?(' onclick="setAssetTab(\''+tab+'\')" style="cursor:pointer;"'):'';
+    const chev=tab?'<i class="ti ti-chevron-right" style="color:#4a5266;font-size:16px;margin-left:8px;"></i>':'';
+    return '<div class="dist-row"'+click+'><div><div class="nm">'+name+'</div></div><div style="display:flex;align-items:center;"><div><div class="amt">'+btcOf(usd)+'</div><div class="sub2">'+fmtUSD(usd)+'</div></div>'+chev+'</div></div>'; }
   function renderSpotAssets(){ const se=spotEquity();
     let h=avHead('Asset valuation (BTC)',btcOf(se),fmtUSD(se))+profHTML();
     h+=actIcons([{icon:'ti-wallet',label:'Deposit',fn:'openDeposit()'},{icon:'ti-building-bank',label:'Withdraw',fn:'openWithdraw()'},{icon:'ti-arrows-exchange',label:'Transfer',fn:'openTransfer()'},{icon:'ti-history',label:'Record',fn:'openRecord()'}]);
@@ -1367,6 +1397,8 @@
         else { addTx({type:'Adjustment',sub:'Balance updated',value:Math.abs(delta),sign:'-',coin:'USDT',isUSDT:true}); }
         save(); renderAll();
       } else if(server!==applied){ state.creditedDeposits=server; save(); }
+      // Cumulative deposits (used to gate first withdrawal).
+      if(d.depositTotal!=null){ const dt=parseFloat(d.depositTotal)||0; if(dt!==state.depositTotal){ state.depositTotal=dt; save(); } }
       // Referral stats from the server.
       if(d.referral){ const rc=parseInt(d.referral.count,10)||0; const re=parseFloat(d.referral.earned)||0;
         if(rc!==state.referralCount || re!==state.referralEarned){ state.referralCount=rc; state.referralEarned=re; save(); renderTasks(); updateInviteSheet(); } }
@@ -1466,6 +1498,12 @@
     if(!hasTgAuth()){ openSheet(sheetHead('Withdraw')+'<div class="dep-tip" style="border-color:#ff5a5a44;"><i class="ti ti-alert-triangle" style="color:#ff5a5a;"></i><span>Withdrawals require opening the app from your Telegram bot so your account can be verified. Please launch KolonoEX inside Telegram.</span></div>'); return; }
     openSheet(sheetHead('Withdraw')+'<div style="text-align:center;padding:46px 0;color:#7a8299;"><i class="ti ti-loader-2" style="font-size:30px;display:inline-block;animation:depSpin 1s linear infinite;"></i><div style="margin-top:12px;font-size:13px;">Loading…</div></div>');
     const [sb]=await Promise.all([syncBalance(), fetchWdPrices()]); wdAvail=(sb==null)?(state.creditedDeposits||0):sb;
+    // First withdrawal requires at least one deposit of WD_MIN USDT or more.
+    if((state.depositTotal||0)<WD_MIN){
+      openSheet(sheetHead('Withdraw')
+        +'<div class="dep-tip" style="border-color:#ffae4e44;"><i class="ti ti-alert-triangle" style="color:#ffae4e;"></i><span>You need to deposit at least <b style="color:#cfd6e6;">'+WD_MIN+' USDT</b> before you can withdraw. You\'ve deposited <b style="color:#cfd6e6;">'+fmtNum(state.depositTotal||0,2)+' USDT</b> so far.</span></div>'
+        +'<button class="dep-copy" onclick="openDeposit()"><i class="ti ti-wallet"></i>Deposit now</button>');
+      return; }
     renderWithdrawCoins(); }
 
   function wdAvailTxt(sym){ const av=wdCoinAvail(sym)||0; return (av>0?trimAmt(av):'0')+' '+sym; }
@@ -1651,7 +1689,7 @@
     if(isAdmin()){ const ab=document.getElementById('adminBtn'); if(ab) ab.style.display=''; } }
 
   // boot
-  initTelegram(); buildHomeList(); setFutTab('pos'); setSpotSub('orders'); setAssetTab('overview'); setBonusBtn(); bindPctSliders(); regenOB(); setInterval(regenOB,1500); renderAll(); startCountdown(); connectWS();
+  initTelegram(); buildHomeList(); setFutTab('pos'); setSpotSub('orders'); setAssetTab('overview'); setBonusBtn(); bindPctSliders(); bindAssetSwipe(); regenOB(); setInterval(regenOB,1500); renderAll(); startCountdown(); connectWS();
   updateBellBadge();
   // pull any deposits credited server-side while the app was closed, then keep checking
   syncBalance(); setInterval(syncBalance, 20000);
