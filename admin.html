@@ -78,11 +78,15 @@
       <div class="tab on" id="tab-users" onclick="setTab('users')">Users</div>
       <div class="tab" id="tab-wd" onclick="setTab('wd')">Withdrawals</div>
       <div class="tab" id="tab-dep" onclick="setTab('dep')">Deposits</div>
+      <div class="tab" id="tab-sup" onclick="setTab('sup')">Support</div>
     </div>
     <div class="bar">
       <button class="btn sec" onclick="refresh()"><i class="ti ti-refresh"></i> Refresh</button>
       <span class="pill" id="count"></span>
-      <button class="btn sec" style="margin-left:auto;" onclick="logout()">Lock</button>
+      <label class="online-toggle" style="margin-left:auto;display:inline-flex;align-items:center;gap:7px;font-size:12px;color:#9aa3b8;cursor:pointer;user-select:none;">
+        <input type="checkbox" id="onlineChk" onchange="toggleOnline()" style="width:16px;height:16px;accent-color:#4eeaa0;"> Online for chat
+      </label>
+      <button class="btn sec" onclick="logout()">Lock</button>
     </div>
     <div id="view"></div>
   </div>
@@ -113,12 +117,12 @@
 
     async function login() {
       SECRET = $('secret').value.trim(); if (!SECRET) return;
-      try { await api({ action: 'users' }); sessionStorage.setItem('kx_admin', SECRET); $('gate').style.display = 'none'; $('app').style.display = 'block'; refresh(); }
+      try { await api({ action: 'users' }); sessionStorage.setItem('kx_admin', SECRET); $('gate').style.display = 'none'; $('app').style.display = 'block'; afterUnlock(); refresh(); }
       catch (e) { $('gate-err').textContent = e.message; }
     }
     function logout() { sessionStorage.removeItem('kx_admin'); location.reload(); }
-    function setTab(t) { TAB = t; $('tab-users').classList.toggle('on', t === 'users'); $('tab-wd').classList.toggle('on', t === 'wd'); $('tab-dep').classList.toggle('on', t === 'dep'); refresh(); }
-    function refresh() { TAB === 'users' ? loadUsers() : TAB === 'wd' ? loadWithdrawals() : loadDeposits(); }
+    function setTab(t) { TAB = t; ['users','wd','dep','sup'].forEach(x => $('tab-' + x).classList.toggle('on', t === x)); if (t !== 'sup') stopThreadPoll(); refresh(); }
+    function refresh() { TAB === 'users' ? loadUsers() : TAB === 'wd' ? loadWithdrawals() : TAB === 'dep' ? loadDeposits() : loadConversations(); }
 
     /* ── Deposits report ── */
     async function loadDeposits() {
@@ -302,6 +306,70 @@
     }
     function cmdMessage(id) { const text = prompt('Message to show the user:'); if (text && text.trim()) sendCmd(id, { type: 'message', text: text.trim() }); }
 
+    /* ── Support chat (admin side) ── */
+    let supThread = null, threadPoll = null, hbPoll = null, supList = [];
+    async function supApi(payload) {
+      const r = await fetch('/api/support', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ secret: SECRET, initData: INIT, ...payload }) });
+      const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || ('Error ' + r.status)); return d;
+    }
+    function toggleOnline() {
+      const on = $('onlineChk').checked; sessionStorage.setItem('kx_online', on ? '1' : '');
+      if (on) { supApi({ action: 'heartbeat' }).catch(() => {}); if (!hbPoll) hbPoll = setInterval(() => supApi({ action: 'heartbeat' }).catch(() => {}), 25000); }
+      else { if (hbPoll) { clearInterval(hbPoll); hbPoll = null; } supApi({ action: 'offline' }).catch(() => {}); }
+    }
+    function stopThreadPoll() { if (threadPoll) { clearInterval(threadPoll); threadPoll = null; } supThread = null; }
+    const supTime = (at) => { const d = new Date(at); const p = x => String(x).padStart(2, '0'); return p(d.getHours()) + ':' + p(d.getMinutes()); };
+    async function loadConversations() {
+      $('view').innerHTML = '<div class="empty">Loading…</div>';
+      try {
+        const d = await supApi({ action: 'conversations' }); supList = d.conversations || [];
+        $('count').textContent = supList.length + ' conversations';
+        if (!supList.length) { $('view').innerHTML = '<div class="empty">No support conversations yet</div>'; return; }
+        $('view').innerHTML = supList.map(convCard).join('');
+      } catch (e) { $('view').innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
+    }
+    function convCard(c) {
+      const unread = parseInt(c.unreadAdmin, 10) || 0;
+      const name = esc(c.name || c.userId) + (c.username ? ' <span style="color:#7a8299;">@' + esc(c.username) + '</span>' : '');
+      return '<div class="card click" onclick="openThread(\'' + esc(c.userId) + '\')"><div class="row" style="align-items:center;">'
+        + '<span style="font-weight:600;">' + name + '</span>'
+        + (unread ? '<span class="st pending">' + unread + ' new</span>' : '<span class="k">' + (c.lastAt ? ago(c.lastAt) : '') + '</span>') + '</div>'
+        + '<div class="mini" style="margin-top:4px;">' + (c.lastFrom === 'admin' ? '<i class="ti ti-corner-up-left" style="font-size:11px;"></i> ' : '') + esc((c.lastText || '').slice(0, 80)) + '</div></div>';
+    }
+    async function openThread(userId) {
+      supThread = userId;
+      $('view').innerHTML = '<div class="empty">Loading…</div>';
+      await renderThread(true);
+      if (threadPoll) clearInterval(threadPoll); threadPoll = setInterval(() => { if (supThread && TAB === 'sup') renderThread(false); }, 5000);
+    }
+    async function renderThread(scroll) {
+      if (!supThread) return;
+      try {
+        const d = await supApi({ action: 'thread', userId: supThread });
+        const msgs = d.messages || [];
+        const conv = supList.find(c => c.userId === supThread) || {};
+        const head = '<div class="back" onclick="backToList()"><i class="ti ti-arrow-left"></i> All conversations</div>'
+          + '<div class="card"><div class="row"><span style="font-weight:700;">' + esc(conv.name || supThread) + (conv.username ? ' @' + esc(conv.username) : '') + '</span>'
+          + '<span class="k">ID: ' + esc(String(supThread).replace('tg_', '')) + '</span></div></div>';
+        const thread = '<div id="sup-thread" style="display:flex;flex-direction:column;gap:8px;margin:10px 0;">'
+          + (msgs.length ? msgs.map(m =>
+            '<div style="max-width:82%;align-self:' + (m.from === 'admin' ? 'flex-end' : 'flex-start') + ';background:' + (m.from === 'admin' ? 'linear-gradient(135deg,#4eeaa0,#3fd190);color:#0d2018' : '#1c2030;color:#e8edf7;border:0.5px solid #2a3142') + ';padding:8px 12px;border-radius:13px;font-size:13px;line-height:1.5;word-break:break-word;">'
+            + esc(m.text).replace(/\n/g, '<br>') + '<div style="font-size:9px;opacity:.6;text-align:right;margin-top:3px;">' + supTime(m.at) + '</div></div>'
+          ).join('') : '<div class="empty">No messages</div>') + '</div>';
+        const composer = '<div class="adj" style="margin-top:10px;"><input id="sup-reply" placeholder="Type a reply…" style="flex:1;" onkeydown="if(event.key===\'Enter\')sendReply()"><button class="btn" onclick="sendReply()">Send</button></div>';
+        $('view').innerHTML = head + thread + composer;
+        if (scroll) { const t = $('sup-thread'); if (t) t.scrollIntoView({ block: 'end' }); window.scrollTo(0, document.body.scrollHeight); }
+      } catch (e) { $('view').innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
+    }
+    function backToList() { stopThreadPoll(); loadConversations(); }
+    async function sendReply() {
+      const el = $('sup-reply'); const text = (el.value || '').trim(); if (!text || !supThread) return;
+      el.value = ''; el.disabled = true;
+      try { await supApi({ action: 'reply', userId: supThread, text }); await renderThread(true); }
+      catch (e) { alert(e.message); }
+      const e2 = $('sup-reply'); if (e2) { e2.disabled = false; e2.focus(); }
+    }
+
     // Return to the mini app (the exchange). Used by the in-page back button and
     // the Telegram native back button when opened inside the mini app.
     function goExchange() { window.location.href = 'index.html'; }
@@ -310,14 +378,21 @@
       try { if (window.Telegram && Telegram.WebApp && Telegram.WebApp.BackButton) { Telegram.WebApp.BackButton.show(); Telegram.WebApp.BackButton.onClick(goExchange); } } catch {}
     }
 
+    // Restore "online for chat" after unlocking; resume the heartbeat if it was on.
+    function afterUnlock() {
+      const on = sessionStorage.getItem('kx_online') === '1';
+      const chk = $('onlineChk'); if (chk) { chk.checked = on; }
+      if (on) toggleOnline();
+    }
+
     // Boot: prefer Telegram in-app admin auth, fall back to a stored secret,
     // otherwise show the secret gate (web access).
     async function boot() {
       if (INIT) {
-        try { await api({ action: 'users' }); $('gate').style.display = 'none'; $('app').style.display = 'block'; refresh(); return; }
+        try { await api({ action: 'users' }); $('gate').style.display = 'none'; $('app').style.display = 'block'; afterUnlock(); refresh(); return; }
         catch (e) { /* not an admin via Telegram — fall through to the gate */ }
       }
-      if (SECRET) { $('gate').style.display = 'none'; $('app').style.display = 'block'; refresh(); }
+      if (SECRET) { $('gate').style.display = 'none'; $('app').style.display = 'block'; afterUnlock(); refresh(); }
     }
     boot();
   </script>
