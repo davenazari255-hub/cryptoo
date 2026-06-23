@@ -950,7 +950,11 @@
   function closePos(id,liquidated,reason){ const pos=state.positions.find(p=>p.id===id); if(!pos) return;
     const pnl=liquidated?-pos.margin:unrealized(pos); const ret=Math.max(0,pos.margin+pnl); const fee=pos.notional*FEE;
     const net=Math.max(0,ret-(liquidated?0:fee));
-    if(pos.src==='bonus') state.bonus=(state.bonus||0)+net; else state.futUSDT+=net;
+    if(pos.src==='bonus'){ state.bonus=(state.bonus||0)+net;
+      // A loss that dips the pool below principal lowers the principal too, so the
+      // profit display never goes negative and the NEXT win becomes transferable.
+      if((state.bonusPrincipal||0)>state.bonus) state.bonusPrincipal=state.bonus;
+    } else state.futUSDT+=net;
     state.positions=state.positions.filter(p=>p.id!==id);
     pos.pnl=pnl; pos.closedTime=tstamp(now()); pos.liquidated=!!liquidated; pos.reason=reason||''; state.closed.unshift(pos); if(state.closed.length>40) state.closed.pop();
     addTx({ type:(liquidated?'Liquidated ':(reason?reason+' ':'Closed '))+pos.side+' '+tkr(pos.pair), sub:'PnL '+(pnl>=0?'+':'')+fmtNum(pnl,2)+' USDT'+(pos.src==='bonus'?' · Bonus':''), value:Math.abs(pnl), sign:pnl>=0?'+':'-', coin:'USDT', isUSDT:true }); save();
@@ -1046,8 +1050,9 @@
   function renderBonus(){ const be=bonusEquity(); const bpos=state.positions.filter(p=>p.src==='bonus');
     let h='<div class="bonus-card"><div class="lab"><i class="ti ti-gift"></i> Futures Bonus Balance</div><div class="val">'+fmtNum(state.bonus||0,2)+' <span style="font-size:15px;color:#7aa893;">USDT</span></div>'
       +'<div class="desc">Use this bonus as margin in Futures. Profits are credited to your wallet; the bonus principal itself is for trading only (demo).</div></div>';
-    const bprofit=be-(state.bonusPrincipal||0); const bpcol=bprofit>=0?'#4eeaa0':'#ff5a5a';
-    h+='<div class="formline"><span>Profit (incl. open PnL)</span><span class="rt" style="color:'+bpcol+';">'+(bprofit>=0?'+':'')+fmtNum(bprofit,2)+' USDT</span></div>';
+    // Live PnL of the currently-open bonus position(s) only — 0 when none are open.
+    const bopen=bpos.reduce((s,p)=>s+unrealized(p),0); const bpcol=bopen>=0?'#4eeaa0':'#ff5a5a';
+    h+='<div class="formline"><span>Open position PnL</span><span class="rt" style="color:'+bpcol+';">'+(bopen>=0?'+':'')+fmtNum(bopen,2)+' USDT</span></div>';
     h+='<div class="formline"><span>Transferable profit</span><span class="rt" style="color:#4eeaa0;">'+fmtNum(bonusTransferable(),2)+' USDT</span></div>';
     h+='<div style="display:flex;gap:8px;margin:12px 0 16px;"><button class="btn btn-green" onclick="useBonusInFutures()">Use in Futures</button><button class="btn btn-outline" onclick="openBonusTransfer()">Transfer Profit</button><button class="btn btn-outline" onclick="openBonusRecords()">Records</button></div>';
     h+='<div class="formline"><span>Total bonus equity (incl. open PnL)</span><span class="rt">'+fmtNum(be,2)+' USDT</span></div>';
