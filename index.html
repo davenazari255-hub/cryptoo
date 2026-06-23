@@ -349,6 +349,30 @@
     .iv-step { display:flex; gap:11px; align-items:flex-start; padding:9px 0; }
     .iv-step .num { width:25px; height:25px; border-radius:50%; background:#f0b90b1a; color:#ffd45e; font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
     .iv-step .tx { font-size:12.5px; color:#cfd6e6; line-height:1.5; }
+    /* daily check-in */
+    .checkin-card { background:linear-gradient(135deg,#13241b,#181b25 70%); border:0.5px solid #2e4a3a; border-radius:14px; padding:14px; margin-bottom:14px; }
+    .ci-head { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; margin-bottom:12px; }
+    .ci-title { font-size:14px; font-weight:700; color:#e2e8f0; display:flex; align-items:center; gap:6px; }
+    .ci-title i { color:#4eeaa0; font-size:17px; }
+    .ci-sub { font-size:10px; color:#7a8299; text-align:right; line-height:1.4; max-width:140px; }
+    .ci-days { display:flex; gap:4px; margin-bottom:12px; }
+    .ci-day { flex:1; min-width:0; background:#0f1117; border:0.5px solid #232838; border-radius:9px; padding:8px 1px 7px; text-align:center; }
+    .ci-dn { font-size:8px; color:#7a8299; margin-bottom:4px; white-space:nowrap; letter-spacing:-.2px; }
+    .ci-ic { font-size:16px; color:#4a5266; line-height:1; margin-bottom:4px; }
+    .ci-rw { font-size:9px; font-weight:700; color:#7a8299; white-space:nowrap; }
+    .ci-day.claimed { background:rgba(78,234,160,0.09); border-color:#2e4a3a; }
+    .ci-day.claimed .ci-ic, .ci-day.claimed .ci-rw { color:#4eeaa0; }
+    .ci-day.today { background:linear-gradient(135deg,#1d3b2c,#16241c); border-color:#4eeaa0; animation:ciPulse 1.7s ease-in-out infinite; }
+    .ci-day.today .ci-ic { color:#4eeaa0; }
+    .ci-day.today .ci-dn, .ci-day.today .ci-rw { color:#cfe9dd; }
+    .ci-day.d7 .ci-ic, .ci-day.d7 .ci-rw { color:#f0b90b; }
+    .ci-day.d7.claimed { background:rgba(240,185,11,0.12); border-color:#5a4a1e; }
+    .ci-day.d7.today { background:linear-gradient(135deg,#3a2f10,#241f10); border-color:#f0b90b; animation:ciPulseGold 1.7s ease-in-out infinite; }
+    @keyframes ciPulse { 0%,100%{ box-shadow:0 0 6px rgba(78,234,160,.2);} 50%{ box-shadow:0 0 15px rgba(78,234,160,.5);} }
+    @keyframes ciPulseGold { 0%,100%{ box-shadow:0 0 6px rgba(240,185,11,.25);} 50%{ box-shadow:0 0 16px rgba(240,185,11,.55);} }
+    .ci-btn { width:100%; padding:11px; border-radius:10px; border:0; font-size:13px; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:7px; background:linear-gradient(135deg,#4eeaa0,#3fd190); color:#0d0e12; transition:filter .15s; }
+    .ci-btn:active { filter:brightness(.94); }
+    .ci-btn.done { background:#171a24; color:#7a8299; cursor:default; border:0.5px solid #232838; }
     /* home tasks */
     .task-card { display:flex; align-items:center; gap:12px; background:#181b25; border-radius:12px; padding:12px; margin-bottom:9px; }
     .task-ic { width:38px; height:38px; border-radius:10px; background:#0d0e12; display:flex; align-items:center; justify-content:center; font-size:19px; color:#4eeaa0; flex-shrink:0; }
@@ -428,6 +452,7 @@
             <button class="btn btn-outline" onclick="goPage('trade')">Trade</button>
           </div>
         </div>
+        <div id="daily-checkin"></div>
         <div id="home-tasks"></div>
         <div class="invite-banner" onclick="openInvite()">
           <div class="ib-glow"></div>
@@ -699,7 +724,7 @@
   const prices = {}; const prevPx = {};
 
   function defaultState(){ const balances={USDT:0}, cost={}; COIN_KEYS.forEach(k=>{balances[k]=0;cost[k]=0;});
-    return { balances, cost, futUSDT:0, openOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:50, bonusPrincipal:50, bonusProfit:0, flags:{deposited:false,traded:false,futured:false}, spotVol:0, futVol:0, taskClaimed:{}, snap:{day:'',equity:0}, nextId:1, creditedDeposits:0, depositTotal:0, referralCount:0, referralEarned:0, notifications:[] }; }
+    return { balances, cost, futUSDT:0, openOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:50, bonusPrincipal:50, bonusProfit:0, flags:{deposited:false,traded:false,futured:false}, spotVol:0, futVol:0, taskClaimed:{}, checkin:{last:'',streak:0}, snap:{day:'',equity:0}, nextId:1, creditedDeposits:0, depositTotal:0, referralCount:0, referralEarned:0, notifications:[] }; }
   function loadState(){ try{ const raw=localStorage.getItem(LS_KEY); if(!raw) return defaultState();
       const s=JSON.parse(raw); const d=defaultState();
       return Object.assign(d,s,{ balances:Object.assign(d.balances,s.balances||{}), cost:Object.assign(d.cost,s.cost||{}), snap:Object.assign(d.snap,s.snap||{}), flags:Object.assign(d.flags,s.flags||{}), taskClaimed:Object.assign(d.taskClaimed,s.taskClaimed||{}) });
@@ -788,6 +813,38 @@
   // PnL + realised profit) so bonus trading is reflected in "Today profit".
   function pnlEquity(){ return spotEquity()+futEquity()+bonusEquity()+(state.bonusProfit||0); }
   function dayStr(){ const d=new Date(); return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate(); }
+  function dayStrOffset(n){ const d=new Date(); d.setDate(d.getDate()+n); return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate(); }
+
+  // ── Daily Check-in (7-day streak) ──
+  // Days 1-3 → 0.1, days 4-6 → 0.2, day 7 → 1 USDT bonus. Missing a day resets to day 1.
+  const CHECKIN_REWARDS=[0.1,0.1,0.1,0.2,0.2,0.2,1];
+  function checkinInfo(){ const c=state.checkin||{last:'',streak:0}; const today=dayStr(), yest=dayStrOffset(-1); const streak=c.streak||0;
+    const claimedToday=(c.last===today);
+    let doneDays, claimDay; // doneDays = filled cells in current cycle; claimDay = day claimable today (0 = already claimed)
+    if(claimedToday){ doneDays=streak; claimDay=0; }
+    else if(c.last===yest && streak<7){ doneDays=streak; claimDay=streak+1; } // continuing streak
+    else { doneDays=0; claimDay=1; }                                          // missed / first time / new cycle after day 7
+    return { doneDays, claimDay, claimedToday, streak }; }
+  function claimCheckin(){ const info=checkinInfo(); if(info.claimDay===0){ toast('Already checked in today','info'); return; }
+    const day=info.claimDay; const reward=CHECKIN_REWARDS[day-1];
+    state.checkin={ last:dayStr(), streak:day };
+    state.bonus=(state.bonus||0)+reward; state.bonusPrincipal=(state.bonusPrincipal||0)+reward;
+    addTx({type:'Daily Check-in',sub:'Day '+day+' reward',value:reward,sign:'+',coin:'USDT',isUSDT:true});
+    pushNotification({title:'Daily check-in 🎁',text:'Day '+day+' streak · +'+reward+' USDT bonus',kind:'bonus'});
+    save(); renderCheckin(); setBonusBtn(); renderAssets(); tgHaptic()&&tgHaptic().notificationOccurred('success');
+    toast((day===7?'🏆 Day 7! ':'🎁 Day '+day+' · ')+'+'+fmtNum(reward,2)+' USDT bonus claimed','ok');
+    botNotify('🎁 Daily check-in — Day '+day+' claimed (+'+reward+' USDT bonus)'); }
+  function renderCheckin(){ const el=document.getElementById('daily-checkin'); if(!el) return; const info=checkinInfo();
+    let cells='';
+    for(let i=1;i<=7;i++){ const rw=CHECKIN_REWARDS[i-1]; const claimed=i<=info.doneDays; const isToday=(i===info.claimDay&&!info.claimedToday);
+      const cls=(i===7?'d7 ':'')+(claimed?'claimed':(isToday?'today':'locked'));
+      const ic=claimed?'<i class="ti ti-circle-check"></i>':(i===7?'<i class="ti ti-trophy"></i>':'<i class="ti ti-gift"></i>');
+      cells+='<div class="ci-day '+cls+'"><div class="ci-dn">Day '+i+'</div><div class="ci-ic">'+ic+'</div><div class="ci-rw">+'+rw+'</div></div>'; }
+    const sub=info.claimedToday ? ('🔥 '+info.doneDays+'-day streak · back tomorrow') : ('Day '+info.claimDay+' of 7 · don\'t break the streak');
+    const btn=info.claimedToday
+      ? '<button class="ci-btn done" disabled><i class="ti ti-circle-check"></i> Checked in today</button>'
+      : '<button class="ci-btn" onclick="claimCheckin()"><i class="ti ti-gift"></i> Check in · +'+CHECKIN_REWARDS[info.claimDay-1]+' USDT</button>';
+    el.innerHTML='<div class="checkin-card"><div class="ci-head"><div class="ci-title"><i class="ti ti-calendar-heart"></i> Daily Check-in</div><div class="ci-sub">'+sub+'</div></div><div class="ci-days">'+cells+'</div>'+btn+'</div>'; }
   function checkSnap(){ const ds=dayStr(); if(!state.snap||state.snap.day!==ds||state.snap.v!==2){ state.snap={day:ds,equity:pnlEquity(),v:2}; save(); } return state.snap; }
   function todayProfit(){ const s=checkSnap(); const t=pnlEquity(); const pf=t-s.equity; return { pf, pct: s.equity>0?pf/s.equity*100:0 }; }
   function btcOf(usd){ const b=px('BTC'); if(!b||!usd) return '0.0'; const x=usd/b; return x.toLocaleString('en-US',{maximumFractionDigits:8}); }
@@ -1716,14 +1773,14 @@
     if(isAdmin()){ const ab=document.getElementById('adminBtn'); if(ab) ab.style.display=''; } }
 
   // boot
-  initTelegram(); buildHomeList(); setFutTab('pos'); setSpotSub('orders'); setAssetTab('overview'); setBonusBtn(); bindPctSliders(); bindAssetSwipe(); regenOB(); setInterval(regenOB,1500); renderAll(); startCountdown(); connectWS();
+  initTelegram(); buildHomeList(); setFutTab('pos'); setSpotSub('orders'); setAssetTab('overview'); setBonusBtn(); bindPctSliders(); bindAssetSwipe(); renderCheckin(); regenOB(); setInterval(regenOB,1500); renderAll(); startCountdown(); connectWS();
   updateBellBadge();
   // pull any deposits credited server-side while the app was closed, then keep checking
   syncBalance(); setInterval(syncBalance, 20000);
   // Also reconcile immediately whenever the app returns to the foreground, so
   // admin-side deposits/adjustments show up without waiting for the next tick.
   let lastFgSync=0;
-  function foregroundSync(){ const t=now(); if(t-lastFgSync<3000) return; lastFgSync=t; syncBalance(); }
+  function foregroundSync(){ const t=now(); if(t-lastFgSync<3000) return; lastFgSync=t; syncBalance(); renderCheckin(); }
   document.addEventListener('visibilitychange',()=>{ if(!document.hidden) foregroundSync(); });
   window.addEventListener('focus',foregroundSync);
   try{ if(window.Telegram&&Telegram.WebApp){ Telegram.WebApp.onEvent('activated',foregroundSync); } }catch{}
