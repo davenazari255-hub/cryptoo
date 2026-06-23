@@ -245,7 +245,12 @@
         + '<div class="adj"><input id="bon-amt" inputmode="decimal" placeholder="+10 or -5"><input id="bon-note" placeholder="note to user (optional)" style="flex:1.4;"><button class="btn amber" onclick="doBonus(\'' + esc(id) + '\')">Send</button></div>'
         + '<div class="acts" style="margin-top:12px;">'
         + (d.banned ? '<button class="btn" onclick="doBan(\'' + esc(id) + '\',\'unban\')">Unban user</button>' : '<button class="btn red" onclick="doBan(\'' + esc(id) + '\',\'ban\')">Ban user</button>')
-        + '<button class="btn sec" onclick="cmdMessage(\'' + esc(id) + '\')">Send message</button></div></div>';
+        + '<button class="btn sec" onclick="cmdMessage(\'' + esc(id) + '\')">Send message</button></div>'
+        + '<div class="row" style="margin-top:14px;"><span class="k" style="color:#ff8a5a;">Reset</span></div>'
+        + '<div class="acts">'
+        + '<button class="btn amber" onclick="doReset(\'' + esc(id) + '\',\'tasks\')">Reset tasks only</button>'
+        + '<button class="btn red" onclick="doReset(\'' + esc(id) + '\',\'full\')">Reset full account</button></div>'
+        + '<div class="mini" style="margin-top:6px;">“Tasks only” clears tasks &amp; daily check-in. “Full account” wipes balance, positions, history — like a brand-new user.</div></div>';
 
       h += '<div class="sec-title">Open positions (' + positions.length + ')</div>' + (positions.length ? positions.map(x => posRow(id, x)).join('') : '<div class="empty" style="padding:14px;">None</div>');
       h += '<div class="sec-title">Open orders (' + orders.length + ')</div>' + (orders.length ? orders.map(x => ordRow(id, x)).join('') : '<div class="empty" style="padding:14px;">None</div>');
@@ -271,6 +276,15 @@
     async function doBan(id, action) {
       if (!confirm(action === 'ban' ? 'Ban this user? They will be locked out.' : 'Unban this user?')) return;
       try { await api({ action, id }); openUser(id); } catch (e) { alert(e.message); }
+    }
+    async function doReset(id, mode) {
+      const msg = mode === 'full'
+        ? 'FULL RESET this user?\n\nThis wipes their balance, positions, history, tasks and deposits — they become a brand-new user. This cannot be undone.'
+        : 'Reset only this user\'s tasks and daily check-in?\n\nBalances and positions are kept.';
+      if (!confirm(msg)) return;
+      if (mode === 'full' && !confirm('Are you sure? The user\'s balance and all data will be permanently erased.')) return;
+      try { await api({ action: 'reset', id, mode }); alert(mode === 'full' ? 'Full reset queued — applies on the user\'s next sync.' : 'Task reset queued — applies on the user\'s next sync.'); openUser(id); }
+      catch (e) { alert(e.message); }
     }
     async function sendCmd(id, command, reopen) {
       try { await api({ action: 'command', id, command }); alert('Command queued — applies on the user\'s next sync (within ~1 min).'); if (reopen) openUser(id); }

@@ -733,7 +733,7 @@
   const prices = {}; const prevPx = {};
 
   function defaultState(){ const balances={USDT:0}, cost={}; COIN_KEYS.forEach(k=>{balances[k]=0;cost[k]=0;});
-    return { balances, cost, futUSDT:0, openOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:50, bonusPrincipal:50, bonusProfit:0, flags:{deposited:false,traded:false,futured:false}, spotVol:0, futVol:0, taskClaimed:{}, checkin:{last:'',streak:0}, snap:{day:'',equity:0}, nextId:1, creditedDeposits:0, depositTotal:0, referralCount:0, referralEarned:0, notifications:[] }; }
+    return { balances, cost, futUSDT:0, openOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:0, bonusPrincipal:0, bonusProfit:0, flags:{deposited:false,traded:false,futured:false}, spotVol:0, futVol:0, taskClaimed:{}, checkin:{last:'',streak:0}, snap:{day:'',equity:0}, nextId:1, creditedDeposits:0, depositTotal:0, referralCount:0, referralEarned:0, notifications:[] }; }
   function loadState(){ try{ const raw=localStorage.getItem(LS_KEY); if(!raw) return defaultState();
       const s=JSON.parse(raw); const d=defaultState();
       return Object.assign(d,s,{ balances:Object.assign(d.balances,s.balances||{}), cost:Object.assign(d.cost,s.cost||{}), snap:Object.assign(d.snap,s.snap||{}), flags:Object.assign(d.flags,s.flags||{}), taskClaimed:Object.assign(d.taskClaimed,s.taskClaimed||{}) });
@@ -1576,6 +1576,16 @@
         pushNotification({title:c.title||'Withdrawal refunded',text:c.text||(amt+' '+coin+' returned to your wallet'),kind:'withdraw'});
         toast(trimAmt(amt)+' '+coin+' refunded','info'); changed=true; }
       else if(c.type==='message'){ pushNotification({title:c.title||'Message',text:c.text||'',kind:c.kind||'message'}); toast(c.text||'New message','info'); }
+      // Admin: reset only the task/check-in progress (keeps balances & positions).
+      else if(c.type==='resetTasks'){ state.taskClaimed={}; state.checkin={last:'',streak:0}; state.spotVol=0; state.futVol=0; state.flags={deposited:!!state.flags.deposited,traded:false,futured:false};
+        pushNotification({title:'Tasks reset',text:'Your tasks and daily check-in were reset by an admin.',kind:'message'}); toast('Your tasks were reset','info'); changed=true; }
+      // Admin: full account reset — wipe the local app to a brand-new state. The
+      // server balance is reset separately, so creditedDeposits starts from 0 too.
+      else if(c.type==='resetAccount'){ const fresh=defaultState();
+        // Keep notifications history? No — full reset means clean slate.
+        Object.keys(state).forEach(k=>{ delete state[k]; }); Object.assign(state,fresh);
+        pushNotification({title:'Account reset',text:'Your account was reset by an admin. Welcome back to a fresh start!',kind:'message'});
+        toast('Your account was reset','info'); changed=true; setBonusBtn(); }
     }catch(e){} });
     if(changed){ save(); renderAll(); } }
 
