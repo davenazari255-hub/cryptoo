@@ -162,6 +162,27 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true, banned: body.action === 'ban' });
     }
 
+    // Reset a user. mode 'tasks' clears only task/check-in progress (a client
+    // command). mode 'full' wipes the server balance, deposit total and ledger
+    // too, then tells the client to reset its local app to a fresh state.
+    if (body.action === 'reset') {
+      const id = String(body.id || '');
+      const mode = body.mode === 'full' ? 'full' : 'tasks';
+      if (!id) return res.status(400).json({ error: 'id required' });
+      if (mode === 'full') {
+        // Wipe server-side balances/state so the client reconciles to zero.
+        await upstash(['DEL', `bal:${id}`, `dep:total:${id}`, `ledger:${id}`, `seen:${id}`]);
+        await upstash(['LPUSH', `cmd:${id}`, JSON.stringify({ type: 'resetAccount' })]);
+      } else {
+        await upstash(['LPUSH', `cmd:${id}`, JSON.stringify({ type: 'resetTasks' })]);
+      }
+      await upstash(['LTRIM', `cmd:${id}`, 0, 99]);
+      await tgSend(id, mode === 'full'
+        ? '♻️ <b>Account reset</b>\n\nYour KolonoEX account has been reset by an admin. Open the app for a fresh start.'
+        : '♻️ <b>Tasks reset</b>\n\nYour tasks and daily check-in have been reset by an admin.');
+      return res.status(200).json({ ok: true, mode });
+    }
+
     // Adjust the user's bonus balance (with an optional note). Delivered to the
     // app via a command and pushed to the user's bot chat.
     if (body.action === 'bonus') {
