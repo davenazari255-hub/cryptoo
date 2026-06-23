@@ -79,6 +79,8 @@
       <div class="tab" id="tab-wd" onclick="setTab('wd')">Withdrawals</div>
       <div class="tab" id="tab-dep" onclick="setTab('dep')">Deposits</div>
       <div class="tab" id="tab-sup" onclick="setTab('sup')">Support</div>
+      <div class="tab" id="tab-tasks" onclick="setTab('tasks')">Tasks</div>
+      <div class="tab" id="tab-partners" onclick="setTab('partners')">Partners</div>
     </div>
     <div class="bar">
       <button class="btn sec" onclick="refresh()"><i class="ti ti-refresh"></i> Refresh</button>
@@ -121,8 +123,8 @@
       catch (e) { $('gate-err').textContent = e.message; }
     }
     function logout() { sessionStorage.removeItem('kx_admin'); location.reload(); }
-    function setTab(t) { TAB = t; ['users','wd','dep','sup'].forEach(x => $('tab-' + x).classList.toggle('on', t === x)); if (t !== 'sup') stopThreadPoll(); refresh(); }
-    function refresh() { TAB === 'users' ? loadUsers() : TAB === 'wd' ? loadWithdrawals() : TAB === 'dep' ? loadDeposits() : loadConversations(); }
+    function setTab(t) { TAB = t; ['users','wd','dep','sup','tasks','partners'].forEach(x => $('tab-' + x).classList.toggle('on', t === x)); if (t !== 'sup') stopThreadPoll(); refresh(); }
+    function refresh() { TAB === 'users' ? loadUsers() : TAB === 'wd' ? loadWithdrawals() : TAB === 'dep' ? loadDeposits() : TAB === 'sup' ? loadConversations() : TAB === 'tasks' ? loadTasks() : loadPartners(); }
 
     /* ── Deposits report ── */
     async function loadDeposits() {
@@ -305,6 +307,106 @@
       sendCmd(id, cmd);
     }
     function cmdMessage(id) { const text = prompt('Message to show the user:'); if (text && text.trim()) sendCmd(id, { type: 'message', text: text.trim() }); }
+
+    /* ── Task management ── */
+    let TASKS_CACHE = [];
+    const METRICS = ['always', 'deposit', 'spotVol', 'futVol', 'referral'];
+    const GOES = ['home', 'assets', 'trade', 'futures', 'invite'];
+    async function loadTasks() {
+      $('view').innerHTML = '<div class="empty">Loading…</div>';
+      try { const d = await api({ action: 'getTasks' }); TASKS_CACHE = d.tasks || []; $('count').textContent = TASKS_CACHE.length + ' tasks'; renderTasksEditor(); }
+      catch (e) { $('view').innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
+    }
+    function renderTasksEditor() {
+      let h = '<div class="mini" style="margin-bottom:10px;">Edit the home-screen tasks. <b>metric</b> drives progress: always (instant), deposit, spotVol, futVol, referral. <b>target</b> is the goal (0 = instant). <b>reward</b> is the bonus in USDT.</div>';
+      h += TASKS_CACHE.map((t, i) => taskEditCard(t, i)).join('');
+      h += '<div class="acts" style="margin-top:8px;"><button class="btn sec" onclick="addTaskRow()"><i class="ti ti-plus"></i> Add task</button>'
+        + '<button class="btn" onclick="saveTasks()"><i class="ti ti-device-floppy"></i> Save all</button>'
+        + '<button class="btn red" onclick="resetTasks()">Reset to default</button></div>';
+      $('view').innerHTML = h;
+    }
+    function taskEditCard(t, i) {
+      const opt = (arr, val) => arr.map(x => '<option' + (x === val ? ' selected' : '') + '>' + x + '</option>').join('');
+      return '<div class="card" data-ti="' + i + '">'
+        + '<div class="row" style="align-items:center;"><span style="font-weight:700;color:#cfd6e6;">#' + (i + 1) + '</span><button class="btn red" style="padding:5px 10px;font-size:12px;" onclick="delTaskRow(' + i + ')">Remove</button></div>'
+        + '<div class="adj"><input data-f="title" placeholder="Title" value="' + esc(t.title || '') + '" style="flex:1.3;"><input data-f="reward" inputmode="decimal" placeholder="Reward" value="' + esc(t.reward) + '"></div>'
+        + '<div class="adj"><input data-f="desc" placeholder="Description" value="' + esc(t.desc || '') + '" style="flex:2;"></div>'
+        + '<div class="adj"><input data-f="id" placeholder="id" value="' + esc(t.id || '') + '"><input data-f="icon" placeholder="ti-icon" value="' + esc(t.icon || 'ti-gift') + '"></div>'
+        + '<div class="adj"><select data-f="metric" style="flex:1;background:#0f1117;border:0.5px solid #2e3347;color:#e8edf7;border-radius:9px;padding:9px;">' + opt(METRICS, t.metric || 'always') + '</select>'
+        + '<input data-f="target" inputmode="decimal" placeholder="target" value="' + esc(t.target || 0) + '">'
+        + '<select data-f="go" style="flex:1;background:#0f1117;border:0.5px solid #2e3347;color:#e8edf7;border-radius:9px;padding:9px;">' + opt(GOES, t.go || 'home') + '</select></div></div>';
+    }
+    function collectTasks() {
+      return [...document.querySelectorAll('#view .card[data-ti]')].map(card => {
+        const g = f => { const el = card.querySelector('[data-f="' + f + '"]'); return el ? el.value : ''; };
+        return { id: g('id'), icon: g('icon'), title: g('title'), desc: g('desc'), reward: parseFloat(g('reward')) || 0, metric: g('metric'), target: parseFloat(g('target')) || 0, go: g('go') };
+      });
+    }
+    function addTaskRow() { TASKS_CACHE = collectTasks(); TASKS_CACHE.push({ id: 'task' + (TASKS_CACHE.length + 1), icon: 'ti-gift', title: 'New task', desc: '', reward: 1, metric: 'always', target: 0, go: 'home' }); renderTasksEditor(); }
+    function delTaskRow(i) { TASKS_CACHE = collectTasks(); TASKS_CACHE.splice(i, 1); renderTasksEditor(); }
+    async function saveTasks() {
+      const tasks = collectTasks();
+      if (tasks.some(t => !t.id || !t.title)) return alert('Every task needs an id and a title.');
+      try { const d = await api({ action: 'saveTasks', tasks }); TASKS_CACHE = d.tasks || tasks; alert('Tasks saved — live for all users on their next sync.'); renderTasksEditor(); }
+      catch (e) { alert(e.message); }
+    }
+    async function resetTasks() {
+      if (!confirm('Reset all tasks to the built-in defaults?')) return;
+      try { const d = await api({ action: 'resetTasksConfig' }); TASKS_CACHE = d.tasks || []; renderTasksEditor(); } catch (e) { alert(e.message); }
+    }
+
+    /* ── Partner management ── */
+    let PARTNERS = [];
+    async function loadPartners() {
+      $('view').innerHTML = '<div class="empty">Loading…</div>';
+      try { const d = await papi({ action: 'list' }); PARTNERS = d.partners || []; $('count').textContent = PARTNERS.length + ' partners';
+        if (!PARTNERS.length) { $('view').innerHTML = '<div class="empty">No partner applications yet</div>'; return; }
+        // pending first, then approved, then rejected
+        const order = { pending: 0, approved: 1, rejected: 2 };
+        PARTNERS.sort((a, b) => (order[a.status] - order[b.status]) || (b.appliedAt - a.appliedAt));
+        $('view').innerHTML = PARTNERS.map(partnerCard).join('');
+      } catch (e) { $('view').innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
+    }
+    async function papi(payload) {
+      const r = await fetch('/api/partner', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ secret: SECRET, initData: INIT, ...payload }) });
+      const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || ('Error ' + r.status)); return d;
+    }
+    function partnerCard(p) {
+      const cfg = p.cfg || {};
+      const head = '<div class="row" style="align-items:center;"><span style="font-weight:700;">' + esc(p.name || p.userId) + (p.username ? ' <span style="color:#7a8299;">@' + esc(p.username) + '</span>' : '') + '</span>'
+        + '<span class="st ' + (p.status === 'approved' ? 'paid' : p.status === 'pending' ? 'pending' : 'rejected') + '">' + esc(p.status) + '</span></div>';
+      const info = '<div class="mini" style="margin-top:5px;"><i class="ti ti-brand-telegram" style="font-size:12px;"></i> ' + esc(p.channel || '—') + (p.audience ? ' · ' + esc(p.audience) : '') + '</div>'
+        + (p.note ? '<div class="mini">' + esc(p.note) + '</div>' : '')
+        + '<div class="mini">ID: <code>' + esc(String(p.userId).replace('tg_', '')) + '</code>' + (p.code ? ' · code: <code>' + esc(p.code) + '</code>' : '') + '</div>'
+        + (p.status === 'approved' ? '<div class="row" style="margin-top:6px;"><span class="k">Referrals: ' + (p.refCount || 0) + '</span><span class="k">Earned: $' + fmt(p.earned || 0) + '</span></div>' : '');
+      // editable terms
+      const tr = cfg.taskRewards || {};
+      const trStr = Object.keys(tr).map(k => k + ':' + tr[k]).join(', ');
+      const form = '<div class="adj" style="margin-top:10px;"><input id="pp-dep-' + esc(p.userId) + '" inputmode="decimal" placeholder="Deposit %" value="' + esc(cfg.depositPct != null ? cfg.depositPct : 10) + '">'
+        + '<input id="pp-ref-' + esc(p.userId) + '" inputmode="decimal" placeholder="Ref bonus $" value="' + esc(cfg.refBonus != null ? cfg.refBonus : 0.5) + '"></div>'
+        + '<div class="adj"><input id="pp-tasks-' + esc(p.userId) + '" placeholder="Task bonuses e.g. deposit:20, spot:10" value="' + esc(trStr) + '" style="flex:2;"></div>'
+        + '<div class="acts" style="margin-top:8px;">'
+        + (p.status === 'approved'
+          ? '<button class="btn" onclick="partnerSave(\'' + esc(p.userId) + '\',\'update\')">Update terms</button>'
+          : '<button class="btn" onclick="partnerSave(\'' + esc(p.userId) + '\',\'approve\')">Approve</button><button class="btn red" onclick="partnerReject(\'' + esc(p.userId) + '\')">Reject</button>')
+        + '</div>';
+      return '<div class="card">' + head + info + form + '</div>';
+    }
+    function parseTaskRewards(str) {
+      const out = {}; (str || '').split(',').forEach(part => { const m = part.split(':'); if (m.length === 2) { const k = m[0].trim(); const val = parseFloat(m[1]); if (k && isFinite(val)) out[k] = val; } }); return out;
+    }
+    async function partnerSave(userId, action) {
+      const depositPct = parseFloat($('pp-dep-' + userId).value) || 0;
+      const refBonus = parseFloat($('pp-ref-' + userId).value) || 0;
+      const taskRewards = parseTaskRewards($('pp-tasks-' + userId).value);
+      if (action === 'approve' && !confirm('Approve this partner with ' + depositPct + '% deposit commission?')) return;
+      try { await papi({ action, userId, depositPct, refBonus, taskRewards }); alert(action === 'approve' ? 'Partner approved!' : 'Terms updated.'); loadPartners(); }
+      catch (e) { alert(e.message); }
+    }
+    async function partnerReject(userId) {
+      if (!confirm('Reject this partner application?')) return;
+      try { await papi({ action: 'reject', userId }); loadPartners(); } catch (e) { alert(e.message); }
+    }
 
     /* ── Support chat (admin side) ── */
     let supThread = null, threadPoll = null, hbPoll = null, supList = [];
