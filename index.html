@@ -143,6 +143,15 @@
     .pos-card.bonus { border-color:#5a4a1e; background:linear-gradient(180deg,#1d1a10,#181b25 60%); }
     .pos-bonus { font-size:10px; font-weight:700; color:#3a2c00; background:linear-gradient(135deg,#ffe08a,#f0b90b); padding:2px 7px; border-radius:5px; display:inline-flex; align-items:center; gap:3px; }
     .hist-bonus { font-size:9.5px; font-weight:700; color:#f0b90b; border:0.5px solid #5a4a1e; background:#f0b90b14; padding:1px 6px; border-radius:5px; margin-left:6px; }
+    .pos-share-ic { font-size:17px; color:#7a8299; cursor:pointer; flex-shrink:0; padding:4px; transition:color .15s; }
+    .pos-share-ic:hover, .pos-share-ic:active { color:#f0b90b; }
+    /* share card sheet */
+    .share-preview { text-align:center; padding:0; }
+    .share-preview canvas { width:100%; max-width:380px; border-radius:14px; display:block; margin:0 auto; }
+    .share-acts { display:flex; gap:10px; margin-top:14px; }
+    .share-acts button { flex:1; padding:11px; border-radius:10px; border:0; font-size:13px; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; }
+    .sh-tg { background:linear-gradient(135deg,#27a7e7,#1d93d2); color:#fff; }
+    .sh-dl { background:#1c2030; color:#cfd6e6; border:0.5px solid #2e3347 !important; }
     .pos-pnlrow { display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:13px; }
     .pos-pnlrow .lbl, .pos-grid3 .lbl { font-size:10.5px; color:#7a8299; margin-bottom:3px; }
     .pos-pnlrow .big { font-size:20px; font-weight:700; line-height:1; }
@@ -1042,11 +1051,11 @@
         +'<div class="cell"><div class="lbl">Mark Price</div><div class="val">'+(mark?fmtNum(mark,dp(p.pair)):'--')+'</div></div>'
         +'<div class="cell rt"><div class="lbl">Liq.Price</div><div class="val">'+fmtNum(liq,dp(p.pair))+'</div></div></div>'
         +((p.tp||p.sl)?'<div class="formline" style="margin-bottom:10px;"><span>TP / SL</span><span class="rt">'+(p.tp?fmtNum(p.tp,dp(p.pair)):'—')+' / '+(p.sl?fmtNum(p.sl,dp(p.pair)):'—')+'</span></div>':'')
-        +'<div class="pos-btns"><button onclick="openLevSheet()">Adjust Leverage</button><button onclick="openTPSL('+p.id+')">Stop Profit & Loss</button><button class="primary" onclick="closePos('+p.id+',false)">Close Position</button></div></div>'; }).join('');
+        +'<div class="pos-btns"><button onclick="openLevSheet()">Adjust Leverage</button><button onclick="openTPSL('+p.id+')">Stop Profit & Loss</button><button onclick="openPosShare('+p.id+')"><i class="ti ti-share"></i> Share</button><button class="primary" onclick="closePos('+p.id+',false)">Close Position</button></div></div>'; }).join('');
     wrap.innerHTML=html;
     const ordEl=document.getElementById('fut-ord-list');
-    ordEl.innerHTML=state.closed.length?state.closed.map(p=>{ const cls=p.pnl>=0?'pnl-pos':'pnl-neg';
-      return '<div class="order-card"><div class="order-info"><div class="t">'+(p.liquidated?'⚠ ':'')+p.side.toUpperCase()+' '+tkr(p.pair)+' '+p.lev+'x'+(p.src==='bonus'?'<span class="hist-bonus">🎁 BONUS</span>':'')+'</div><div class="s">'+p.closedTime+(p.reason?' · '+p.reason:'')+' · entry '+fmtNum(p.entry,dp(p.pair))+'</div></div><div class="tx-right '+cls+'">'+(p.pnl>=0?'+':'')+fmtNum(p.pnl,2)+' USDT</div></div>'; }).join(''):'<div class="empty">No history yet</div>'; }
+    ordEl.innerHTML=state.closed.length?state.closed.map((p,ci)=>{ const cls=p.pnl>=0?'pnl-pos':'pnl-neg';
+      return '<div class="order-card"><div class="order-info"><div class="t">'+(p.liquidated?'⚠ ':'')+p.side.toUpperCase()+' '+tkr(p.pair)+' '+p.lev+'x'+(p.src==='bonus'?'<span class="hist-bonus">🎁 BONUS</span>':'')+'</div><div class="s">'+p.closedTime+(p.reason?' · '+p.reason:'')+' · entry '+fmtNum(p.entry,dp(p.pair))+'</div></div><div style="display:flex;align-items:center;gap:10px;"><div class="tx-right '+cls+'">'+(p.pnl>=0?'+':'')+fmtNum(p.pnl,2)+' USDT</div><i class="ti ti-share pos-share-ic" onclick="openClosedShare('+ci+')"></i></div></div>'; }).join(''):'<div class="empty">No history yet</div>'; }
 
   // ── ASSETS (Overview / Spot / Futures / Bonus) ──
   const ASSET_TABS=['overview','spot','futures','bonus'];
@@ -1332,6 +1341,115 @@
       +'<button class="buy-btn" onclick="doTPSL('+id+')">Confirm</button>'); }
   function doTPSL(id){ const p=state.positions.find(x=>x.id===id); if(!p) return; const tp=parseFloat(v('tp-price'))||0,sl=parseFloat(v('sl-price'))||0;
     p.tp=tp>0?tp:null; p.sl=sl>0?sl:null; save(); closeSheet(); toast('TP/SL updated','ok'); renderFutPositions(); }
+
+  // ── PnL Share Card (canvas-generated image for Telegram/stories) ──
+  function pnlEmoji(pnl){ return pnl>=2?'💎':pnl>=0.5?'🚀':pnl>=0?'✨':pnl>-5?'😤':'💀'; }
+  function pnlTitle(pnl){ return pnl>=2?'CRUSHED IT':pnl>=0.5?'UP ONLY':pnl>=0?'GREEN':pnl>-5?'SHAKING IT OFF':'REKT'; }
+  function shareCardData(id,isOpen){ let p, pnl, roe;
+    if(isOpen){ p=state.positions.find(x=>x.id===id); if(!p) return null; const u=unrealized(p); pnl=u; roe=(u/p.margin)*100; }
+    else { p=state.closed[id]; if(!p) return null; pnl=p.pnl; roe=(p.pnl/p.margin)*100; }
+    return { p, pnl, roe:isFinite(roe)?roe:0 }; }
+  function openPosShare(id){ const d=shareCardData(id,true); if(!d) return; const m=px(d.p.pair); renderShareSheet(d.p.pair,d.p.side,d.p.lev,d.p.entry,d.pnl,d.roe,d.p.src==='bonus',m,false); }
+  function openClosedShare(i){ const d=shareCardData(i,false); if(!d) return; const m=px(d.p.pair); renderShareSheet(d.p.pair,d.p.side,d.p.lev,d.p.entry,d.pnl,d.roe,d.p.src==='bonus',m,true); }
+
+  function drawShareCanvas(pair, side, lev, entry, pnl, roe, isBonus, mark, isClosed){
+    const W=760,H=980; const c=document.createElement('canvas'); c.width=W; c.height=H; const ctx=c.getContext('2d');
+    // bg gradient
+    const bg=ctx.createLinearGradient(0,0,0,H); bg.addColorStop(0,'#141820'); bg.addColorStop(0.45,'#181b25'); bg.addColorStop(1,'#0d0e12');
+    ctx.fillStyle=bg; ctx.beginPath(); ctx.roundRect(0,0,W,H,28); ctx.fill();
+    // subtle texture dots
+    ctx.fillStyle='#ffffff04'; for(let i=0;i<60;i++){ const x=Math.random()*W,y=Math.random()*H; ctx.beginPath(); ctx.arc(x,y,Math.random()*3+1,0,Math.PI*2); ctx.fill(); }
+    // top accent bar
+    const win=pnl>=0; const accent=win?'#4eeaa0':'#ff5a5a'; const gold='#f0b90b';
+    const ag=ctx.createLinearGradient(0,0,W,0); ag.addColorStop(0,win?'#4eeaa0':'#ff5a5a'); ag.addColorStop(1,win?'#3fd190':'#e04040');
+    ctx.fillStyle=ag; ctx.fillRect(0,0,W,5);
+    // logo area
+    ctx.fillStyle='#4eeaa0'; ctx.font='bold 36px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.fillText('KolonoEX',50,70);
+    ctx.fillStyle='#7a8299'; ctx.font='500 18px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.fillText('Crypto Exchange',50,100);
+    // pair + side badge
+    ctx.fillStyle='#e2e8f0'; ctx.font='bold 44px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.fillText(tkr(pair)+'USDT Perp',50,155);
+    const sideTxt=side.toUpperCase()+'  ·  '+lev+'x Cross'; const sideW=ctx.measureText(sideTxt).width;
+    ctx.fillStyle=side==='long'?'#4eeaa0':'#ff5a5a'; ctx.font='bold 22px -apple-system,BlinkMacSystemFont,sans-serif';
+    ctx.beginPath(); ctx.roundRect(50,172,sideW+40,34,8); ctx.fill();
+    ctx.fillStyle='#0d0e12'; ctx.fillText(sideTxt,70,196);
+    // bonus badge
+    if(isBonus){ ctx.fillStyle=gold; ctx.font='bold 20px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.fillText('🎁 BONUS',50+sideW+56,196); }
+    // divider
+    ctx.strokeStyle='#ffffff0d'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(50,240); ctx.lineTo(W-50,240); ctx.stroke();
+    // PnL — big hero number
+    const pnlStr=(pnl>=0?'+':'')+pnl.toFixed(2)+' USDT'; const roeStr=(roe>=0?'+':'')+roe.toFixed(2)+'%';
+    ctx.fillStyle='#7a8299'; ctx.font='500 20px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.fillText('Profit & Loss',50,290);
+    ctx.fillStyle=accent; ctx.font='bold 82px -apple-system,BlinkMacSystemFont,sans-serif';
+    let pnlY=370; const pnlW=ctx.measureText(pnlStr).width;
+    // if text is too wide, scale
+    if(pnlW>W-100){ ctx.font='bold 62px -apple-system,BlinkMacSystemFont,sans-serif'; pnlY=358; }
+    ctx.fillText(pnlStr,50,pnlY);
+    ctx.fillStyle='#7a8299'; ctx.font='600 36px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.fillText('('+roeStr+' ROE)',50,pnlY+50);
+    // emoji stamp
+    ctx.font='72px sans-serif'; ctx.textAlign='right'; ctx.fillText(pnlEmoji(pnl),W-50,pnlY-20); ctx.textAlign='left';
+    // badge
+    ctx.fillStyle=accent+'1a'; ctx.font='bold 22px -apple-system,BlinkMacSystemFont,sans-serif';
+    ctx.beginPath(); ctx.roundRect(50,444,ctx.measureText(pnlTitle(pnl)).width+40,38,8); ctx.fill();
+    ctx.fillStyle=accent; ctx.fillText(pnlTitle(pnl),70,471);
+    // divider
+    ctx.strokeStyle='#ffffff0d'; ctx.beginPath(); ctx.moveTo(50,510); ctx.lineTo(W-50,510); ctx.stroke();
+    // details grid
+    const gridY=540,gridH=130,lg=12;
+    ctx.fillStyle='#13161f'; ctx.beginPath(); ctx.roundRect(50,gridY,(W-100-lg)/2,gridH,14); ctx.fill();
+    ctx.fillStyle='#13161f'; ctx.beginPath(); ctx.roundRect(50+(W-100+lg)/2,gridY,(W-100-lg)/2,gridH,14); ctx.fill();
+    // entry
+    ctx.fillStyle='#7a8299'; ctx.font='500 18px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.fillText('Entry Price',70,gridY+42);
+    ctx.fillStyle='#e2e8f0'; ctx.font='bold 30px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.fillText(fmtNum(entry,dp(pair)),70,gridY+88);
+    // mark
+    ctx.fillStyle='#7a8299'; ctx.font='500 18px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.fillText('Mark Price',70+(W-100+lg)/2,gridY+42);
+    ctx.fillStyle='#e2e8f0'; ctx.font='bold 30px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.fillText(mark?fmtNum(mark,dp(pair)):'--',70+(W-100+lg)/2,gridY+88);
+    // second detail row
+    const gy2=gridY+gridH+14;
+    ctx.fillStyle='#13161f'; ctx.beginPath(); ctx.roundRect(50,gy2,(W-100-lg)/2,gridH,14); ctx.fill();
+    ctx.fillStyle='#13161f'; ctx.beginPath(); ctx.roundRect(50+(W-100+lg)/2,gy2,(W-100-lg)/2,gridH,14); ctx.fill();
+    ctx.fillStyle='#7a8299'; ctx.font='500 18px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.fillText('Leverage',70,gy2+42);
+    ctx.fillStyle='#e2e8f0'; ctx.font='bold 30px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.fillText(lev+'x Cross',70,gy2+88);
+    ctx.fillStyle='#7a8299'; ctx.font='500 18px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.fillText('Status',70+(W-100+lg)/2,gy2+42);
+    ctx.fillStyle=isClosed?(pnl>=0?accent:'#ff5a5a'):'#f0b90b'; ctx.font='bold 30px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.fillText(isClosed?(pnl>=0?'✅ Closed Win':'❌ Closed Loss'):'⏳ Position Open',70+(W-100+lg)/2,gy2+88);
+    // bottom CTA + referral
+    const by=gy2+gridH+90;
+    ctx.fillStyle='#f0b90b'; ctx.font='bold 30px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.textAlign='center'; ctx.fillText('Trade on KolonoEX',W/2,by); ctx.textAlign='left';
+    ctx.fillStyle='#7a8299'; ctx.font='500 20px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.textAlign='center'; ctx.fillText('Fast · Leveraged · Telegram-native',W/2,by+42); ctx.textAlign='left';
+    // join text
+    ctx.fillStyle='#5a5f6e'; ctx.font='500 18px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.textAlign='center'; ctx.fillText('Join @kolonoex_bot on Telegram',W/2,H-40); ctx.textAlign='left';
+    return c;
+  }
+
+  function renderShareSheet(pair,side,lev,entry,pnl,roe,isBonus,mark,isClosed){
+    const canvas=drawShareCanvas(pair,side,lev,entry,pnl,roe,isBonus,mark,isClosed);
+    closeSheet();
+    openSheet(sheetHead('Share Position')
+      +'<div class="share-preview">'
+      +'<canvas id="shareCanvas" width="'+canvas.width+'" height="'+canvas.height+'" style="width:100%;max-width:380px;border-radius:14px;"></canvas>'
+      +'<div class="share-acts"><button class="sh-tg" onclick="shareToTelegram()"><i class="ti ti-send"></i> Share on Telegram</button>'
+      +'<button class="sh-dl" onclick="downloadShareCard()"><i class="ti ti-download"></i> Save</button></div>'
+      +'<div style="font-size:10px;color:#7a8299;margin-top:10px;">Your referral code is embedded in this card.</div></div>');
+    // Copy canvas content
+    const sc=document.getElementById('shareCanvas'); if(sc){ sc.getContext('2d').drawImage(canvas,0,0); }
+    // Stash for sharing
+    document.getElementById('sheetOverlay')._shareCanvas=canvas;
+  }
+
+  function shareToTelegram(){
+    const canvas=document.getElementById('sheetOverlay')._shareCanvas; if(!canvas) return;
+    const link=getRefLink(); const text='Trade crypto on KolonoEX 🚀 '+link;
+    // In-app Telegram: try to share photo + caption via story or send directly
+    try{ if(window.Telegram&&Telegram.WebApp){
+      // Open share sheet in Telegram with text; WebApp can't directly attach images, so share text + link
+      const url='https://t.me/share/url?url='+encodeURIComponent(link)+'&text='+encodeURIComponent(text);
+      Telegram.WebApp.openTelegramLink(url); return;
+    } }catch{}
+    // Web fallback: download image + ask user to share manually
+    downloadShareCard(); toast('Card saved — share it on Telegram!','ok');
+    try{ navigator.clipboard.writeText(text); toast('Link copied — paste with your image','ok'); }catch{ copyText(text); }
+  }
+  function downloadShareCard(){ const canvas=document.getElementById('sheetOverlay')._shareCanvas; if(!canvas) return;
+    try{ const a=document.createElement('a'); a.download='kolonoex-trade.png'; a.href=canvas.toDataURL('image/png'); a.click(); toast('Saved as kolonoex-trade.png','ok'); }catch(e){ toast('Save failed — screenshot instead','err'); } }
 
   // ── Notifications (in-app bell) ──
   function pushNotification(n){ if(!state.notifications) state.notifications=[];
