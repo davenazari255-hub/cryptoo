@@ -699,7 +699,7 @@
   const prices = {}; const prevPx = {};
 
   function defaultState(){ const balances={USDT:0}, cost={}; COIN_KEYS.forEach(k=>{balances[k]=0;cost[k]=0;});
-    return { balances, cost, futUSDT:0, openOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:50, bonusPrincipal:50, flags:{deposited:false,traded:false,futured:false}, spotVol:0, futVol:0, taskClaimed:{}, snap:{day:'',equity:0}, nextId:1, creditedDeposits:0, depositTotal:0, referralCount:0, referralEarned:0, notifications:[] }; }
+    return { balances, cost, futUSDT:0, openOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:50, bonusPrincipal:50, bonusProfit:0, flags:{deposited:false,traded:false,futured:false}, spotVol:0, futVol:0, taskClaimed:{}, snap:{day:'',equity:0}, nextId:1, creditedDeposits:0, depositTotal:0, referralCount:0, referralEarned:0, notifications:[] }; }
   function loadState(){ try{ const raw=localStorage.getItem(LS_KEY); if(!raw) return defaultState();
       const s=JSON.parse(raw); const d=defaultState();
       return Object.assign(d,s,{ balances:Object.assign(d.balances,s.balances||{}), cost:Object.assign(d.cost,s.cost||{}), snap:Object.assign(d.snap,s.snap||{}), flags:Object.assign(d.flags,s.flags||{}), taskClaimed:Object.assign(d.taskClaimed,s.taskClaimed||{}) });
@@ -778,12 +778,15 @@
 
   function spotEquity(){ let t=state.balances.USDT||0; COIN_KEYS.forEach(k=>{ const p=px(k); if(p) t+=(state.balances[k]||0)*p; }); return t; }
   function futEquity(){ let t=state.futUSDT||0; state.positions.forEach(p=>{ if(p.src!=='bonus') t+=p.margin+unrealized(p); }); return t; }
-  function bonusTransferable(){ return Math.max(0,(state.bonus||0)-(state.bonusPrincipal||0)); }
+  // Realised, transferable bonus profit — a pure accumulator that only grows from
+  // winning trades and shrinks only when the user transfers it out. Never reduced
+  // by losses or by opening new positions.
+  function bonusTransferable(){ return Math.max(0,(state.bonusProfit||0)); }
   function bonusEquity(){ let t=state.bonus||0; state.positions.forEach(p=>{ if(p.src==='bonus') t+=p.margin+unrealized(p); }); return t; }
   function totalEquity(){ return spotEquity()+futEquity(); }
-  // Equity used for the daily P/L figure — includes the bonus account so profit
-  // earned while trading with bonus is reflected in "Today profit".
-  function pnlEquity(){ return spotEquity()+futEquity()+bonusEquity(); }
+  // Equity used for the daily P/L figure — includes the bonus account (pool + open
+  // PnL + realised profit) so bonus trading is reflected in "Today profit".
+  function pnlEquity(){ return spotEquity()+futEquity()+bonusEquity()+(state.bonusProfit||0); }
   function dayStr(){ const d=new Date(); return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate(); }
   function checkSnap(){ const ds=dayStr(); if(!state.snap||state.snap.day!==ds||state.snap.v!==2){ state.snap={day:ds,equity:pnlEquity(),v:2}; save(); } return state.snap; }
   function todayProfit(){ const s=checkSnap(); const t=pnlEquity(); const pf=t-s.equity; return { pf, pct: s.equity>0?pf/s.equity*100:0 }; }
@@ -951,13 +954,10 @@
     const pnl=liquidated?-pos.margin:unrealized(pos); const ret=Math.max(0,pos.margin+pnl); const fee=pos.notional*FEE;
     const net=Math.max(0,ret-(liquidated?0:fee));
     if(pos.src==='bonus'){ state.bonus=(state.bonus||0)+net;
-      // Floor the principal against REALISED bonus capital = free pool + margin
-      // still locked in OTHER open bonus positions. A realised loss lowers the
-      // principal (so the next win is transferable) while locked margin of
-      // concurrent positions is NOT mistaken for profit when they later close.
-      let locked=0; state.positions.forEach(q=>{ if(q.src==='bonus'&&q.id!==pos.id) locked+=q.margin; });
-      const realCap=state.bonus+locked;
-      if((state.bonusPrincipal||0)>realCap) state.bonusPrincipal=realCap;
+      // A winning trade's profit is moved OUT of the trading pool into the
+      // transferable accumulator, so it can never be consumed by a later position
+      // or reduced by a later loss — only grows. Losses stay in the pool.
+      if(pnl>0){ state.bonus-=pnl; state.bonusProfit=Math.round(((state.bonusProfit||0)+pnl)*1e8)/1e8; }
     } else state.futUSDT+=net;
     state.positions=state.positions.filter(p=>p.id!==id);
     pos.pnl=pnl; pos.closedTime=tstamp(now()); pos.liquidated=!!liquidated; pos.reason=reason||''; state.closed.unshift(pos); if(state.closed.length>40) state.closed.pop();
@@ -1059,7 +1059,7 @@
     h+='<div class="formline"><span>Open position PnL</span><span class="rt" style="color:'+bpcol+';">'+(bopen>=0?'+':'')+fmtNum(bopen,2)+' USDT</span></div>';
     h+='<div class="formline"><span>Transferable profit</span><span class="rt" style="color:#4eeaa0;">'+fmtNum(bonusTransferable(),2)+' USDT</span></div>';
     h+='<div style="display:flex;gap:8px;margin:12px 0 16px;"><button class="btn btn-green" onclick="useBonusInFutures()">Use in Futures</button><button class="btn btn-outline" onclick="openBonusTransfer()">Transfer Profit</button><button class="btn btn-outline" onclick="openBonusRecords()">Records</button></div>';
-    h+='<div class="formline"><span>Total bonus equity (incl. open PnL)</span><span class="rt">'+fmtNum(be,2)+' USDT</span></div>';
+    h+='<div class="formline"><span>Total bonus equity (incl. open PnL)</span><span class="rt">'+fmtNum(be+(state.bonusProfit||0),2)+' USDT</span></div>';
     if(bpos.length){ h+='<div class="section-title" style="margin-top:14px;">Bonus Positions</div>'; h+=bpos.map(p=>{ const u=unrealized(p); const cls=u>=0?'pnl-pos':'pnl-neg';
       return '<div class="dist-row"><div style="display:flex;align-items:center;gap:10px;">'+coinLogo(p.pair,30)+'<div><div class="nm">'+tkr(p.pair)+'USDT</div><div class="sub2" style="text-align:left;color:'+(p.side==='long'?'#4eeaa0':'#ff5a5a')+'">'+p.side.toUpperCase()+' '+p.lev+'x · Bonus</div></div></div><div><div class="amt '+cls+'">'+(u>=0?'+':'')+fmtNum(u,2)+'</div><div class="sub2">margin '+fmtNum(p.margin,2)+'</div></div></div>'; }).join(''); }
     else h+='<div class="empty" style="margin-top:14px;">No bonus positions open</div>';
@@ -1131,7 +1131,7 @@
       +'<button class="buy-btn" onclick="doBonusTransfer()">Confirm</button>'); }
   function setBonusDest(d){ ui.bonusDest=d; const seg=document.getElementById('bdest-seg'); if(seg){ seg.children[0].classList.toggle('active',d==='spot'); seg.children[1].classList.toggle('active',d==='futures'); } }
   function doBonusTransfer(){ const avail=bonusTransferable(); const a=parseFloat(v('bt-amt'))||0; if(a<=0){ toast('Enter amount','err'); return; } if(a>avail+1e-9){ toast('Exceeds transferable profit','err'); return; }
-    state.bonus-=a; if(ui.bonusDest==='spot') state.balances.USDT+=a; else state.futUSDT+=a;
+    state.bonusProfit=Math.round(((state.bonusProfit||0)-a)*1e8)/1e8; if(ui.bonusDest==='spot') state.balances.USDT+=a; else state.futUSDT+=a;
     addTx({type:'Bonus → '+(ui.bonusDest==='spot'?'Spot':'Futures'),sub:'Profit transfer',value:a,sign:'+',coin:'USDT',isUSDT:true}); save(); closeSheet(); toast('Transferred '+fmtNum(a,2)+' USDT to '+(ui.bonusDest==='spot'?'Spot':'Futures'),'ok'); renderAssets(); setBonusBtn(); updateFutInfo(); }
   // ── Transaction / deposit / withdrawal records ──
   let recTab='all', recPoll=null, recData={deposits:[],withdrawals:[]};
