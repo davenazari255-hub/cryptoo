@@ -26,6 +26,13 @@
     @media (prefers-reduced-motion: reduce) { .logo-anim .logo-rest { max-width:7em; opacity:1; transform:none; animation:none; } }
     .header-icons { display: flex; gap: 14px; color: #7a8299; font-size: 20px; align-items: center; }
     .bell-wrap { position:relative; display:inline-flex; cursor:pointer; }
+    /* partner program button — purple neon diamond */
+    .partner-wrap { position:relative; display:inline-flex; cursor:pointer; }
+    .partner-wrap #partnerBtn { color:#b07bff; filter:drop-shadow(0 0 4px rgba(176,123,255,.85)); animation:partnerNeon 2.2s ease-in-out infinite; }
+    @keyframes partnerNeon { 0%,100%{ filter:drop-shadow(0 0 3px rgba(176,123,255,.6)); } 50%{ filter:drop-shadow(0 0 9px rgba(176,123,255,1)); } }
+    .partner-wrap.is-partner #partnerBtn { color:#ffd45e; filter:drop-shadow(0 0 5px rgba(255,212,94,.9)); animation:partnerNeonGold 2.2s ease-in-out infinite; }
+    @keyframes partnerNeonGold { 0%,100%{ filter:drop-shadow(0 0 3px rgba(255,212,94,.65)); } 50%{ filter:drop-shadow(0 0 10px rgba(255,212,94,1)); } }
+    .task-boost { font-size:9px; font-weight:700; color:#b07bff; border:0.5px solid #6b4ba8; background:#b07bff14; padding:1px 6px; border-radius:5px; margin-left:7px; vertical-align:middle; }
     .bell-badge { position:absolute; top:-6px; right:-7px; min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:#ff5a5a; color:#fff; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; border:1.5px solid #0d0e12; }
     .ntf-item { display:flex; gap:12px; padding:13px; background:#161922; border:0.5px solid #232838; border-radius:13px; margin-bottom:9px; position:relative; }
     .ntf-item.unread { border-color:#f0b90b55; background:#1a1810; }
@@ -67,6 +74,32 @@
     .sup-send { width:42px; height:42px; border-radius:50%; border:0; background:linear-gradient(135deg,#4eeaa0,#3fd190); color:#0d0e12; font-size:19px; cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center; transition:filter .15s; }
     .sup-send:active { filter:brightness(.92); } .sup-send:disabled { opacity:.45; }
     .sup-typing { align-self:flex-start; color:#6b7488; font-size:11px; padding:2px 6px; }
+    /* ── Partner program ── */
+    #partnerOverlay { position:fixed; inset:0; z-index:400; background:#0d0e12; display:none; flex-direction:column; }
+    #partnerOverlay.open { display:flex; animation:supIn .22s ease; }
+    .pn-body { flex:1; overflow-y:auto; padding:18px 16px calc(20px + env(safe-area-inset-bottom)); }
+    .pn-hero { background:linear-gradient(135deg,#241a3a,#181426); border:0.5px solid #4a3a72; border-radius:16px; padding:20px; text-align:center; margin-bottom:16px; position:relative; overflow:hidden; }
+    .pn-hero .ring { width:62px; height:62px; border-radius:50%; background:linear-gradient(135deg,#b07bff,#7d4fd6); display:flex; align-items:center; justify-content:center; font-size:30px; color:#fff; margin:0 auto 12px; box-shadow:0 0 22px rgba(176,123,255,.55); }
+    .pn-hero .h { font-size:20px; font-weight:800; color:#f0eaff; } .pn-hero .h b { color:#c9a6ff; }
+    .pn-hero .p { font-size:12.5px; color:#a99bc8; line-height:1.6; margin-top:8px; }
+    .pn-stats { display:flex; gap:10px; margin-bottom:16px; }
+    .pn-stat { flex:1; background:#15131f; border:0.5px solid #2e2740; border-radius:13px; padding:14px 10px; text-align:center; }
+    .pn-stat .n { font-size:21px; font-weight:800; color:#fff; } .pn-stat .n.purple { color:#c9a6ff; } .pn-stat .n.green { color:#4eeaa0; }
+    .pn-stat .l { font-size:10.5px; color:#8a82a0; margin-top:3px; }
+    .pn-card { background:#15131f; border:0.5px solid #2e2740; border-radius:14px; padding:16px; margin-bottom:14px; }
+    .pn-card .ct { font-size:13px; font-weight:700; color:#e8e2f7; margin-bottom:12px; display:flex; align-items:center; gap:7px; } .pn-card .ct i { color:#b07bff; }
+    .pn-perk { display:flex; align-items:center; gap:11px; padding:9px 0; } .pn-perk+.pn-perk { border-top:0.5px solid #221c33; }
+    .pn-perk .ic { width:34px; height:34px; border-radius:9px; background:#b07bff14; color:#c9a6ff; display:flex; align-items:center; justify-content:center; font-size:17px; flex-shrink:0; }
+    .pn-perk .tx { font-size:12.5px; color:#cfc6e4; line-height:1.45; } .pn-perk .tx b { color:#fff; }
+    .pn-field { margin-bottom:13px; } .pn-field label { font-size:11.5px; color:#a99bc8; display:block; margin-bottom:6px; }
+    .pn-field input, .pn-field textarea { width:100%; background:#0f0d17; border:0.5px solid #342b4d; color:#e8e2f7; border-radius:10px; padding:11px 13px; font-size:14px; font-family:inherit; outline:none; resize:none; }
+    .pn-field input:focus, .pn-field textarea:focus { border-color:#b07bff; }
+    .pn-btn { width:100%; padding:13px; border-radius:12px; border:0; font-size:14px; font-weight:700; cursor:pointer; background:linear-gradient(135deg,#b07bff,#7d4fd6); color:#fff; display:flex; align-items:center; justify-content:center; gap:8px; box-shadow:0 4px 16px rgba(125,79,214,.4); }
+    .pn-btn:active { filter:brightness(.95); } .pn-btn:disabled { opacity:.55; }
+    .pn-badge { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:700; padding:6px 13px; border-radius:20px; }
+    .pn-badge.pending { background:#3a2f10; color:#ffd45e; } .pn-badge.approved { background:#13241b; color:#4eeaa0; } .pn-badge.rejected { background:#2a1418; color:#ff7a7a; }
+    .pn-link-box { display:flex; align-items:center; gap:8px; background:#0f0d17; border:0.5px solid #342b4d; border-radius:11px; padding:11px 13px; margin-top:8px; }
+    .pn-link-box .lk { flex:1; font-size:12px; color:#c9a6ff; word-break:break-all; }
     .header-user { display:flex; align-items:center; gap:7px; }
     .header-avatar { width: 26px; height: 26px; border-radius: 50%; background: #262a38; color:#4eeaa0; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; overflow:hidden; }
     .header-avatar img { width:100%; height:100%; object-fit:cover; }
@@ -470,6 +503,7 @@
       <div class="header-icons">
         <div class="ws-dot" id="wsDot" title="Live feed"></div>
         <i class="ti ti-shield-lock" id="adminBtn" title="Admin panel" style="display:none;color:#f0b90b;cursor:pointer;" onclick="openAdmin()"></i>
+        <div class="partner-wrap" onclick="openPartner()"><i class="ti ti-diamond" id="partnerBtn" title="Partner program"></i></div>
         <div class="bell-wrap" onclick="openSupport()"><i class="ti ti-headphones" id="supportBtn" title="Support"></i><span class="bell-badge" id="supportBadge" style="display:none;">0</span></div>
         <div class="bell-wrap" onclick="openNotifications()"><i class="ti ti-bell"></i><span class="bell-badge" id="bellBadge" style="display:none;">0</span></div>
       </div>
@@ -738,6 +772,14 @@
     <button class="sup-send" id="supSend" onclick="sendSupport()"><i class="ti ti-send"></i></button>
   </div>
 </div>
+<div id="partnerOverlay">
+  <div class="sup-head" style="background:linear-gradient(135deg,#1e1530,#13151c 70%);">
+    <i class="ti ti-chevron-left sup-back" onclick="closePartner()"></i>
+    <div class="sup-av" style="background:linear-gradient(135deg,#b07bff,#7d4fd6);"><i class="ti ti-diamond"></i></div>
+    <div class="sup-meta"><div class="sup-name">Partner Program</div><div class="sup-status" style="color:#b9a3e0;"><span id="pn-sub">Earn by referring traders</span></div></div>
+  </div>
+  <div class="pn-body" id="partnerBody"></div>
+</div>
 
 <script>
   // ─────────────────────────────────────────────
@@ -793,12 +835,34 @@
     tfFrom:'spot', tfTo:'futures', bonusDest:'spot', chartTf:'15m', hideBal:false };
 
   // ── Home tasks (complete → bonus) ──
-  const TASKS=[
-    {id:'welcome',  icon:'ti-gift',             title:'Welcome Bonus',     desc:'Sign in to KolonoEX',                 reward:10, cond:()=>true,                              go:'home'},
-    {id:'deposit',  icon:'ti-wallet',           title:'Net Deposit',       desc:'Deposit a total of 100 USDT',         reward:10, cond:()=>(state.creditedDeposits||0)>=100,   go:'assets',  target:100,   cur:()=>state.creditedDeposits||0},
-    {id:'spot',     icon:'ti-arrows-exchange',  title:'First Spot Trade',  desc:'Trade 100 USDT volume in Spot',       reward:5,  cond:()=>(state.spotVol||0)>=100,           go:'trade',   target:100,   cur:()=>state.spotVol||0},
-    {id:'futures',  icon:'ti-trending-up',      title:'First Futures Trade',desc:'Trade 20,000 USDT volume in Futures', reward:15, cond:()=>(state.futVol||0)>=20000,     go:'futures', target:20000, cur:()=>state.futVol||0},
+  // Default definitions; the server (admin-editable) overrides this via sync.
+  // `metric` maps to a client-side progress source. Reward/target/title are
+  // whatever the admin configured (and may be boosted for partner referrals).
+  const DEFAULT_TASKS=[
+    {id:'welcome',  icon:'ti-gift',             title:'Welcome Bonus',     desc:'Sign in to KolonoEX',                 reward:10, metric:'always',  target:0,      go:'home'},
+    {id:'deposit',  icon:'ti-wallet',           title:'Net Deposit',       desc:'Deposit a total of 100 USDT',         reward:10, metric:'deposit', target:100,    go:'assets'},
+    {id:'spot',     icon:'ti-arrows-exchange',  title:'First Spot Trade',  desc:'Trade 100 USDT volume in Spot',       reward:5,  metric:'spotVol', target:100,    go:'trade'},
+    {id:'futures',  icon:'ti-trending-up',      title:'First Futures Trade',desc:'Trade 20,000 USDT volume in Futures',reward:15, metric:'futVol',  target:20000,  go:'futures'},
   ];
+  let TASKS=DEFAULT_TASKS.slice();
+  let tasksSig='', partnerSig='', myPartner=null;
+  // Merge server task definitions with safe defaults (icons/go fallbacks).
+  function mergeTasks(srv){ return srv.map(t=>({
+    id:t.id, icon:t.icon||'ti-gift', title:t.title||'Task', desc:t.desc||'',
+    reward:parseFloat(t.reward)||0, metric:t.metric||'always', target:parseFloat(t.target)||0,
+    go:t.go||'home', partnerBoost:!!t.partnerBoost })); }
+  // Map a task's metric to its current numeric progress value.
+  function taskMetricValue(metric){
+    switch(metric){
+      case 'deposit': return state.creditedDeposits||0;
+      case 'spotVol': return state.spotVol||0;
+      case 'futVol':  return state.futVol||0;
+      case 'referral':return state.referralCount||0;
+      default:        return 1; // 'always' → instantly complete
+    }
+  }
+  function taskCond(t){ if(!t.target||t.metric==='always') return true; return taskMetricValue(t.metric)>=t.target; }
+  function taskUnit(t){ return t.metric==='referral'?'friends':'USDT'; }
 
   // helpers
   function v(id){ const e=document.getElementById(id); return e?e.value:''; }
@@ -1189,7 +1253,7 @@
       +'<div class="bonus-card" style="margin-bottom:14px;"><div class="lab"><i class="ti ti-gift"></i> Current Bonus</div><div class="val">'+fmtNum(state.bonus||0,2)+' <span style="font-size:15px;color:#c9b777;">USDT</span></div></div>'
       +rows); }
   // ── Home tasks ──
-  function taskStatus(t){ if(state.taskClaimed[t.id]) return 'done'; return t.cond()?'ready':'locked'; }
+  function taskStatus(t){ if(state.taskClaimed[t.id]) return 'done'; return taskCond(t)?'ready':'locked'; }
   function renderTasks(){ const el=document.getElementById('home-tasks'); if(!el) return;
     const done=TASKS.filter(t=>state.taskClaimed[t.id]).length;
     let h='<div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 10px;"><div class="section-title" style="margin:0;">Tasks · Earn Bonus</div><span style="font-size:11px;color:#7a8299;">'+done+'/'+TASKS.length+' done</span></div>';
@@ -1200,20 +1264,21 @@
         : '<button class="task-btn go" onclick="'+goAction+'">Go</button>';
       // Progress bar toward a numeric target (stays at 100% after claim).
       let prog='';
-      if(t.target){ const raw=t.cur(); const cur=Math.min(raw,t.target); const pct=Math.max(0,Math.min(100,(raw/t.target)*100));
+      if(t.target){ const raw=taskMetricValue(t.metric); const cur=Math.min(raw,t.target); const pct=Math.max(0,Math.min(100,(raw/t.target)*100)); const unit=taskUnit(t);
         prog='<div class="task-prog"><div class="task-prog-bar"><span style="width:'+pct.toFixed(1)+'%;"></span></div>'
-          +'<div class="task-prog-txt">'+fmtNum(cur,cur>=100?0:2)+' / '+fmtNum(t.target,0)+' USDT ('+pct.toFixed(0)+'%)</div></div>'; }
-      return '<div class="task-card"><div class="task-ic"><i class="ti '+t.icon+'"></i></div><div class="task-info"><div class="t">'+t.title+'</div><div class="s">'+t.desc+'</div>'+prog+'<div class="task-reward">🎁 +'+t.reward+' USDT bonus</div></div>'+btn+'</div>'; }).join('');
+          +'<div class="task-prog-txt">'+fmtNum(cur,cur>=100?0:2)+' / '+fmtNum(t.target,0)+' '+unit+' ('+pct.toFixed(0)+'%)</div></div>'; }
+      const boost=t.partnerBoost?'<span class="task-boost">★ Partner boost</span>':'';
+      return '<div class="task-card"><div class="task-ic"><i class="ti '+t.icon+'"></i></div><div class="task-info"><div class="t">'+esc(t.title)+boost+'</div><div class="s">'+esc(t.desc)+'</div>'+prog+'<div class="task-reward">🎁 +'+fmtNum(t.reward,2)+' USDT bonus</div></div>'+btn+'</div>'; }).join('');
     el.innerHTML=h; }
   // Best-effort bot push for client-side events (task bonuses, etc.).
   async function botNotify(text){ if(!hasTgAuth()) return; try{ await fetch('/api/notify',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), text }) }); }catch(e){} }
 
-  function claimTask(id){ const t=TASKS.find(x=>x.id===id); if(!t||state.taskClaimed[id]||!t.cond()) return;
+  function claimTask(id){ const t=TASKS.find(x=>x.id===id); if(!t||state.taskClaimed[id]||!taskCond(t)) return;
     state.taskClaimed[id]=true; state.bonus=(state.bonus||0)+t.reward; state.bonusPrincipal=(state.bonusPrincipal||0)+t.reward;
     addTx({type:'Task Reward',sub:t.title,value:t.reward,sign:'+',coin:'USDT',isUSDT:true}); save();
     pushNotification({title:'Bonus earned 🎁',text:t.title+' · +'+fmtNum(t.reward,2)+' USDT bonus',kind:'bonus'});
     botNotify('🎁 Bonus earned: +'+fmtNum(t.reward,2)+' USDT for completing "'+t.title+'".');
-    toast('+'+t.reward+' USDT bonus claimed!','ok'); renderTasks(); setBonusBtn(); renderAssets(); }
+    toast('+'+fmtNum(t.reward,2)+' USDT bonus claimed!','ok'); renderTasks(); setBonusBtn(); renderAssets(); }
   function useBonusInFutures(){ if((state.bonus||0)<=0){ toast('Claim a bonus first','info'); return; } ui.useBonus=true; switchPage('futures',null); setBonusBtn(); toast('Bonus margin enabled in Futures','ok'); }
   function tfBal(acc){ return acc==='spot'?(state.balances.USDT||0):(state.futUSDT||0); }
   function accName(acc){ return acc==='spot'?'Spot Account':'Futures Account'; }
@@ -1570,6 +1635,71 @@
     if(!supOnline) toast('Sent as a ticket — we\'ll reply soon','ok');
     renderSupport(); el.focus(); }
 
+  // ── Partner program ──
+  function updatePartnerBtn(){ const w=document.querySelector('.partner-wrap'); if(!w) return; w.classList.toggle('is-partner', !!(myPartner&&myPartner.status==='approved')); }
+  function getPartnerLink(code){ const base='https://t.me/'+BOT_USERNAME+(MINI_APP_SHORT?('/'+MINI_APP_SHORT):''); return base+'?startapp=par_'+code; }
+  async function partnerApi(payload){ if(!hasTgAuth()) return null;
+    try{ const r=await fetch('/api/partner',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), ...payload }) });
+      const d=await r.json(); if(!r.ok){ toast(d.error||'Error','err'); return null; } return d; }catch(e){ return null; } }
+  async function openPartner(){
+    if(!hasTgAuth()){ openSheet(sheetHead('Partner Program')+'<div class="dep-tip" style="border-color:#ff5a5a44;"><i class="ti ti-alert-triangle" style="color:#ff5a5a;"></i><span>Open KolonoEX from your Telegram bot to apply for the partner program.</span></div>'); return; }
+    const ov=document.getElementById('partnerOverlay'); ov.classList.add('open');
+    const body=document.getElementById('partnerBody'); body.innerHTML='<div class="sup-empty"><i class="ti ti-loader-2" style="animation:depSpin 1s linear infinite;font-size:34px;"></i></div>';
+    const d=await partnerApi({action:'me'}); if(d){ myPartner=d.partner||null; partnerSig=JSON.stringify(myPartner); updatePartnerBtn(); }
+    renderPartner(); }
+  function partnerOpen(){ const ov=document.getElementById('partnerOverlay'); return ov&&ov.classList.contains('open'); }
+  function closePartner(){ document.getElementById('partnerOverlay').classList.remove('open'); }
+  function renderPartner(){ const body=document.getElementById('partnerBody'); if(!body) return; const p=myPartner;
+    let h='';
+    if(p&&p.status==='approved'){
+      const link=getPartnerLink(p.code); const cfg=p.cfg||{};
+      h+='<div class="pn-hero"><div class="ring"><i class="ti ti-diamond"></i></div><div class="h">You\'re a <b>Partner</b> 🎉</div>'
+        +'<div class="p">Share your link below. You earn commission on every deposit your referrals make — forever.</div></div>';
+      h+='<div class="pn-stats"><div class="pn-stat"><div class="n purple">'+(p.refCount||0)+'</div><div class="l">Referrals</div></div>'
+        +'<div class="pn-stat"><div class="n green">$'+fmtNum(p.earned||0,2)+'</div><div class="l">Total earned</div></div>'
+        +'<div class="pn-stat"><div class="n">'+fmtNum(cfg.depositPct||0,1)+'%</div><div class="l">Deposit cut</div></div></div>';
+      h+='<div class="pn-card"><div class="ct"><i class="ti ti-link"></i> Your partner link</div>'
+        +'<div class="pn-link-box"><span class="lk">'+esc(link)+'</span><i class="ti ti-copy" style="color:#c9a6ff;font-size:18px;cursor:pointer;" onclick="copyText(\''+escAttr(link)+'\')"></i></div>'
+        +'<button class="pn-btn" style="margin-top:12px;" onclick="sharePartner()"><i class="ti ti-send"></i> Share link</button></div>';
+      h+='<div class="pn-card"><div class="ct"><i class="ti ti-gift"></i> Your referral perks</div>'
+        +'<div class="pn-perk"><div class="ic"><i class="ti ti-percentage"></i></div><div class="tx"><b>'+fmtNum(cfg.depositPct||0,1)+'%</b> commission on every deposit your referrals make.</div></div>'
+        +'<div class="pn-perk"><div class="ic"><i class="ti ti-user-plus"></i></div><div class="tx"><b>$'+fmtNum(cfg.refBonus||0,2)+'</b> bonus credited to you per referral who joins.</div></div>'
+        +(cfg.taskRewards&&Object.keys(cfg.taskRewards).length?'<div class="pn-perk"><div class="ic"><i class="ti ti-star"></i></div><div class="tx">Your referrals get <b>boosted task bonuses</b> — they earn more, you grow faster.</div></div>':'')+'</div>';
+    } else if(p&&p.status==='pending'){
+      h+='<div class="pn-hero"><div class="ring"><i class="ti ti-hourglass-high"></i></div><div class="h">Application <b>under review</b></div>'
+        +'<div class="p">Thanks for applying! Our team is reviewing your channel. You\'ll be notified here and on Telegram once a decision is made.</div>'
+        +'<div style="margin-top:14px;"><span class="pn-badge pending"><i class="ti ti-clock-hour-4"></i> Pending review</span></div></div>'
+        +'<div class="pn-card"><div class="ct"><i class="ti ti-file-text"></i> Your application</div>'
+        +'<div class="pn-perk"><div class="ic"><i class="ti ti-brand-telegram"></i></div><div class="tx"><b>'+esc(p.channel||'')+'</b></div></div>'
+        +(p.audience?'<div class="pn-perk"><div class="ic"><i class="ti ti-users"></i></div><div class="tx">Audience: <b>'+esc(p.audience)+'</b></div></div>':'')+'</div>';
+    } else {
+      // Apply form (new or rejected → reapply)
+      h+='<div class="pn-hero"><div class="ring"><i class="ti ti-diamond"></i></div><div class="h">Become a <b>KolonoEX Partner</b></div>'
+        +'<div class="p">Run a channel or community? Turn your audience into income. Partners earn a <b style="color:#c9a6ff;">commission on every deposit</b> their referrals make — plus custom bonuses we set up just for you.</div></div>';
+      h+='<div class="pn-card"><div class="ct"><i class="ti ti-rosette-discount-check"></i> Why partner with us</div>'
+        +'<div class="pn-perk"><div class="ic"><i class="ti ti-percentage"></i></div><div class="tx"><b>Revenue share</b> — a % of every deposit from your referrals, paid instantly.</div></div>'
+        +'<div class="pn-perk"><div class="ic"><i class="ti ti-gift"></i></div><div class="tx"><b>Custom referral bonuses</b> — we tailor task rewards for your audience.</div></div>'
+        +'<div class="pn-perk"><div class="ic"><i class="ti ti-chart-line"></i></div><div class="tx"><b>Live dashboard</b> — track referrals & earnings right here.</div></div>'
+        +'<div class="pn-perk"><div class="ic"><i class="ti ti-headset"></i></div><div class="tx"><b>Priority support</b> — a direct line to our team.</div></div></div>';
+      h+='<div class="pn-card"><div class="ct"><i class="ti ti-send"></i> Apply now</div>'
+        +(p&&p.status==='rejected'?'<div style="font-size:11.5px;color:#ff9a9a;margin-bottom:10px;">Your previous application wasn\'t approved. You\'re welcome to reapply.</div>':'')
+        +'<div class="pn-field"><label>Channel / group link or @handle *</label><input id="pn-channel" placeholder="@yourchannel or https://t.me/…" maxlength="120"></div>'
+        +'<div class="pn-field"><label>Audience size</label><input id="pn-audience" placeholder="e.g. 25,000 members" maxlength="40"></div>'
+        +'<div class="pn-field"><label>Tell us about your audience (optional)</label><textarea id="pn-note" rows="3" placeholder="Niche, region, why KolonoEX fits…" maxlength="500"></textarea></div>'
+        +'<button class="pn-btn" id="pn-submit" onclick="submitPartner()"><i class="ti ti-diamond"></i> Submit application</button></div>';
+    }
+    body.innerHTML=h; }
+  async function submitPartner(){ const channel=(v('pn-channel')||'').trim(); if(!channel){ toast('Enter your channel or @handle','err'); return; }
+    const audience=(v('pn-audience')||'').trim(); const note=(v('pn-note')||'').trim();
+    const btn=document.getElementById('pn-submit'); if(btn){ btn.disabled=true; btn.innerHTML='<i class="ti ti-loader-2" style="animation:depSpin 1s linear infinite;"></i> Submitting…'; }
+    const d=await partnerApi({action:'apply',channel,audience,note});
+    if(d&&d.partner){ myPartner=d.partner; partnerSig=JSON.stringify(myPartner); toast('Application submitted! 🎉','ok'); renderPartner(); }
+    else if(btn){ btn.disabled=false; btn.innerHTML='<i class="ti ti-diamond"></i> Submit application'; } }
+  function sharePartner(){ if(!myPartner||!myPartner.code) return; const link=getPartnerLink(myPartner.code);
+    const text='Trade crypto on KolonoEX — fast, leveraged, right inside Telegram. 🚀'; const url='https://t.me/share/url?url='+encodeURIComponent(link)+'&text='+encodeURIComponent(text);
+    try{ if(window.Telegram&&Telegram.WebApp&&Telegram.WebApp.openTelegramLink){ Telegram.WebApp.openTelegramLink(url); return; } }catch{}
+    try{ window.open(url,'_blank'); }catch{ copyText(link); } }
+
   // ── Invite / Referral ──
   const BOT_USERNAME='kolonoex_bot';
   // Mini App short name from BotFather. Set to the exact short name you created
@@ -1718,6 +1848,10 @@
       // Referral stats from the server.
       if(d.referral){ const rc=parseInt(d.referral.count,10)||0; const re=parseFloat(d.referral.earned)||0;
         if(rc!==state.referralCount || re!==state.referralEarned){ state.referralCount=rc; state.referralEarned=re; save(); renderTasks(); updateInviteSheet(); } }
+      // Admin-editable task list (with any partner reward boosts).
+      if(Array.isArray(d.tasks) && d.tasks.length){ const sig=JSON.stringify(d.tasks); if(sig!==tasksSig){ tasksSig=sig; TASKS=mergeTasks(d.tasks); renderTasks(); } }
+      // Partner status (this user's own application/approval).
+      if(d.partner!==undefined){ const sig=JSON.stringify(d.partner||null); if(sig!==partnerSig){ partnerSig=sig; myPartner=d.partner||null; updatePartnerBtn(); if(partnerOpen()) renderPartner(); } }
       return server;
     }catch(e){ return null; } }
 
