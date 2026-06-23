@@ -40,7 +40,22 @@ function verifyTelegram(initData) {
 const parseJSON = (s) => { try { return JSON.parse(s); } catch { return null; } };
 const escHtml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-const REFERRAL_BONUS = 0.5; // USD credited to the referrer per valid invite
+const REFERRAL_BONUS = 0.5; // default USD credited to the referrer per valid invite
+
+// Default home tasks. Admin can edit/extend these via the admin panel (stored in
+// Redis at config:tasks). `metric` drives client-side progress: always | deposit
+// | spotVol | futVol | referral. `target` is the numeric goal (0 = instant).
+const DEFAULT_TASKS = [
+  { id: 'welcome', icon: 'ti-gift', title: 'Welcome Bonus', desc: 'Sign in to KolonoEX', reward: 10, metric: 'always', target: 0, go: 'home' },
+  { id: 'deposit', icon: 'ti-wallet', title: 'Net Deposit', desc: 'Deposit a total of 100 USDT', reward: 10, metric: 'deposit', target: 100, go: 'assets' },
+  { id: 'spot', icon: 'ti-arrows-exchange', title: 'First Spot Trade', desc: 'Trade 100 USDT volume in Spot', reward: 5, metric: 'spotVol', target: 100, go: 'trade' },
+  { id: 'futures', icon: 'ti-trending-up', title: 'First Futures Trade', desc: 'Trade 20,000 USDT volume in Futures', reward: 15, metric: 'futVol', target: 20000, go: 'futures' },
+];
+async function loadTasks(upstashFn) {
+  const raw = await upstashFn(['GET', 'config:tasks']);
+  const parsed = raw ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : null;
+  return Array.isArray(parsed) && parsed.length ? parsed : DEFAULT_TASKS;
+}
 
 // Send a push message into the bot chat (outside the mini app). Best-effort.
 async function tgSend(chatId, text) {
@@ -57,30 +72,50 @@ async function tgSend(chatId, text) {
 
 // Records a referral the first time a referred user appears. Idempotent and
 // abuse-resistant: a user can be referred only once, can't refer themselves.
+// Supports two link types: ref_<id> (normal user) and par_<code> (partner).
 async function recordReferral(upstashFn, userId, startParam, newUserName) {
   if (!startParam || typeof startParam !== 'string') return;
-  const m = startParam.match(/^ref_(tg_\d+|\d+)$/);
-  if (!m) return;
-  let referrer = m[1];
-  if (!referrer.startsWith('tg_')) referrer = `tg_${referrer}`;
+  let referrer = null, partnerCode = null;
+  const mUser = startParam.match(/^ref_(tg_\d+|\d+)$/);
+  const mPartner = startParam.match(/^par_([a-zA-Z0-9_]{3,32})$/);
+  if (mPartner) {
+    partnerCode = mPartner[1];
+    const ownerRaw = await upstashFn(['GET', `partner:owner:${partnerCode}`]);
+    if (!ownerRaw) return; // unknown/inactive partner code
+    referrer = String(ownerRaw);
+  } else if (mUser) {
+    referrer = mUser[1];
+    if (!referrer.startsWith('tg_')) referrer = `tg_${referrer}`;
+  } else return;
   if (referrer === userId) return; // no self-referral
 
   // Only set if this user has no referrer yet (NX = first writer wins).
   const set = await upstashFn(['SET', `ref:by:${userId}`, referrer, 'NX']);
   if (set !== 'OK') return; // already referred before
 
+  // Per-partner referral bonus override (falls back to the global default).
+  let bonus = REFERRAL_BONUS;
+  if (partnerCode) {
+    await upstashFn(['SET', `ref:partner:${userId}`, partnerCode]); // tag user → partner
+    await upstashFn(['INCR', `partner:refcount:${partnerCode}`]);
+    const cfg = parseJSON(await upstashFn(['GET', `partner:cfg:${partnerCode}`])) || {};
+    if (cfg.refBonus != null && isFinite(parseFloat(cfg.refBonus))) bonus = parseFloat(cfg.refBonus);
+  }
+
   // Credit the referrer and track the relationship.
   await upstashFn(['SADD', `ref:list:${referrer}`, userId]);
   await upstashFn(['INCR', `ref:count:${referrer}`]);
-  await upstashFn(['INCRBYFLOAT', `bal:${referrer}`, REFERRAL_BONUS]);
-  await upstashFn(['LPUSH', `ledger:${referrer}`, JSON.stringify({ usd: REFERRAL_BONUS, coin: 'REFERRAL', note: 'Referral bonus', at: Date.now() })]);
-  await upstashFn(['LTRIM', `ledger:${referrer}`, 0, 99]);
+  if (bonus > 0) {
+    await upstashFn(['INCRBYFLOAT', `bal:${referrer}`, bonus]);
+    await upstashFn(['LPUSH', `ledger:${referrer}`, JSON.stringify({ usd: bonus, coin: 'REFERRAL', note: 'Referral bonus', at: Date.now() })]);
+    await upstashFn(['LTRIM', `ledger:${referrer}`, 0, 99]);
+  }
 
   // Notify the referrer: in-bot push + in-app notification (delivered on next sync).
   const who = escHtml(newUserName || 'A new user');
-  const text = `🎉 <b>${who}</b> just joined KolonoEX using your invite link!\n\n💰 You earned <b>$${REFERRAL_BONUS}</b> referral bonus — it has been added to your balance.`;
+  const text = `🎉 <b>${who}</b> just joined KolonoEX using your invite link!\n\n💰 You earned <b>$${bonus}</b> referral bonus — it has been added to your balance.`;
   await tgSend(referrer.slice(3), text);
-  await upstashFn(['LPUSH', `cmd:${referrer}`, JSON.stringify({ type: 'message', kind: 'referral', title: 'New referral 🎉', text: `${newUserName || 'A friend'} joined with your link. You earned $${REFERRAL_BONUS} bonus!` })]);
+  await upstashFn(['LPUSH', `cmd:${referrer}`, JSON.stringify({ type: 'message', kind: 'referral', title: 'New referral 🎉', text: `${newUserName || 'A friend'} joined with your link. You earned $${bonus} bonus!` })]);
   await upstashFn(['LTRIM', `cmd:${referrer}`, 0, 99]);
 }
 
@@ -143,12 +178,26 @@ module.exports = async function handler(req, res) {
     const referralCount = parseInt(await upstash(['GET', `ref:count:${userId}`]), 10) || 0;
     const referral = { count: referralCount, earned: Math.round(referralCount * REFERRAL_BONUS * 100) / 100, bonus: REFERRAL_BONUS };
 
+    // Effective task list. If this user was referred by a partner, apply that
+    // partner's per-task reward overrides so the partner can offer richer bonuses.
+    let tasks = await loadTasks(upstash);
+    const myPartner = await upstash(['GET', `ref:partner:${userId}`]);
+    if (myPartner) {
+      const pcfg = parseJSON(await upstash(['GET', `partner:cfg:${myPartner}`])) || {};
+      const overrides = pcfg.taskRewards || {};
+      tasks = tasks.map((t) => (overrides[t.id] != null ? { ...t, reward: parseFloat(overrides[t.id]) || 0, partnerBoost: true } : t));
+    }
+
+    // This user's own partner status (if they applied / were approved).
+    const partnerRaw = await upstash(['GET', `partner:me:${userId}`]);
+    const partner = parseJSON(partnerRaw) || null;
+
     // Drain pending admin commands for this user (apply-once).
     const cmds = (await upstash(['LRANGE', `cmd:${userId}`, 0, -1])) || [];
     if (cmds.length) await upstash(['DEL', `cmd:${userId}`]);
     const commands = cmds.map(parseJSON).filter(Boolean);
 
-    return res.status(200).json({ banned: false, balance, commands, referral, depositTotal });
+    return res.status(200).json({ banned: false, balance, commands, referral, depositTotal, tasks, partner });
   } catch (err) {
     return res.status(500).json({ error: 'Server error: ' + ((err && err.message) || 'unknown') });
   }

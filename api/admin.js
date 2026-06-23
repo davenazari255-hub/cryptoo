@@ -162,6 +162,40 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true, banned: body.action === 'ban' });
     }
 
+    // ── Task management (config:tasks) ──
+    const DEFAULT_TASKS = [
+      { id: 'welcome', icon: 'ti-gift', title: 'Welcome Bonus', desc: 'Sign in to KolonoEX', reward: 10, metric: 'always', target: 0, go: 'home' },
+      { id: 'deposit', icon: 'ti-wallet', title: 'Net Deposit', desc: 'Deposit a total of 100 USDT', reward: 10, metric: 'deposit', target: 100, go: 'assets' },
+      { id: 'spot', icon: 'ti-arrows-exchange', title: 'First Spot Trade', desc: 'Trade 100 USDT volume in Spot', reward: 5, metric: 'spotVol', target: 100, go: 'trade' },
+      { id: 'futures', icon: 'ti-trending-up', title: 'First Futures Trade', desc: 'Trade 20,000 USDT volume in Futures', reward: 15, metric: 'futVol', target: 20000, go: 'futures' },
+    ];
+    if (body.action === 'getTasks') {
+      const raw = await upstash(['GET', 'config:tasks']);
+      const tasks = parseJSON(raw);
+      return res.status(200).json({ tasks: Array.isArray(tasks) && tasks.length ? tasks : DEFAULT_TASKS });
+    }
+    if (body.action === 'saveTasks') {
+      const tasks = Array.isArray(body.tasks) ? body.tasks : null;
+      if (!tasks) return res.status(400).json({ error: 'tasks array required' });
+      const ALLOWED_METRICS = ['always', 'deposit', 'spotVol', 'futVol', 'referral'];
+      const clean = tasks.slice(0, 12).map((t, i) => ({
+        id: String(t.id || ('task' + i)).slice(0, 24).replace(/[^a-zA-Z0-9_]/g, ''),
+        icon: String(t.icon || 'ti-gift').slice(0, 40),
+        title: String(t.title || 'Task').slice(0, 60),
+        desc: String(t.desc || '').slice(0, 120),
+        reward: Math.max(0, Math.round((parseFloat(t.reward) || 0) * 100) / 100),
+        metric: ALLOWED_METRICS.includes(t.metric) ? t.metric : 'always',
+        target: Math.max(0, parseFloat(t.target) || 0),
+        go: ['home', 'assets', 'trade', 'futures', 'invite'].includes(t.go) ? t.go : 'home',
+      })).filter((t) => t.id);
+      await upstash(['SET', 'config:tasks', JSON.stringify(clean)]);
+      return res.status(200).json({ ok: true, tasks: clean });
+    }
+    if (body.action === 'resetTasksConfig') {
+      await upstash(['DEL', 'config:tasks']);
+      return res.status(200).json({ ok: true, tasks: DEFAULT_TASKS });
+    }
+
     // Reset a user. mode 'tasks' clears only task/check-in progress (a client
     // command). mode 'full' wipes the server balance, deposit total and ledger
     // too, then tells the client to reset its local app to a fresh state.

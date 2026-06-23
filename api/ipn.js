@@ -50,7 +50,31 @@ async function creditDeposit(userId, paymentId, usd, meta) {
   await upstash(['LPUSH', `cmd:${userId}`, JSON.stringify({ type: 'message', kind: 'deposit', title: 'Deposit received 💰', text: 'Your deposit of $' + amount + ' (' + coin + ') has been credited to your balance.' })]);
   await upstash(['LTRIM', `cmd:${userId}`, 0, 99]);
   await tgSend(userId, `💰 <b>Deposit received</b>\n\nYour ${escHtml(coin)} deposit worth <b>$${amount}</b> has been credited to your KolonoEX balance.`);
+  // Partner commission: if this user came through a partner link, pay the partner
+  // a % of the deposit (config set by admin). Best-effort — never blocks the credit.
+  try { await payPartnerCommission(userId, amount); } catch (e) { /* ignore */ }
   return true;
+}
+
+// Credit a partner a percentage of a referred user's deposit.
+async function payPartnerCommission(userId, amount) {
+  const code = await upstash(['GET', `ref:partner:${userId}`]);
+  if (!code) return;
+  const owner = await upstash(['GET', `partner:owner:${code}`]);
+  if (!owner) return;
+  let pct = 0;
+  const cfgRaw = await upstash(['GET', `partner:cfg:${code}`]);
+  try { const c = JSON.parse(cfgRaw); if (c && isFinite(parseFloat(c.depositPct))) pct = parseFloat(c.depositPct); } catch {}
+  if (!(pct > 0)) return;
+  const commission = Math.round(amount * (pct / 100) * 100) / 100;
+  if (!(commission > 0)) return;
+  await upstash(['INCRBYFLOAT', `bal:${owner}`, commission]);
+  await upstash(['INCRBYFLOAT', `partner:earned:${code}`, commission]);
+  await upstash(['LPUSH', `ledger:${owner}`, JSON.stringify({ usd: commission, coin: 'PARTNER', note: `Partner commission (${pct}% of $${amount})`, at: Date.now() })]);
+  await upstash(['LTRIM', `ledger:${owner}`, 0, 99]);
+  await upstash(['LPUSH', `cmd:${owner}`, JSON.stringify({ type: 'message', kind: 'referral', title: 'Partner commission 🤝', text: `You earned $${commission} (${pct}%) from a referred deposit of $${amount}.` })]);
+  await upstash(['LTRIM', `cmd:${owner}`, 0, 99]);
+  await tgSend(owner, `🤝 <b>Partner commission</b>\n\nYou earned <b>$${commission}</b> (${pct}%) from a referred user's $${amount} deposit.`);
 }
 
 function readRawBody(req) {
