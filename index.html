@@ -951,9 +951,13 @@
     const pnl=liquidated?-pos.margin:unrealized(pos); const ret=Math.max(0,pos.margin+pnl); const fee=pos.notional*FEE;
     const net=Math.max(0,ret-(liquidated?0:fee));
     if(pos.src==='bonus'){ state.bonus=(state.bonus||0)+net;
-      // A loss that dips the pool below principal lowers the principal too, so the
-      // profit display never goes negative and the NEXT win becomes transferable.
-      if((state.bonusPrincipal||0)>state.bonus) state.bonusPrincipal=state.bonus;
+      // Floor the principal against REALISED bonus capital = free pool + margin
+      // still locked in OTHER open bonus positions. A realised loss lowers the
+      // principal (so the next win is transferable) while locked margin of
+      // concurrent positions is NOT mistaken for profit when they later close.
+      let locked=0; state.positions.forEach(q=>{ if(q.src==='bonus'&&q.id!==pos.id) locked+=q.margin; });
+      const realCap=state.bonus+locked;
+      if((state.bonusPrincipal||0)>realCap) state.bonusPrincipal=realCap;
     } else state.futUSDT+=net;
     state.positions=state.positions.filter(p=>p.id!==id);
     pos.pnl=pnl; pos.closedTime=tstamp(now()); pos.liquidated=!!liquidated; pos.reason=reason||''; state.closed.unshift(pos); if(state.closed.length>40) state.closed.pop();
