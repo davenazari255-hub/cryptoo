@@ -127,6 +127,20 @@ module.exports = async function handler(req, res) {
       app.cfg = cfg; await upstash(['SET', `partner:me:${userId}`, JSON.stringify(app)]);
       return res.status(200).json({ ok: true, cfg });
     }
+    if (action === 'delete') { // remove a partner entirely (revokes their link & terms)
+      if (!isAdmin) return res.status(401).json({ error: 'Unauthorized' });
+      const userId = String(body.userId || ''); if (!userId) return res.status(400).json({ error: 'userId required' });
+      const app = parseJSON(await upstash(['GET', `partner:me:${userId}`]));
+      if (app && app.code) {
+        await upstash(['DEL', `partner:cfg:${app.code}`, `partner:owner:${app.code}`, `partner:refcount:${app.code}`, `partner:earned:${app.code}`]);
+      }
+      await upstash(['DEL', `partner:me:${userId}`]);
+      await upstash(['LREM', 'partner:apps', 0, userId]);
+      await upstash(['LPUSH', `cmd:${userId}`, JSON.stringify({ type: 'message', kind: 'message', title: 'Partner status removed', text: 'Your partner status has been removed. Your partner link is no longer active.' })]);
+      await upstash(['LTRIM', `cmd:${userId}`, 0, 99]);
+      await tgSend(userId, '🤝 <b>Partner status removed</b>\n\nYour partner status and link have been deactivated by an admin.');
+      return res.status(200).json({ ok: true });
+    }
 
     // ───────────── USER (TG-authed) ─────────────
     if (!tgUser) return res.status(401).json({ error: 'Telegram authentication failed' });
