@@ -58,6 +58,16 @@
     .adj { display: flex; gap: 8px; margin-top: 8px; }
     .adj input { flex: 1; background: #0f1117; border: 0.5px solid #2e3347; color: #e8edf7; border-radius: 9px; padding: 9px 11px; font-size: 13px; outline: none; min-width: 0; }
     .long { color: #4eeaa0; } .short { color: #ff5a5a; }
+    /* labeled partner fields */
+    .pfield { margin-top: 10px; }
+    .pfield > label { display: block; font-size: 11.5px; color: #cfd6e6; font-weight: 600; margin-bottom: 3px; }
+    .pfield > .hint { font-size: 10.5px; color: #7a8299; margin-bottom: 6px; line-height: 1.4; }
+    .pfield input { width: 100%; background: #0f1117; border: 0.5px solid #2e3347; color: #e8edf7; border-radius: 9px; padding: 10px 12px; font-size: 14px; outline: none; }
+    .pfield input:focus { border-color: #b07bff; }
+    .pf-grid { display: flex; gap: 8px; }
+    .pf-grid .pfield { flex: 1; }
+    .psec { border-top: 0.5px solid #232838; margin-top: 14px; padding-top: 12px; }
+    .psec-t { font-size: 11px; color: #b07bff; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; margin-bottom: 2px; }
     .back { display: inline-flex; align-items: center; gap: 6px; color: #9aa3b8; font-size: 14px; cursor: pointer; margin-bottom: 12px; }
   </style>
 </head>
@@ -359,7 +369,10 @@
     let PARTNERS = [];
     async function loadPartners() {
       $('view').innerHTML = '<div class="empty">Loading…</div>';
-      try { const d = await papi({ action: 'list' }); PARTNERS = d.partners || []; $('count').textContent = PARTNERS.length + ' partners';
+      try {
+        // Ensure we know the current task ids so the per-partner bonus hint is accurate.
+        if (!TASKS_CACHE.length) { try { const td = await api({ action: 'getTasks' }); TASKS_CACHE = td.tasks || []; } catch {} }
+        const d = await papi({ action: 'list' }); PARTNERS = d.partners || []; $('count').textContent = PARTNERS.length + ' partners';
         if (!PARTNERS.length) { $('view').innerHTML = '<div class="empty">No partner applications yet</div>'; return; }
         // pending first, then approved, then rejected
         const order = { pending: 0, approved: 1, rejected: 2 };
@@ -373,24 +386,36 @@
     }
     function partnerCard(p) {
       const cfg = p.cfg || {};
+      const uid = esc(p.userId);
+      const approved = p.status === 'approved';
       const head = '<div class="row" style="align-items:center;"><span style="font-weight:700;">' + esc(p.name || p.userId) + (p.username ? ' <span style="color:#7a8299;">@' + esc(p.username) + '</span>' : '') + '</span>'
-        + '<span class="st ' + (p.status === 'approved' ? 'paid' : p.status === 'pending' ? 'pending' : 'rejected') + '">' + esc(p.status) + '</span></div>';
+        + '<span class="st ' + (approved ? 'paid' : p.status === 'pending' ? 'pending' : 'rejected') + '">' + esc(p.status) + '</span></div>';
       const info = '<div class="mini" style="margin-top:5px;"><i class="ti ti-brand-telegram" style="font-size:12px;"></i> ' + esc(p.channel || '—') + (p.audience ? ' · ' + esc(p.audience) : '') + '</div>'
         + (p.note ? '<div class="mini">' + esc(p.note) + '</div>' : '')
-        + '<div class="mini">ID: <code>' + esc(String(p.userId).replace('tg_', '')) + '</code>' + (p.code ? ' · code: <code>' + esc(p.code) + '</code>' : '') + '</div>'
-        + (p.status === 'approved' ? '<div class="row" style="margin-top:6px;"><span class="k">Referrals: ' + (p.refCount || 0) + '</span><span class="k">Earned: $' + fmt(p.earned || 0) + '</span></div>' : '');
-      // editable terms
+        + '<div class="mini">ID: <code>' + esc(String(p.userId).replace('tg_', '')) + '</code>' + (p.code ? ' · link code: <code>' + esc(p.code) + '</code>' : '') + '</div>'
+        + (approved ? '<div class="row" style="margin-top:6px;"><span class="k">Referrals: <b style="color:#c9a6ff;">' + (p.refCount || 0) + '</b></span><span class="k">Earned: <b style="color:#4eeaa0;">$' + fmt(p.earned || 0) + '</b></span></div>' : '');
+
       const tr = cfg.taskRewards || {};
       const trStr = Object.keys(tr).map(k => k + ':' + tr[k]).join(', ');
-      const form = '<div class="adj" style="margin-top:10px;"><input id="pp-dep-' + esc(p.userId) + '" inputmode="decimal" placeholder="Deposit %" value="' + esc(cfg.depositPct != null ? cfg.depositPct : 10) + '">'
-        + '<input id="pp-ref-' + esc(p.userId) + '" inputmode="decimal" placeholder="Ref bonus $" value="' + esc(cfg.refBonus != null ? cfg.refBonus : 0.5) + '"></div>'
-        + '<div class="adj"><input id="pp-tasks-' + esc(p.userId) + '" placeholder="Task bonuses e.g. deposit:20, spot:10" value="' + esc(trStr) + '" style="flex:2;"></div>'
-        + '<div class="acts" style="margin-top:8px;">'
-        + (p.status === 'approved'
-          ? '<button class="btn" onclick="partnerSave(\'' + esc(p.userId) + '\',\'update\')">Update terms</button>'
-          : '<button class="btn" onclick="partnerSave(\'' + esc(p.userId) + '\',\'approve\')">Approve</button><button class="btn red" onclick="partnerReject(\'' + esc(p.userId) + '\')">Reject</button>')
+      // Build a hint listing the current task ids so admin knows what to type.
+      const taskIds = (TASKS_CACHE.length ? TASKS_CACHE : []).map(t => t.id).join(', ') || 'deposit, spot, futures…';
+
+      const terms = '<div class="psec"><div class="psec-t">' + (approved ? 'Partner terms' : 'Set terms, then approve') + '</div>'
+        + '<div class="pf-grid">'
+        + '<div class="pfield"><label>Deposit commission (%)</label><div class="hint">% of each referral\'s deposit paid to the partner</div>'
+        + '<input id="pp-dep-' + uid + '" inputmode="decimal" placeholder="e.g. 10" value="' + esc(cfg.depositPct != null ? cfg.depositPct : 10) + '"></div>'
+        + '<div class="pfield"><label>Referral bonus ($)</label><div class="hint">paid to the partner per new referral</div>'
+        + '<input id="pp-ref-' + uid + '" inputmode="decimal" placeholder="e.g. 0.5" value="' + esc(cfg.refBonus != null ? cfg.refBonus : 0.5) + '"></div></div>'
+        + '<div class="pfield"><label>Task bonuses for this partner\'s referrals (optional)</label>'
+        + '<div class="hint">Override the bonus each task gives to THIS partner\'s referrals. Format: <code>taskId:amount</code>, comma-separated. Available task ids: ' + esc(taskIds) + '<br>Example: <code>deposit:20, spot:10</code></div>'
+        + '<input id="pp-tasks-' + uid + '" placeholder="leave empty for default bonuses" value="' + esc(trStr) + '"></div></div>';
+
+      const acts = '<div class="acts" style="margin-top:12px;">'
+        + (approved
+          ? '<button class="btn" onclick="partnerSave(\'' + uid + '\',\'update\')"><i class="ti ti-device-floppy"></i> Save changes</button><button class="btn red" onclick="partnerDelete(\'' + uid + '\')"><i class="ti ti-trash"></i> Remove partner</button>'
+          : '<button class="btn" onclick="partnerSave(\'' + uid + '\',\'approve\')"><i class="ti ti-check"></i> Approve</button><button class="btn red" onclick="partnerReject(\'' + uid + '\')">Reject</button>')
         + '</div>';
-      return '<div class="card">' + head + info + form + '</div>';
+      return '<div class="card">' + head + info + terms + acts + '</div>';
     }
     function parseTaskRewards(str) {
       const out = {}; (str || '').split(',').forEach(part => { const m = part.split(':'); if (m.length === 2) { const k = m[0].trim(); const val = parseFloat(m[1]); if (k && isFinite(val)) out[k] = val; } }); return out;
@@ -399,13 +424,17 @@
       const depositPct = parseFloat($('pp-dep-' + userId).value) || 0;
       const refBonus = parseFloat($('pp-ref-' + userId).value) || 0;
       const taskRewards = parseTaskRewards($('pp-tasks-' + userId).value);
-      if (action === 'approve' && !confirm('Approve this partner with ' + depositPct + '% deposit commission?')) return;
-      try { await papi({ action, userId, depositPct, refBonus, taskRewards }); alert(action === 'approve' ? 'Partner approved!' : 'Terms updated.'); loadPartners(); }
+      if (action === 'approve' && !confirm('Approve this partner?\n\n• Deposit commission: ' + depositPct + '%\n• Referral bonus: $' + refBonus)) return;
+      try { await papi({ action, userId, depositPct, refBonus, taskRewards }); alert(action === 'approve' ? 'Partner approved! Their link is now active.' : 'Changes saved.'); loadPartners(); }
       catch (e) { alert(e.message); }
     }
     async function partnerReject(userId) {
       if (!confirm('Reject this partner application?')) return;
       try { await papi({ action: 'reject', userId }); loadPartners(); } catch (e) { alert(e.message); }
+    }
+    async function partnerDelete(userId) {
+      if (!confirm('Remove this partner?\n\nTheir partner link will stop working and their terms are deleted. Referrals already credited stay. This cannot be undone.')) return;
+      try { await papi({ action: 'delete', userId }); alert('Partner removed.'); loadPartners(); } catch (e) { alert(e.message); }
     }
 
     /* ── Support chat (admin side) ── */
