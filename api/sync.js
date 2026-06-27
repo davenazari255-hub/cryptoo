@@ -149,6 +149,25 @@ module.exports = async function handler(req, res) {
   const userId = `tg_${user.id}`;
 
   try {
+    // Lightweight action: verify Telegram channel membership for the social task
+    // (folded into sync to stay within the Hobby-plan 12-function limit). The bot
+    // must be an admin of the channel for getChatMember to work.
+    if (body.action === 'verifyChannel') {
+      const token = process.env.TELEGRAM_BOT_TOKEN;
+      const channel = process.env.TG_CHANNEL || '@KolonoEX';
+      if (!token) return res.status(200).json({ ok: true, joined: false, error: 'bot not configured' });
+      const url = `https://api.telegram.org/bot${token}/getChatMember`
+        + `?chat_id=${encodeURIComponent(channel)}&user_id=${encodeURIComponent(user.id)}`;
+      const r = await fetch(url);
+      const d = await r.json().catch(() => null);
+      if (!d || !d.ok || !d.result) return res.status(200).json({ ok: true, joined: false, error: (d && d.description) || 'cannot verify' });
+      const st = d.result.status;
+      const joined = st === 'creator' || st === 'administrator' || st === 'member'
+        || (st === 'restricted' && d.result.is_member === true);
+      if (joined) { try { await upstash(['SET', `task:tgchannel:${userId}`, '1']); } catch {} }
+      return res.status(200).json({ ok: true, joined });
+    }
+
     const banned = await upstash(['GET', `banned:${userId}`]);
     if (banned) return res.status(200).json({ banned: true });
 
