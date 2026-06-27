@@ -1311,7 +1311,7 @@
   async function verifySocialTask(id){ const t=TASKS.find(x=>x.id===id); if(!t||t.metric!=='tgChannel') return;
     if(!hasTgAuth()){ toast('Open from Telegram to verify','err'); return; }
     toast('Checking membership…','info');
-    try{ const r=await fetch('/api/task-verify',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), action:'channel' }) });
+    try{ const r=await fetch('/api/sync',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), action:'verifyChannel' }) });
       let d=null; try{ d=await r.json(); }catch(e){}
       if(r.ok && d && d.joined){ state.social=state.social||{}; state.social.tgChannel=true; save(); renderTasks(); toast('Joined ✓ — tap Claim','ok'); }
       else { toast('You haven\'t joined the channel yet','err'); }
