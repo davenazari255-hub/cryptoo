@@ -820,7 +820,7 @@
   const prices = {}; const prevPx = {};
 
   function defaultState(){ const balances={USDT:0}, cost={}; COIN_KEYS.forEach(k=>{balances[k]=0;cost[k]=0;});
-    return { balances, cost, futUSDT:0, openOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:0, bonusPrincipal:0, bonusProfit:0, flags:{deposited:false,traded:false,futured:false}, spotVol:0, futVol:0, taskClaimed:{}, checkin:{last:'',streak:0}, snap:{day:'',equity:0}, nextId:1, creditedDeposits:0, depositTotal:0, referralCount:0, referralEarned:0, notifications:[] }; }
+    return { balances, cost, futUSDT:0, openOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:0, bonusPrincipal:0, bonusProfit:0, flags:{deposited:false,traded:false,futured:false}, spotVol:0, futVol:0, taskClaimed:{}, social:{}, checkin:{last:'',streak:0}, snap:{day:'',equity:0}, nextId:1, creditedDeposits:0, depositTotal:0, referralCount:0, referralEarned:0, notifications:[] }; }
   function loadState(){ try{ const raw=localStorage.getItem(LS_KEY); if(!raw) return defaultState();
       const s=JSON.parse(raw); const d=defaultState();
       return Object.assign(d,s,{ balances:Object.assign(d.balances,s.balances||{}), cost:Object.assign(d.cost,s.cost||{}), snap:Object.assign(d.snap,s.snap||{}), flags:Object.assign(d.flags,s.flags||{}), taskClaimed:Object.assign(d.taskClaimed,s.taskClaimed||{}) });
@@ -843,6 +843,8 @@
     {id:'deposit',  icon:'ti-wallet',           title:'Net Deposit',       desc:'Deposit a total of 100 USDT',         reward:10, metric:'deposit', target:100,    go:'assets'},
     {id:'spot',     icon:'ti-arrows-exchange',  title:'First Spot Trade',  desc:'Trade 100 USDT volume in Spot',       reward:5,  metric:'spotVol', target:100,    go:'trade'},
     {id:'futures',  icon:'ti-trending-up',      title:'First Futures Trade',desc:'Trade 20,000 USDT volume in Futures',reward:15, metric:'futVol',  target:20000,  go:'futures'},
+    {id:'tgchannel',icon:'ti-brand-telegram',   title:'Join our Telegram', desc:'Join the @KolonoEX channel',          reward:0.5,metric:'tgChannel',target:0,      go:'social', link:'https://t.me/KolonoEX'},
+    {id:'xfollow',  icon:'ti-brand-x',          title:'Follow us on X',    desc:'Follow @KolonoEX on X',               reward:0.5,metric:'xFollow',  target:0,      go:'social', link:'https://x.com/KolonoEX'},
   ];
   let TASKS=DEFAULT_TASKS.slice();
   let tasksSig='', partnerSig='', myPartner=null;
@@ -850,7 +852,7 @@
   function mergeTasks(srv){ return srv.map(t=>({
     id:t.id, icon:t.icon||'ti-gift', title:t.title||'Task', desc:t.desc||'',
     reward:parseFloat(t.reward)||0, metric:t.metric||'always', target:parseFloat(t.target)||0,
-    go:t.go||'home', partnerBoost:!!t.partnerBoost })); }
+    go:t.go||'home', link:t.link||'', partnerBoost:!!t.partnerBoost })); }
   // Map a task's metric to its current numeric progress value.
   function taskMetricValue(metric){
     switch(metric){
@@ -861,7 +863,10 @@
       default:        return 1; // 'always' → instantly complete
     }
   }
-  function taskCond(t){ if(!t.target||t.metric==='always') return true; return taskMetricValue(t.metric)>=t.target; }
+  function taskCond(t){
+    if(t.metric==='tgChannel') return !!(state.social&&state.social.tgChannel);   // verified by server
+    if(t.metric==='xFollow')   return !!(state.social&&state.social.xFollow);      // honor: visited the X follow page
+    if(!t.target||t.metric==='always') return true; return taskMetricValue(t.metric)>=t.target; }
   function taskUnit(t){ return t.metric==='referral'?'friends':'USDT'; }
 
   // helpers
@@ -1258,10 +1263,13 @@
     const done=TASKS.filter(t=>state.taskClaimed[t.id]).length;
     let h='<div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 10px;"><div class="section-title" style="margin:0;">Tasks · Earn Bonus</div><span style="font-size:11px;color:#7a8299;">'+done+'/'+TASKS.length+' done</span></div>';
     h+=TASKS.map(t=>{ const st=taskStatus(t);
-      const goAction = t.go==='invite' ? 'openInvite()' : 'goPage(\''+t.go+'\')';
-      const btn = st==='done' ? '<button class="task-btn done">Claimed ✓</button>'
-        : st==='ready' ? '<button class="task-btn claim" onclick="claimTask(\''+t.id+'\')">Claim</button>'
-        : '<button class="task-btn go" onclick="'+goAction+'">Go</button>';
+      const social = (t.metric==='tgChannel'||t.metric==='xFollow'||t.go==='social');
+      const goAction = t.go==='invite' ? 'openInvite()' : social ? 'doSocialTask(\''+t.id+'\')' : 'goPage(\''+t.go+'\')';
+      let btn;
+      if(st==='done'){ btn='<button class="task-btn done">Claimed ✓</button>'; }
+      else if(st==='ready'){ btn='<button class="task-btn claim" onclick="claimTask(\''+t.id+'\')">Claim</button>'; }
+      else if(t.metric==='tgChannel' && state.social && state.social.tgChannelVisited){ btn='<button class="task-btn go" onclick="verifySocialTask(\''+t.id+'\')">Verify</button>'; }
+      else { btn='<button class="task-btn go" onclick="'+goAction+'">Go</button>'; }
       // Progress bar toward a numeric target (stays at 100% after claim).
       let prog='';
       if(t.target){ const raw=taskMetricValue(t.metric); const cur=Math.min(raw,t.target); const pct=Math.max(0,Math.min(100,(raw/t.target)*100)); const unit=taskUnit(t);
@@ -1279,6 +1287,35 @@
     pushNotification({title:'Bonus earned 🎁',text:t.title+' · +'+fmtNum(t.reward,2)+' USDT bonus',kind:'bonus'});
     botNotify('🎁 Bonus earned: +'+fmtNum(t.reward,2)+' USDT for completing "'+t.title+'".');
     toast('+'+fmtNum(t.reward,2)+' USDT bonus claimed!','ok'); renderTasks(); setBonusBtn(); renderAssets(); }
+
+  // Open an external link the Telegram-native way when available (so it leaves
+  // the mini app cleanly), otherwise fall back to a normal new tab.
+  function openLinkSmart(url){ if(!url) return;
+    try{ if(window.Telegram && Telegram.WebApp){
+      if(/^(https?:\/\/t\.me\/|tg:\/\/)/i.test(url)) Telegram.WebApp.openTelegramLink(url);
+      else Telegram.WebApp.openLink(url);
+      return; } }catch(e){}
+    try{ window.open(url,'_blank'); }catch(e){} }
+
+  // "Go" handler for social tasks (Telegram channel join / X follow).
+  function doSocialTask(id){ const t=TASKS.find(x=>x.id===id); if(!t) return;
+    state.social=state.social||{};
+    if(t.link) openLinkSmart(t.link);
+    if(t.metric==='xFollow'){ state.social.xFollow=true; save(); renderTasks();
+      toast('Followed @KolonoEX? Tap Claim to get your reward','info'); return; }
+    if(t.metric==='tgChannel'){ state.social.tgChannelVisited=true; save(); renderTasks();
+      toast('After joining, tap Verify','info'); return; }
+    renderTasks(); }
+
+  // Server-verify a social task (currently: Telegram channel membership).
+  async function verifySocialTask(id){ const t=TASKS.find(x=>x.id===id); if(!t||t.metric!=='tgChannel') return;
+    if(!hasTgAuth()){ toast('Open from Telegram to verify','err'); return; }
+    toast('Checking membership…','info');
+    try{ const r=await fetch('/api/task-verify',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), action:'channel' }) });
+      let d=null; try{ d=await r.json(); }catch(e){}
+      if(r.ok && d && d.joined){ state.social=state.social||{}; state.social.tgChannel=true; save(); renderTasks(); toast('Joined ✓ — tap Claim','ok'); }
+      else { toast('You haven\'t joined the channel yet','err'); }
+    }catch(e){ toast('Network error, try again','err'); } }
   function useBonusInFutures(){ if((state.bonus||0)<=0){ toast('Claim a bonus first','info'); return; } ui.useBonus=true; switchPage('futures',null); setBonusBtn(); toast('Bonus margin enabled in Futures','ok'); }
   function tfBal(acc){ return acc==='spot'?(state.balances.USDT||0):(state.futUSDT||0); }
   function accName(acc){ return acc==='spot'?'Spot Account':'Futures Account'; }
@@ -1807,7 +1844,7 @@
       else if(c.type==='supportReply'){ pushNotification({title:'Support replied 💬',text:c.text||'',kind:'message'});
         if(supOpen){ pollSupportThread(); } else { supBadge((parseInt((document.getElementById('supportBadge')||{}).textContent,10)||0)+1); toast('💬 Support replied','info'); } }
       // Admin: reset only the task/check-in progress (keeps balances & positions).
-      else if(c.type==='resetTasks'){ state.taskClaimed={}; state.checkin={last:'',streak:0}; state.spotVol=0; state.futVol=0; state.flags={deposited:!!state.flags.deposited,traded:false,futured:false};
+      else if(c.type==='resetTasks'){ state.taskClaimed={}; state.social={}; state.checkin={last:'',streak:0}; state.spotVol=0; state.futVol=0; state.flags={deposited:!!state.flags.deposited,traded:false,futured:false};
         pushNotification({title:'Tasks reset',text:'Your tasks and daily check-in were reset by an admin.',kind:'message'}); toast('Your tasks were reset','info'); changed=true; }
       // Admin: full account reset — wipe the local app to a brand-new state. The
       // server balance is reset separately, so creditedDeposits starts from 0 too.

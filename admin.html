@@ -320,15 +320,15 @@
 
     /* ── Task management ── */
     let TASKS_CACHE = [];
-    const METRICS = ['always', 'deposit', 'spotVol', 'futVol', 'referral'];
-    const GOES = ['home', 'assets', 'trade', 'futures', 'invite'];
+    const METRICS = ['always', 'deposit', 'spotVol', 'futVol', 'referral', 'tgChannel', 'xFollow'];
+    const GOES = ['home', 'assets', 'trade', 'futures', 'invite', 'social'];
     async function loadTasks() {
       $('view').innerHTML = '<div class="empty">Loading…</div>';
       try { const d = await api({ action: 'getTasks' }); TASKS_CACHE = d.tasks || []; $('count').textContent = TASKS_CACHE.length + ' tasks'; renderTasksEditor(); }
       catch (e) { $('view').innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
     }
     function renderTasksEditor() {
-      let h = '<div class="mini" style="margin-bottom:10px;">Edit the home-screen tasks. <b>metric</b> drives progress: always (instant), deposit, spotVol, futVol, referral. <b>target</b> is the goal (0 = instant). <b>reward</b> is the bonus in USDT.</div>';
+      let h = '<div class="mini" style="margin-bottom:10px;">Edit the home-screen tasks. <b>metric</b> drives progress: always (instant), deposit, spotVol, futVol, referral, tgChannel (verifies channel join — bot must be channel admin), xFollow (open X & follow). <b>target</b> is the goal (0 = instant). <b>reward</b> is the bonus in USDT. <b>link</b> + go=<code>social</code> is the URL the Go button opens (Telegram/X).</div>';
       h += TASKS_CACHE.map((t, i) => taskEditCard(t, i)).join('');
       h += '<div class="acts" style="margin-top:8px;"><button class="btn sec" onclick="addTaskRow()"><i class="ti ti-plus"></i> Add task</button>'
         + '<button class="btn" onclick="saveTasks()"><i class="ti ti-device-floppy"></i> Save all</button>'
@@ -342,6 +342,7 @@
         + '<div class="adj"><input data-f="title" placeholder="Title" value="' + esc(t.title || '') + '" style="flex:1.3;"><input data-f="reward" inputmode="decimal" placeholder="Reward" value="' + esc(t.reward) + '"></div>'
         + '<div class="adj"><input data-f="desc" placeholder="Description" value="' + esc(t.desc || '') + '" style="flex:2;"></div>'
         + '<div class="adj"><input data-f="id" placeholder="id" value="' + esc(t.id || '') + '"><input data-f="icon" placeholder="ti-icon" value="' + esc(t.icon || 'ti-gift') + '"></div>'
+        + '<div class="adj"><input data-f="link" placeholder="link (for go=social, e.g. https://t.me/KolonoEX)" value="' + esc(t.link || '') + '" style="flex:2;"></div>'
         + '<div class="adj"><select data-f="metric" style="flex:1;background:#0f1117;border:0.5px solid #2e3347;color:#e8edf7;border-radius:9px;padding:9px;">' + opt(METRICS, t.metric || 'always') + '</select>'
         + '<input data-f="target" inputmode="decimal" placeholder="target" value="' + esc(t.target || 0) + '">'
         + '<select data-f="go" style="flex:1;background:#0f1117;border:0.5px solid #2e3347;color:#e8edf7;border-radius:9px;padding:9px;">' + opt(GOES, t.go || 'home') + '</select></div></div>';
@@ -349,10 +350,10 @@
     function collectTasks() {
       return [...document.querySelectorAll('#view .card[data-ti]')].map(card => {
         const g = f => { const el = card.querySelector('[data-f="' + f + '"]'); return el ? el.value : ''; };
-        return { id: g('id'), icon: g('icon'), title: g('title'), desc: g('desc'), reward: parseFloat(g('reward')) || 0, metric: g('metric'), target: parseFloat(g('target')) || 0, go: g('go') };
+        return { id: g('id'), icon: g('icon'), title: g('title'), desc: g('desc'), reward: parseFloat(g('reward')) || 0, metric: g('metric'), target: parseFloat(g('target')) || 0, go: g('go'), link: g('link') };
       });
     }
-    function addTaskRow() { TASKS_CACHE = collectTasks(); TASKS_CACHE.push({ id: 'task' + (TASKS_CACHE.length + 1), icon: 'ti-gift', title: 'New task', desc: '', reward: 1, metric: 'always', target: 0, go: 'home' }); renderTasksEditor(); }
+    function addTaskRow() { TASKS_CACHE = collectTasks(); TASKS_CACHE.push({ id: 'task' + (TASKS_CACHE.length + 1), icon: 'ti-gift', title: 'New task', desc: '', reward: 1, metric: 'always', target: 0, go: 'home', link: '' }); renderTasksEditor(); }
     function delTaskRow(i) { TASKS_CACHE = collectTasks(); TASKS_CACHE.splice(i, 1); renderTasksEditor(); }
     async function saveTasks() {
       const tasks = collectTasks();
