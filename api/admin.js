@@ -168,6 +168,8 @@ module.exports = async function handler(req, res) {
       { id: 'deposit', icon: 'ti-wallet', title: 'Net Deposit', desc: 'Deposit a total of 100 USDT', reward: 10, metric: 'deposit', target: 100, go: 'assets' },
       { id: 'spot', icon: 'ti-arrows-exchange', title: 'First Spot Trade', desc: 'Trade 100 USDT volume in Spot', reward: 5, metric: 'spotVol', target: 100, go: 'trade' },
       { id: 'futures', icon: 'ti-trending-up', title: 'First Futures Trade', desc: 'Trade 20,000 USDT volume in Futures', reward: 15, metric: 'futVol', target: 20000, go: 'futures' },
+      { id: 'tgchannel', icon: 'ti-brand-telegram', title: 'Join our Telegram', desc: 'Join the @KolonoEX channel', reward: 0.5, metric: 'tgChannel', target: 0, go: 'social', link: 'https://t.me/KolonoEX' },
+      { id: 'xfollow', icon: 'ti-brand-x', title: 'Follow us on X', desc: 'Follow @KolonoEX on X', reward: 0.5, metric: 'xFollow', target: 0, go: 'social', link: 'https://x.com/KolonoEX' },
     ];
     if (body.action === 'getTasks') {
       const raw = await upstash(['GET', 'config:tasks']);
@@ -177,7 +179,9 @@ module.exports = async function handler(req, res) {
     if (body.action === 'saveTasks') {
       const tasks = Array.isArray(body.tasks) ? body.tasks : null;
       if (!tasks) return res.status(400).json({ error: 'tasks array required' });
-      const ALLOWED_METRICS = ['always', 'deposit', 'spotVol', 'futVol', 'referral'];
+      const ALLOWED_METRICS = ['always', 'deposit', 'spotVol', 'futVol', 'referral', 'tgChannel', 'xFollow'];
+      // Only allow safe http(s)/tg links for the social "Go" button.
+      const cleanLink = (s) => { const v = String(s || '').trim().slice(0, 200); return /^(https?:\/\/|tg:\/\/)/i.test(v) ? v : ''; };
       const clean = tasks.slice(0, 12).map((t, i) => ({
         id: String(t.id || ('task' + i)).slice(0, 24).replace(/[^a-zA-Z0-9_]/g, ''),
         icon: String(t.icon || 'ti-gift').slice(0, 40),
@@ -186,7 +190,8 @@ module.exports = async function handler(req, res) {
         reward: Math.max(0, Math.round((parseFloat(t.reward) || 0) * 100) / 100),
         metric: ALLOWED_METRICS.includes(t.metric) ? t.metric : 'always',
         target: Math.max(0, parseFloat(t.target) || 0),
-        go: ['home', 'assets', 'trade', 'futures', 'invite'].includes(t.go) ? t.go : 'home',
+        go: ['home', 'assets', 'trade', 'futures', 'invite', 'social'].includes(t.go) ? t.go : 'home',
+        link: cleanLink(t.link),
       })).filter((t) => t.id);
       await upstash(['SET', 'config:tasks', JSON.stringify(clean)]);
       return res.status(200).json({ ok: true, tasks: clean });
