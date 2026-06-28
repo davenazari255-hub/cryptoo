@@ -1344,8 +1344,11 @@
       +'<button class="buy-btn" onclick="doBonusTransfer()">Confirm</button>'); }
   function setBonusDest(d){ ui.bonusDest=d; const seg=document.getElementById('bdest-seg'); if(seg){ seg.children[0].classList.toggle('active',d==='spot'); seg.children[1].classList.toggle('active',d==='futures'); } }
   function doBonusTransfer(){ const avail=bonusTransferable(); const a=parseFloat(v('bt-amt'))||0; if(a<=0){ toast('Enter amount','err'); return; } if(a>avail+1e-9){ toast('Exceeds transferable profit','err'); return; }
-    state.bonusProfit=Math.round(((state.bonusProfit||0)-a)*1e8)/1e8; if(ui.bonusDest==='spot') state.balances.USDT+=a; else state.futUSDT+=a;
-    addTx({type:'Bonus → '+(ui.bonusDest==='spot'?'Spot':'Futures'),sub:'Profit transfer',value:a,sign:'+',coin:'USDT',isUSDT:true}); save(); closeSheet(); toast('Transferred '+fmtNum(a,2)+' USDT to '+(ui.bonusDest==='spot'?'Spot':'Futures'),'ok'); renderAssets(); setBonusBtn(); updateFutInfo(); }
+    const totalBonus=(state.bonus||0)+(state.bonusProfit||0);
+    if(!confirm('⚠️ Warning\n\nTransferring bonus profit will REMOVE ALL your bonus balance (principal + profit = '+fmtNum(totalBonus,2)+' USDT).\n\nOnly the profit amount you entered ('+fmtNum(a,2)+' USDT) will be transferred to '+(ui.bonusDest==='spot'?'Spot':'Futures')+'.\n\nAre you sure?')) return;
+    state.bonus=0; state.bonusPrincipal=0; state.bonusProfit=0;
+    if(ui.bonusDest==='spot') state.balances.USDT+=a; else state.futUSDT+=a;
+    addTx({type:'Bonus → '+(ui.bonusDest==='spot'?'Spot':'Futures'),sub:'Profit transfer (all bonus cleared)',value:a,sign:'+',coin:'USDT',isUSDT:true}); save(); closeSheet(); toast('Transferred '+fmtNum(a,2)+' USDT; all bonus cleared','ok'); renderAssets(); setBonusBtn(); updateFutInfo(); }
   // ── Transaction / deposit / withdrawal records ──
   let recTab='all', recPoll=null, recData={deposits:[],withdrawals:[]};
   const WD_STATUS={pending:{t:'Pending review',c:'#ffae4e',i:'ti-clock-hour-4'},approved:{t:'Approved · sending',c:'#5d9bf5',i:'ti-loader'},paid:{t:'Completed',c:'#4eeaa0',i:'ti-circle-check'},rejected:{t:'Rejected · refunded',c:'#ff5a5a',i:'ti-circle-x'}};
