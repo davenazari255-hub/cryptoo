@@ -1269,9 +1269,12 @@
   function renderFutAssets(){ const fe=futEquity();
     let h=avHead('Asset valuation (BTC)',btcOf(fe),fmtUSD(fe))+profHTML();
     h+=actIcons([{icon:'ti-chart-candle',label:'Trade',fn:'goPage(\'futures\')'},{icon:'ti-arrows-exchange',label:'Transfer',fn:'openTransfer()'},{icon:'ti-history',label:'Record',fn:'openRecord()'}]);
+    // Futures wallet holds only USDT (the sole asset transferable to the Futures account).
+    const usdt=state.futUSDT||0;
+    h+='<div class="section-title" style="margin-top:6px;">Assets</div>';
+    h+=spAssetRow('USDT','Tether','#26a17b',usdt,usdt);
     const wpos=state.positions.filter(p=>p.src!=='bonus');
-    if(!wpos.length){ h+='<div class="nodata"><i class="ti ti-file-search"></i><div>No data</div></div>'; }
-    else { h+='<div class="section-title" style="margin-top:6px;">Open Positions</div>'; h+=wpos.map(p=>{ const u=unrealized(p); const cls=u>=0?'pnl-pos':'pnl-neg';
+    if(wpos.length){ h+='<div class="section-title" style="margin-top:14px;">Open Positions</div>'; h+=wpos.map(p=>{ const u=unrealized(p); const cls=u>=0?'pnl-pos':'pnl-neg';
       return '<div class="dist-row"><div style="display:flex;align-items:center;gap:10px;">'+coinLogo(p.pair,30)+'<div><div class="nm">'+tkr(p.pair)+'USDT</div><div class="sub2" style="text-align:left;color:'+(p.side==='long'?'#4eeaa0':'#ff5a5a')+'">'+p.side.toUpperCase()+' '+p.lev+'x</div></div></div><div><div class="amt '+cls+'">'+(u>=0?'+':'')+fmtNum(u,2)+'</div><div class="sub2">margin '+fmtNum(p.margin,2)+'</div></div></div>'; }).join(''); }
     document.getElementById('at-futures').innerHTML=h; }
   function renderBonus(){ const be=bonusEquity(); const bpos=state.positions.filter(p=>p.src==='bonus');
