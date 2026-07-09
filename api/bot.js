@@ -30,7 +30,10 @@ function adminIds() {
 async function tgSend(chatId, text, replyMarkup) {
   const token = process.env.TELEGRAM_BOT_TOKEN; if (!token || !chatId) return;
   const payload = { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true };
-  if (replyMarkup) payload.reply_markup = replyMarkup;
+  // Attach an "Open" button under every message (caller markup wins, else the app button).
+  const fallback = process.env.WEBAPP_URL ? { inline_keyboard: [[{ text: '🚀 Open KolonoEX', web_app: { url: process.env.WEBAPP_URL } }]] } : undefined;
+  const markup = replyMarkup || fallback;
+  if (markup) payload.reply_markup = markup;
   try {
     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
