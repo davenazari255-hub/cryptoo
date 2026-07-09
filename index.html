@@ -670,7 +670,7 @@
           </div>
           <div class="form-side">
             <div style="display:flex;gap:8px;margin-bottom:10px;">
-              <div class="fut-box">Cross <i class="ti ti-chevron-down" style="font-size:13px;color:#7a8299;"></i></div>
+              <div class="fut-box" id="fut-margin-mode" onclick="toggleMarginMode()"><span id="fut-mm-label">Cross</span> <i class="ti ti-chevron-down" style="font-size:13px;color:#7a8299;"></i></div>
               <div class="fut-box" onclick="openLevSheet()">
                 <span style="color:#4eeaa0;font-weight:600;" id="fut-lev-long">125x</span>
                 <span style="color:#4a5068;">/</span>
@@ -717,9 +717,11 @@
         <div style="margin-top:18px;">
           <div class="subtabs">
             <div class="subtab active" id="fut-sub-pos" onclick="setFutTab('pos')">Position (<span id="fut-pos-count">0</span>)</div>
-            <div class="subtab" id="fut-sub-ord" onclick="setFutTab('ord')">History</div>
+            <div class="subtab" id="fut-sub-open" onclick="setFutTab('open')">Open Orders (<span id="fut-open-count">0</span>)</div>
+            <div class="subtab" id="fut-sub-hist" onclick="setFutTab('hist')">History</div>
           </div>
           <div id="fut-pos-wrap"></div>
+          <div id="fut-open-wrap" style="display:none;"><div class="empty">No open orders</div></div>
           <div id="fut-ord-list" style="display:none;"><div class="empty">No history yet</div></div>
         </div>
       </div>
@@ -820,7 +822,7 @@
   const prices = {}; const prevPx = {};
 
   function defaultState(){ const balances={USDT:0}, cost={}; COIN_KEYS.forEach(k=>{balances[k]=0;cost[k]=0;});
-    return { balances, cost, futUSDT:0, openOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:0, bonusPrincipal:0, bonusProfit:0, flags:{deposited:false,traded:false,futured:false}, spotVol:0, futVol:0, taskClaimed:{}, social:{}, checkin:{last:'',streak:0}, snap:{day:'',equity:0}, nextId:1, creditedDeposits:0, depositTotal:0, referralCount:0, referralEarned:0, notifications:[] }; }
+    return { balances, cost, futUSDT:0, openOrders:[], futOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:0, bonusPrincipal:0, bonusProfit:0, flags:{deposited:false,traded:false,futured:false}, spotVol:0, futVol:0, taskClaimed:{}, social:{}, checkin:{last:'',streak:0}, snap:{day:'',equity:0}, nextId:1, creditedDeposits:0, depositTotal:0, referralCount:0, referralEarned:0, notifications:[] }; }
   function loadState(){ try{ const raw=localStorage.getItem(LS_KEY); if(!raw) return defaultState();
       const s=JSON.parse(raw); const d=defaultState();
       return Object.assign(d,s,{ balances:Object.assign(d.balances,s.balances||{}), cost:Object.assign(d.cost,s.cost||{}), snap:Object.assign(d.snap,s.snap||{}), flags:Object.assign(d.flags,s.flags||{}), taskClaimed:Object.assign(d.taskClaimed,s.taskClaimed||{}) });
@@ -829,7 +831,7 @@
   function save(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch{} }
   function uid(){ return state.nextId++; }
 
-  const ui = { spotPair:'BTC', futPair:'BTC', spotType:'Limit', futType:'Limit', spotSide:'buy', futMode:'open',
+  const ui = { spotPair:'BTC', futPair:'BTC', spotType:'Limit', futType:'Limit', spotSide:'buy', futMode:'open', marginMode:'Cross',
     levLong:125, levShort:125, tmpLL:125, tmpLS:125, spotSub:'orders', futTab:'pos', hideOther:false,
     pairCtx:'spot', pairTab:'all', pairQuery:'', useBonus:false, assetTab:'overview', distSub:'dist', hideZero:false, spotAQ:'',
     tfFrom:'spot', tfTo:'futures', bonusDest:'spot', chartTf:'15m', hideBal:false };
@@ -1091,7 +1093,7 @@
     switchPage('trade',null); setSpotSide(side); syncSpotPriceField(); }
   function matchOrders(k,last){ let changed=false;
     state.openOrders=state.openOrders.filter(o=>{ if(o.pair!==k) return true; let hit=false,fillP=o.price;
-      if(o.kind==='Limit') hit=o.side==='buy'?last<=o.price:last>=o.price; else if(o.kind==='Stop'){ hit=o.side==='buy'?last>=o.price:last<=o.price; fillP=last; }
+      if(o.kind==='Limit') hit=o.side==='buy'?last<=o.price:last>=o.price; else if(o.kind==='Trigger'){ hit=o.side==='buy'?last>=o.price:last<=o.price; fillP=last; }
       if(!hit) return true; const sp=ui.spotPair; ui.spotPair=k;
       if(o.side==='buy'&&fillP*o.amount*(1+FEE)>(state.balances.USDT||0)+1e-9){ ui.spotPair=sp; return true; }
       if(o.side==='sell'&&o.amount>(state.balances[k]||0)+1e-9){ ui.spotPair=sp; return true; }
@@ -1122,12 +1124,47 @@
     const lev=side==='long'?ui.levLong:ui.levShort; const notional=cont,margin=notional/lev,fee=notional*FEE;
     const useB=ui.useBonus; const pool=useB?(state.bonus||0):(state.futUSDT||0);
     if(margin+fee>pool+1e-9){ toast('Insufficient '+(useB?'bonus':'futures margin'),'err'); return; }
-    const entry=ui.futType==='Market'?live:(parseFloat(v('fut-price'))||live);
+    const type=ui.futType;
+    // Limit / Trigger → create a PENDING order that activates when price is reached.
+    // Margin+fee is reserved now (deducted from the pool) and refunded if cancelled.
+    if(type!=='Market'){
+      const price=parseFloat(v('fut-price'))||0; if(price<=0){ toast('Enter a price','err'); return; }
+      if(useB) state.bonus-=(margin+fee); else state.futUSDT-=(margin+fee);
+      state.futOrders.push({ id:uid(),pair:k,side,kind:type,price,notional,margin,fee,lev,src:useB?'bonus':'wallet',mode:ui.marginMode,time:tstamp(now()) });
+      save(); toast(type+' '+side.toUpperCase()+' order placed — pending','ok');
+      setV('fut-amount',''); setSliderUI('fut',0); updateFutInfo(); setFutTab('open'); renderAll(); return;
+    }
+    // Market → open the position immediately at the live price.
+    const entry=live;
     if(useB) state.bonus-=(margin+fee); else state.futUSDT-=(margin+fee);
-    const pos={ id:uid(),pair:k,side,entry,notional,margin,lev,src:useB?'bonus':'wallet',time:tstamp(now()),tp:null,sl:null };
+    const pos={ id:uid(),pair:k,side,entry,notional,margin,lev,src:useB?'bonus':'wallet',mode:ui.marginMode,time:tstamp(now()),tp:null,sl:null };
     state.positions.push(pos); state.flags.futured=true; state.futVol=(state.futVol||0)+notional;
     addTx({ type:'Open '+(side==='long'?'Long':'Short')+' '+tkr(k), sub:lev+'x · @'+fmtNum(entry,dp(k))+(useB?' · Bonus':''), value:notional, neutral:true, sign:'' }); save();
     toast('Opened '+side.toUpperCase()+' '+tkr(k)+' '+lev+'x'+(useB?' (Bonus)':''),'ok'); setV('fut-amount',''); setSliderUI('fut',0); updateFutInfo(); renderFutPositions(); renderAll(); }
+
+  // Fill pending futures orders when the market reaches their limit/trigger price.
+  // Margin was already reserved at placement, so activation just opens the position.
+  function matchFutOrders(k,last){ if(!state.futOrders||!state.futOrders.length) return; let changed=false;
+    state.futOrders=state.futOrders.filter(o=>{ if(o.pair!==k) return true; let hit=false,entry=o.price;
+      if(o.kind==='Limit') hit=o.side==='long'?last<=o.price:last>=o.price;
+      else if(o.kind==='Trigger'){ hit=o.side==='long'?last>=o.price:last<=o.price; entry=last; } // trigger fills at market
+      if(!hit) return true;
+      const pos={ id:uid(),pair:k,side:o.side,entry,notional:o.notional,margin:o.margin,lev:o.lev,src:o.src,mode:o.mode||'Cross',time:tstamp(now()),tp:null,sl:null };
+      state.positions.push(pos); state.flags.futured=true; state.futVol=(state.futVol||0)+o.notional;
+      addTx({ type:'Open '+(o.side==='long'?'Long':'Short')+' '+tkr(k), sub:o.lev+'x · @'+fmtNum(entry,dp(k))+(o.src==='bonus'?' · Bonus':''), value:o.notional, neutral:true, sign:'' });
+      toast(o.kind+' '+o.side.toUpperCase()+' '+tkr(k)+' filled @ '+fmtNum(entry,dp(k)),'ok'); changed=true; return false; });
+    if(changed){ save(); renderFutPositions(); renderFutOrders(); renderAll(); } }
+
+  function cancelFutOrder(id){ const o=(state.futOrders||[]).find(x=>x.id===id); if(!o) return;
+    if(o.src==='bonus') state.bonus=(state.bonus||0)+(o.margin+o.fee); else state.futUSDT+=(o.margin+o.fee); // refund reserved margin
+    state.futOrders=state.futOrders.filter(x=>x.id!==id); save(); toast('Order cancelled','info'); updateFutInfo(); renderFutOrders(); renderAll(); }
+
+  function renderFutOrders(){ const list=state.futOrders||[]; const ce=document.getElementById('fut-open-count'); if(ce) ce.textContent=list.length;
+    const el=document.getElementById('fut-open-wrap'); if(!el) return;
+    el.innerHTML=list.length?list.map(o=>'<div class="order-card"><div class="order-info"><div class="t" style="color:'+(o.side==='long'?'#4eeaa0':'#ff5a5a')+'">'+o.kind+' '+o.side.toUpperCase()+' '+tkr(o.pair)+' '+o.lev+'x</div><div class="s">'+fmtNum(o.notional,2)+' Cont @ '+fmtNum(o.price,dp(o.pair))+' · '+(o.mode||'Cross')+(o.src==='bonus'?' · Bonus':'')+'</div></div><button class="order-cancel" onclick="cancelFutOrder('+o.id+')">Cancel</button></div>').join(''):'<div class="empty">No open orders</div>'; }
+
+  function toggleMarginMode(){ ui.marginMode=ui.marginMode==='Cross'?'Isolated':'Cross';
+    const l=document.getElementById('fut-mm-label'); if(l) l.textContent=ui.marginMode; toast('Margin mode: '+ui.marginMode,'info'); }
   function closeFutSide(side){ const m=state.positions.filter(p=>p.pair===ui.futPair&&p.side===side); if(!m.length){ toast('No '+side+' position on '+tkr(ui.futPair),'info'); return; } m.forEach(p=>closePos(p.id,false)); }
   function closeAllPos(){ if(!state.positions.length){ toast('No positions','info'); return; } state.positions.slice().forEach(p=>closePos(p.id,false)); }
   function closePos(id,liquidated,reason){ const pos=state.positions.find(p=>p.id===id); if(!pos) return;
@@ -1147,8 +1184,14 @@
   function checkLiquidations(k,last){ state.positions.filter(p=>p.pair===k).slice().forEach(p=>{ const liq=liqPrice(p); const hit=p.side==='long'?last<=liq:last>=liq; if(hit){ closePos(p.id,true); return; }
     if(p.tp){ const h=p.side==='long'?last>=p.tp:last<=p.tp; if(h){ closePos(p.id,false,'Take-Profit'); return; } }
     if(p.sl){ const h=p.side==='long'?last<=p.sl:last>=p.sl; if(h){ closePos(p.id,false,'Stop-Loss'); return; } } }); }
-  function setFutTab(tab){ ui.futTab=tab; const isPos=tab==='pos'; document.getElementById('fut-sub-pos').classList.toggle('active',isPos); document.getElementById('fut-sub-ord').classList.toggle('active',!isPos);
-    document.getElementById('fut-pos-wrap').style.display=isPos?'block':'none'; document.getElementById('fut-ord-list').style.display=isPos?'none':'block'; renderFutPositions(); }
+  function setFutTab(tab){ ui.futTab=tab;
+    document.getElementById('fut-sub-pos').classList.toggle('active',tab==='pos');
+    document.getElementById('fut-sub-open').classList.toggle('active',tab==='open');
+    document.getElementById('fut-sub-hist').classList.toggle('active',tab==='hist');
+    document.getElementById('fut-pos-wrap').style.display=tab==='pos'?'block':'none';
+    document.getElementById('fut-open-wrap').style.display=tab==='open'?'block':'none';
+    document.getElementById('fut-ord-list').style.display=tab==='hist'?'block':'none';
+    renderFutPositions(); renderFutOrders(); }
   function toggleHideOther(){ ui.hideOther=!ui.hideOther; renderFutPositions(); }
   function renderFutPositions(){ setText('fut-pos-count',state.positions.length);
     const wrap=document.getElementById('fut-pos-wrap'); let list=state.positions.slice(); if(ui.hideOther) list=list.filter(p=>p.pair===ui.futPair);
@@ -1156,7 +1199,7 @@
     if(state.positions.length){ html+='<div class="pos-bar"><span class="hide" onclick="toggleHideOther()"><i class="ti '+(ui.hideOther?'ti-eye-off':'ti-eye')+'"></i> '+(ui.hideOther?'Show All Symbols':'Hide Other Symbols')+'</span><span class="closeall" onclick="closeAllPos()">Close All</span></div>'; }
     if(!list.length) html+='<div class="empty">'+(state.positions.length?'No positions for '+tkr(ui.futPair):'No open positions')+'</div>';
     else html+=list.map(p=>{ const u=unrealized(p); const roe=(u/p.margin)*100; const cls=u>=0?'pnl-pos':'pnl-neg'; const mark=px(p.pair); const liq=liqPrice(p); const risk=posRisk(p); const riskCls=risk>70?'pnl-neg':risk>40?'':'pnl-pos';
-      return '<div class="pos-card'+(p.src==='bonus'?' bonus':'')+'"><div class="pos-top">'+coinLogo(p.pair,24)+'<span class="pos-pair">'+tkr(p.pair)+'USDT Perp</span><span class="pos-mode '+p.side+'">'+p.side.toUpperCase()+' · Cross '+p.lev+'x</span>'+(p.src==='bonus'?'<span class="pos-bonus"><i class="ti ti-gift" style="font-size:11px;"></i>BONUS</span>':'')+'</div>'
+      return '<div class="pos-card'+(p.src==='bonus'?' bonus':'')+'"><div class="pos-top">'+coinLogo(p.pair,24)+'<span class="pos-pair">'+tkr(p.pair)+'USDT Perp</span><span class="pos-mode '+p.side+'">'+p.side.toUpperCase()+' · '+(p.mode||'Cross')+' '+p.lev+'x</span>'+(p.src==='bonus'?'<span class="pos-bonus"><i class="ti ti-gift" style="font-size:11px;"></i>BONUS</span>':'')+'</div>'
         +'<div class="pos-pnlrow"><div><div class="lbl">PNL (USDT)</div><div class="big '+cls+'">'+(u>=0?'+':'')+fmtNum(u,2)+'</div></div><div style="text-align:right;"><div class="lbl">ROE</div><div class="big '+cls+'">'+(roe>=0?'+':'')+roe.toFixed(2)+'%</div></div></div>'
         +'<div class="pos-grid3"><div class="cell"><div class="lbl">Size (Cont)</div><div class="val">'+fmtNum(p.notional,2)+'</div></div>'
         +'<div class="cell"><div class="lbl">Margin (USDT) <span class="addm" onclick="openAddMargin('+p.id+')">⊕</span></div><div class="val">'+fmtNum(p.margin,2)+'</div></div>'
@@ -1443,7 +1486,7 @@
     else { ui.spotPair=k; setV('spot-price',''); setV('spot-amount',''); setV('spot-total',''); setSliderUI('spot',0); }
     closeSheet(); switchPage(page,null); if(page!=='futures') syncSpotPriceField(); }
 
-  function openOrderTypeSheet(which){ const types=['Limit','Market','Stop']; const cur=which==='spot'?ui.spotType:ui.futType;
+  function openOrderTypeSheet(which){ const types=['Limit','Market','Trigger']; const cur=which==='spot'?ui.spotType:ui.futType;
     openSheet(sheetHead('Order Type')+types.map(t=>'<div class="coin-row" onclick="setOrderType(\''+which+'\',\''+t+'\')"><div class="coin-info"><div class="coin-name">'+t+' Order</div></div>'+(t===cur?'<i class="ti ti-check" style="color:#4eeaa0;"></i>':'')+'</div>').join('')); }
   function setOrderType(which,t){ if(which==='spot'){ ui.spotType=t; setText('spot-type-label',t+' Order'); syncSpotPriceField(); }
     else { ui.futType=t; setText('fut-type-label',t+' Order'); const inp=document.getElementById('fut-price'),stp=document.getElementById('fut-price-stepper');
@@ -2115,11 +2158,11 @@
     if(k===ui.spotPair){ renderSpotHead(); if(ui.spotType==='Market') setV('spot-price',p.toFixed(dp(k))); }
     if(k===ui.futPair){ renderFutHead(); if(ui.futType==='Market') setV('fut-price',p.toFixed(dp(k))); }
     if(chartOpen() && SYM_TO_KEY[chartSym.toLowerCase()]===k && chartKl && chartKl.length){ const cc=chartKl[chartKl.length-1]; cc[4]=String(p); if(p>+cc[2]) cc[2]=String(p); if(p<+cc[3]) cc[3]=String(p); }
-    matchOrders(k,p); checkLiquidations(k,p);
+    matchOrders(k,p); matchFutOrders(k,p); checkLiquidations(k,p);
     scheduleHeavy(); }
 
   function renderAll(){ renderHomeTotals(); renderTasks(); renderMarket(); renderSpotHead(); renderOB('spot'); renderSpotOrders(); recalcSpotLinked('amount'); updateSpotInfo(); if(ui.spotSub==='hold') renderHolding();
-    renderFutHead(); renderOB('fut'); renderFutPositions(); updateFutInfo(); renderAssets(); }
+    renderFutHead(); renderOB('fut'); renderFutPositions(); renderFutOrders(); updateFutInfo(); renderAssets(); }
 
   function startCountdown(){ const el=document.getElementById('fut-countdown'); if(!el) return; function tick(){ const n=new Date(); const nx=new Date(n);
     nx.setUTCHours(Math.ceil((n.getUTCHours()+(n.getUTCMinutes()||n.getUTCSeconds()?1:0))/8)*8,0,0,0); let r=Math.max(0,Math.floor((nx-n)/1000));
