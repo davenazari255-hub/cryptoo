@@ -260,7 +260,7 @@ module.exports = async function handler(req, res) {
     if (body.action === 'checkin') {
       const st = parseJSON(await upstash(['GET', `checkin:${userId}`])) || { last: '', streak: 0 };
       const today = dayKey(), yest = dayKey(Date.now() - 86400000);
-      if (st.last === today) return res.status(409).json({ error: 'Already checked in today', checkin: st });
+      if (st.last === today) return res.status(409).json({ error: 'Already checked in today', checkin: st, today, yesterday: yest });
 
       const day = (st.last === yest && (st.streak || 0) < 7) ? (st.streak || 0) + 1 : 1;
       const reward = CHECKIN_REWARDS[day - 1] || 0;
@@ -273,7 +273,7 @@ module.exports = async function handler(req, res) {
         await upstash(['LTRIM', `ledger:${userId}`, 0, 99]);
       }
       const bonus = parseFloat(await upstash(['GET', `bonus:${userId}`])) || 0;
-      return res.status(200).json({ ok: true, day, reward, bonus, checkin: next });
+      return res.status(200).json({ ok: true, day, reward, bonus, checkin: next, today, yesterday: yest });
     }
 
     // Merge & store the profile snapshot (preserve original join date).
@@ -359,7 +359,10 @@ module.exports = async function handler(req, res) {
     if (cmds.length) await upstash(['DEL', `cmd:${userId}`]);
     const commands = cmds.map(parseJSON).filter(Boolean);
 
-    return res.status(200).json({ banned: false, balance, commands, referral, depositTotal, tasks, partner, taskClaimed, checkin, bonusServer });
+    // The server owns the calendar day (UTC). The client must not derive it
+    // locally — a client in UTC+03:30 computes a different day between 00:00
+    // and 03:29 local, which made an already-claimed check-in look claimable.
+    return res.status(200).json({ banned: false, balance, commands, referral, depositTotal, tasks, partner, taskClaimed, checkin, bonusServer, today: dayKey(), yesterday: dayKey(Date.now() - 86400000) });
   } catch (err) {
     return res.status(500).json({ error: 'Server error: ' + ((err && err.message) || 'unknown') });
   }
