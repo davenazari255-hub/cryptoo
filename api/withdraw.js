@@ -6,6 +6,31 @@ const crypto = require('crypto');
 const WD_MIN = 10; // minimum withdrawal in USD/USDT
 const escHtml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+// Coins the user may withdraw, and the Binance symbol used to price them.
+// USDT is the settlement unit and is always worth exactly 1 USD here.
+const WD_COINS = { USDT: null, BTC: 'BTCUSDT', ETH: 'ETHUSDT', BNB: 'BNBUSDT', SOL: 'SOLUSDT', TRX: 'TRXUSDT', TON: 'TONUSDT' };
+// Allowed networks per coin — rejects arbitrary client-supplied network strings.
+const WD_NETS = {
+  USDT: ['TRC20', 'ERC20', 'BEP20'], BTC: ['Bitcoin'], ETH: ['ERC20'],
+  BNB: ['BSC'], SOL: ['Solana'], TRX: ['TRON'], TON: ['TON'],
+};
+
+// Server-side spot price in USD. NEVER trust a client-supplied price or USD
+// value — the USD debited from the balance is derived from this and the
+// requested coin amount, so a forged `amount` cannot under-charge a payout.
+async function coinPriceUsd(coin) {
+  if (coin === 'USDT') return 1;
+  const symbol = WD_COINS[coin];
+  if (!symbol) return null;
+  try {
+    const r = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${encodeURIComponent(symbol)}`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    const p = parseFloat(d && d.price);
+    return isFinite(p) && p > 0 ? p : null;
+  } catch { return null; }
+}
+
 async function tgSend(userId, text) {
   const token = process.env.TELEGRAM_BOT_TOKEN; if (!token || !userId) return;
   const chatId = String(userId).startsWith('tg_') ? String(userId).slice(3) : String(userId);
@@ -79,16 +104,37 @@ module.exports = async function handler(req, res) {
     const network = String(body.network || '').trim();
     const address = String(body.address || '').trim();
     const memo = body.memo ? String(body.memo).trim() : null;
-    const amt = Math.round((parseFloat(body.amount) || 0) * 100) / 100; // USD value held
-    const coinAmount = body.coinAmount != null ? String(body.coinAmount) : null; // display amount in the chosen coin
 
+    if (!Object.prototype.hasOwnProperty.call(WD_COINS, coin)) return res.status(400).json({ error: 'Unsupported coin' });
     if (!network) return res.status(400).json({ error: 'Network is required' });
+    if (!WD_NETS[coin].includes(network)) return res.status(400).json({ error: `Unsupported network for ${coin}` });
     if (!address || address.length < 16) return res.status(400).json({ error: 'A valid destination address is required' });
+
+    // ── Authoritative amount derivation ──
+    // The payout is denominated in `coin`, so the COIN AMOUNT is the source of
+    // truth and the USD debit is computed from it at the server-side price.
+    // `body.amount` is ignored entirely: trusting it allowed a request to debit
+    // $10 while instructing the admin to pay out an arbitrary coin quantity.
+    const reqCoinAmt = parseFloat(body.coinAmount != null ? body.coinAmount : body.amount);
+    if (!isFinite(reqCoinAmt) || reqCoinAmt <= 0) return res.status(400).json({ error: 'A valid amount is required' });
+
+    const price = await coinPriceUsd(coin);
+    if (!price) return res.status(503).json({ error: 'Price feed unavailable, please try again' });
+
+    const amt = Math.round(reqCoinAmt * price * 100) / 100;  // USD actually held/debited
+    const coinAmount = String(reqCoinAmt);                    // what the admin will pay out
     if (!(amt >= WD_MIN)) return res.status(400).json({ error: `Minimum withdrawal is $${WD_MIN}` });
 
     // Gate: a user must have deposited at least WD_MIN before any withdrawal.
     const depositTotal = parseFloat(await upstash(['GET', `dep:total:${userId}`])) || 0;
     if (depositTotal < WD_MIN) return res.status(400).json({ error: `You must deposit at least $${WD_MIN} before withdrawing` });
+
+    // Never let a payout exceed what the user actually funded. Simulated
+    // (paper-traded) coin holdings are not real assets, so cap every request
+    // by the lifetime-deposit total regardless of the coin requested.
+    if (amt > depositTotal + 1e-9) {
+      return res.status(400).json({ error: `Withdrawal exceeds your deposited total ($${Math.round(depositTotal * 100) / 100})` });
+    }
 
     // Atomically hold the funds: deduct first, then verify we didn't go negative.
     let deducted = false;
@@ -105,6 +151,7 @@ module.exports = async function handler(req, res) {
       const rec = {
         id, userId, username: user.username || null, name: user.first_name || null,
         coin, coinAmount, network, address, memo, amount: amt,
+        priceUsd: price, // server-side rate used to derive `amount` (audit trail)
         status: 'pending', createdAt: Date.now(),
       };
       await upstash(['SET', `wd:item:${id}`, JSON.stringify(rec)]);

@@ -2021,9 +2021,12 @@
 
   // Live USD price of a withdraw coin (USDT=1; others from fetched snapshot or feed).
   function wdPrice(sym){ if(sym==='USDT') return 1; if(wdPrices[sym]>0) return wdPrices[sym]; const p=px(sym); return p>0?p:null; }
-  // Actual wallet holding of a coin — you can only withdraw what you really hold.
-  // USDT is additionally capped by the real (server) withdrawable balance.
-  function wdCoinAvail(sym){ if(sym==='USDT') return Math.min(state.balances.USDT||0, wdAvail||0); return state.balances[sym]||0; }
+  // Withdrawable amount of a coin. Every coin is capped by the real (server)
+  // withdrawable balance converted into that coin — spot holdings bought with
+  // simulated funds are NOT real assets, so the wallet figure alone is not a
+  // valid allowance. The server enforces this too; this keeps the UI honest.
+  function wdCoinAvail(sym){ const held=state.balances[sym]||0; if(sym==='USDT') return Math.min(held, wdAvail||0);
+    const pr=wdPrice(sym); if(!pr) return 0; return Math.min(held, (wdAvail||0)/pr); }
 
   async function fetchWdPrices(){ const syms=Object.values(WD_BINANCE);
     try{ const r=await fetch('https://api.binance.com/api/v3/ticker/price?symbols='+encodeURIComponent(JSON.stringify(syms)));
