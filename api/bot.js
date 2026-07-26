@@ -6,7 +6,17 @@
 // Telegram can post here. Self-contained for reliable Vercel bundling.
 // Required env: TELEGRAM_BOT_TOKEN, UPSTASH_REDIS_REST_URL/TOKEN,
 //               TELEGRAM_WEBHOOK_SECRET. Optional: WEBAPP_URL, ADMIN_IDS.
+const crypto = require('crypto');
+
 const escHtml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// Constant-time string compare (avoids leaking the secret via response timing).
+function safeEqual(a, b) {
+  const A = Buffer.from(String(a == null ? '' : a));
+  const B = Buffer.from(String(b == null ? '' : b));
+  if (A.length !== B.length) return false;
+  try { return crypto.timingSafeEqual(A, B); } catch { return false; }
+}
 
 async function upstash(args) {
   const URL = process.env.UPSTASH_REDIS_REST_URL, TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -47,12 +57,20 @@ module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   // Verify the secret token Telegram echoes back on every webhook call.
+  // FAIL CLOSED: without a configured secret this endpoint is unauthenticated,
+  // and its body is trusted to identify the sender (msg.from.id is checked
+  // against the admin allowlist below). An unset secret previously skipped the
+  // check entirely, letting anyone POST a forged admin update.
   const want = process.env.TELEGRAM_WEBHOOK_SECRET;
-  const got = req.headers['x-telegram-bot-api-secret-token'];
-  if (want && got !== want) return res.status(401).json({ error: 'bad secret' });
+  if (!want) return res.status(503).json({ error: 'Webhook secret not configured' });
+  if (!safeEqual(req.headers['x-telegram-bot-api-secret-token'], want)) {
+    return res.status(401).json({ error: 'bad secret' });
+  }
 
   const update = req.body || {};
-  const msg = update.message || update.edited_message || null;
+  // Only fresh messages — an edited message would otherwise re-run its command
+  // (re-incrementing counters, re-triggering /stats) every time it is edited.
+  const msg = update.message || null;
   // Acknowledge anything we don't handle (callbacks, channel posts, etc.) so
   // Telegram doesn't retry the delivery.
   if (!msg || !msg.from || !msg.text) return res.status(200).json({ ok: true });

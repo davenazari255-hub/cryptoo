@@ -157,6 +157,13 @@ module.exports = async function handler(req, res) {
     // Remember the working amount so future deposits for this coin are a single call.
     await upstash(['SET', cacheKey, String(priceUsd), 'EX', 21600]);
 
+    // Record who owns this payment so /api/check-payment can authorise status
+    // lookups (NOWPayments ids are sequential — without this, anyone could
+    // enumerate every user's deposit). 7-day TTL covers the payment window.
+    if (data.payment_id != null) {
+      await upstash(['SET', `pay:owner:${data.payment_id}`, userId, 'EX', 604800]);
+    }
+
     return res.status(200).json({
       address: data.pay_address,
       payCurrency: (data.pay_currency || payCurrency).toUpperCase(),

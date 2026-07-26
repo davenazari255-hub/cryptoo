@@ -1996,7 +1996,7 @@
     const MAP={ waiting:'Waiting for payment…', confirming:'Confirming on-chain…', confirmed:'Confirmed, processing…', sending:'Crediting…', partially_paid:'Amount below $'+minUsd+' — not credited', finished:'Payment received — crediting…', failed:'Payment failed', refunded:'Refunded', expired:'Payment expired' };
     const setStat=(txt,cls)=>{ const box=document.getElementById('dep-status'), t=document.getElementById('dep-status-txt'); if(t) t.textContent=txt; if(box){ box.className='dep-status'+(cls?' '+cls:''); } };
     const check=async()=>{ if(!document.getElementById('dep-status')){ if(depPoll){ clearInterval(depPoll); depPoll=null; } return; }
-      try{ const r=await fetch('/api/check-payment?paymentId='+encodeURIComponent(paymentId)); const d=await r.json(); if(!r.ok) return;
+      try{ const r=await fetch('/api/check-payment',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), paymentId }) }); const d=await r.json(); if(!r.ok) return;
         const st=d.status;
         if(st==='finished'){ if(depPoll){ clearInterval(depPoll); depPoll=null; } setStat('Payment received — crediting…','done');
           await syncBalance(); setStat('✓ Credited to your balance','done');
