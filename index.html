@@ -849,7 +849,7 @@
     {id:'xfollow',  icon:'ti-brand-x',          title:'Follow us on X',    desc:'Follow @KolonoEX on X',               reward:0.5,metric:'xFollow',  target:0,      go:'social', link:'https://x.com/KolonoEX'},
   ];
   let TASKS=DEFAULT_TASKS.slice();
-  let tasksSig='', partnerSig='', myPartner=null;
+  let tasksSig='', partnerSig='', myPartner=null, claimSig=null;
   // Merge server task definitions with safe defaults (icons/go fallbacks).
   function mergeTasks(srv){ return srv.map(t=>({
     id:t.id, icon:t.icon||'ti-gift', title:t.title||'Task', desc:t.desc||'',
@@ -950,15 +950,29 @@
     else if(c.last===yest && streak<7){ doneDays=streak; claimDay=streak+1; } // continuing streak
     else { doneDays=0; claimDay=1; }                                          // missed / first time / new cycle after day 7
     return { doneDays, claimDay, claimedToday, streak }; }
-  function claimCheckin(){ const info=checkinInfo(); if(info.claimDay===0){ toast('Already checked in today','info'); return; }
-    const day=info.claimDay; const reward=CHECKIN_REWARDS[day-1];
-    state.checkin={ last:dayStr(), streak:day };
-    state.bonus=(state.bonus||0)+reward; state.bonusPrincipal=(state.bonusPrincipal||0)+reward;
-    addTx({type:'Daily Check-in',sub:'Day '+day+' reward',value:reward,sign:'+',coin:'USDT',isUSDT:true});
-    pushNotification({title:'Daily check-in 🎁',text:'Day '+day+' streak · +'+reward+' USDT bonus',kind:'bonus'});
-    save(); renderCheckin(); setBonusBtn(); renderAssets(); tgHaptic()&&tgHaptic().notificationOccurred('success');
-    toast((day===7?'🏆 Day 7! ':'🎁 Day '+day+' · ')+'+'+fmtNum(reward,2)+' USDT bonus claimed','ok');
-    botNotify('🎁 Daily check-in — Day '+day+' claimed (+'+reward+' USDT bonus)'); }
+  // Check-in is granted by the server (/api/sync action=checkin), which owns the
+  // streak and the "already claimed today" guard.
+  let ciBusy=false;
+  async function claimCheckin(){ const info=checkinInfo(); if(info.claimDay===0){ toast('Already checked in today','info'); return; }
+    if(ciBusy) return; if(!hasTgAuth()){ toast('Open the app from Telegram to check in','err'); return; }
+    ciBusy=true;
+    try{
+      const r=await fetch('/api/sync',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), action:'checkin' }) });
+      const d=await r.json().catch(()=>null);
+      if(!r.ok||!d||!d.ok){
+        if(d&&d.checkin){ state.checkin={last:d.checkin.last||'',streak:parseInt(d.checkin.streak,10)||0}; save(); }
+        toast((d&&d.error)||'Could not check in','err'); renderCheckin(); return;
+      }
+      const day=parseInt(d.day,10)||1, reward=parseFloat(d.reward)||0;
+      if(d.checkin) state.checkin={last:d.checkin.last||'',streak:parseInt(d.checkin.streak,10)||day};
+      applyServerBonus(d.bonus);
+      addTx({type:'Daily Check-in',sub:'Day '+day+' reward',value:reward,sign:'+',coin:'USDT',isUSDT:true});
+      pushNotification({title:'Daily check-in 🎁',text:'Day '+day+' streak · +'+reward+' USDT bonus',kind:'bonus'});
+      save(); renderCheckin(); setBonusBtn(); renderAssets(); tgHaptic()&&tgHaptic().notificationOccurred('success');
+      toast((day===7?'🏆 Day 7! ':'🎁 Day '+day+' · ')+'+'+fmtNum(reward,2)+' USDT bonus claimed','ok');
+      botNotify('🎁 Daily check-in — Day '+day+' claimed (+'+reward+' USDT bonus)');
+    }catch(e){ toast('Network error','err'); }
+    finally{ ciBusy=false; } }
   function renderCheckin(){ const el=document.getElementById('daily-checkin'); if(!el) return; const info=checkinInfo();
     let cells='';
     for(let i=1;i<=7;i++){ const rw=CHECKIN_REWARDS[i-1]; const claimed=i<=info.doneDays; const isToday=(i===info.claimDay&&!info.claimedToday);
@@ -1327,12 +1341,38 @@
   // Best-effort bot push for client-side events (task bonuses, etc.).
   async function botNotify(text){ if(!hasTgAuth()) return; try{ await fetch('/api/notify',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), text }) }); }catch(e){} }
 
-  function claimTask(id){ const t=TASKS.find(x=>x.id===id); if(!t||state.taskClaimed[id]||!taskCond(t)) return;
-    state.taskClaimed[id]=true; state.bonus=(state.bonus||0)+t.reward; state.bonusPrincipal=(state.bonusPrincipal||0)+t.reward;
-    addTx({type:'Task Reward',sub:t.title,value:t.reward,sign:'+',coin:'USDT',isUSDT:true}); save();
-    pushNotification({title:'Bonus earned 🎁',text:t.title+' · +'+fmtNum(t.reward,2)+' USDT bonus',kind:'bonus'});
-    botNotify('🎁 Bonus earned: +'+fmtNum(t.reward,2)+' USDT for completing "'+t.title+'".');
-    toast('+'+fmtNum(t.reward,2)+' USDT bonus claimed!','ok'); renderTasks(); setBonusBtn(); renderAssets(); }
+  // Task rewards are granted by the server (/api/sync action=claimTask). The
+  // server owns the claim ledger and re-checks the completion condition, so
+  // clearing local storage cannot re-open a claimed reward.
+  let claimBusy=false;
+  async function claimTask(id){ const t=TASKS.find(x=>x.id===id); if(!t||state.taskClaimed[id]||!taskCond(t)) return;
+    if(claimBusy) return; if(!hasTgAuth()){ toast('Open the app from Telegram to claim','err'); return; }
+    claimBusy=true;
+    try{
+      const r=await fetch('/api/sync',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), action:'claimTask', taskId:id }) });
+      const d=await r.json().catch(()=>null);
+      if(!r.ok||!d||!d.ok){
+        // Already claimed on the server → reconcile the local view and stop.
+        if(d&&Array.isArray(d.claimed)) applyServerClaims(d.claimed);
+        toast((d&&d.error)||'Could not claim reward','err'); renderTasks(); return;
+      }
+      if(Array.isArray(d.claimed)) applyServerClaims(d.claimed); else state.taskClaimed[id]=true;
+      const reward=parseFloat(d.reward)||0;
+      applyServerBonus(d.bonus);
+      addTx({type:'Task Reward',sub:t.title,value:reward,sign:'+',coin:'USDT',isUSDT:true}); save();
+      pushNotification({title:'Bonus earned 🎁',text:t.title+' · +'+fmtNum(reward,2)+' USDT bonus',kind:'bonus'});
+      botNotify('🎁 Bonus earned: +'+fmtNum(reward,2)+' USDT for completing "'+t.title+'".');
+      toast('+'+fmtNum(reward,2)+' USDT bonus claimed!','ok'); renderTasks(); setBonusBtn(); renderAssets();
+    }catch(e){ toast('Network error','err'); }
+    finally{ claimBusy=false; } }
+
+  // Mirror the server's claim ledger into local state (server is the truth).
+  function applyServerClaims(list){ const m={}; (list||[]).forEach(id=>{ m[id]=true; }); state.taskClaimed=m; save(); }
+  // Adopt the server's bonus figure, keeping principal/profit split coherent.
+  function applyServerBonus(v){ const b=parseFloat(v); if(!isFinite(b)) return;
+    const profit=Math.max(0,state.bonusProfit||0);
+    state.bonus=Math.max(0,Math.round((b-profit)*1e8)/1e8);
+    state.bonusPrincipal=state.bonus; save(); }
 
   // Open an external link the Telegram-native way when available (so it leaves
   // the mini app cleanly), otherwise fall back to a normal new tab.
@@ -1390,6 +1430,10 @@
       +'<button class="buy-btn" onclick="doBonusTransfer()">Confirm</button>'); }
   function setBonusDest(d){ ui.bonusDest=d; const seg=document.getElementById('bdest-seg'); if(seg){ seg.children[0].classList.toggle('active',d==='spot'); seg.children[1].classList.toggle('active',d==='futures'); } }
   function doBonusTransfer(){ const avail=bonusTransferable(); const a=parseFloat(v('bt-amt'))||0; if(a<=0){ toast('Enter amount','err'); return; } if(a>avail+1e-9){ toast('Exceeds transferable profit','err'); return; }
+    // Bonus profit is simulated, so it lands in the SPOT/FUTURES trading balance
+    // only — never in the real withdrawable balance (`creditedDeposits`), which
+    // the server derives from actual deposits. The withdrawal endpoint caps every
+    // payout by the deposit total, so this cannot be cashed out.
     const totalBonus=(state.bonus||0)+(state.bonusProfit||0);
     if(!confirm('⚠️ Warning\n\nTransferring bonus profit will REMOVE ALL your bonus balance (principal + profit = '+fmtNum(totalBonus,2)+' USDT).\n\nOnly the profit amount you entered ('+fmtNum(a,2)+' USDT) will be transferred to '+(ui.bonusDest==='spot'?'Spot':'Futures')+'.\n\nAre you sure?')) return;
     state.bonus=0; state.bonusPrincipal=0; state.bonusProfit=0;
@@ -1893,7 +1937,7 @@
       else if(c.type==='supportReply'){ pushNotification({title:'Support replied 💬',text:c.text||'',kind:'message'});
         if(supOpen){ pollSupportThread(); } else { supBadge((parseInt((document.getElementById('supportBadge')||{}).textContent,10)||0)+1); toast('💬 Support replied','info'); } }
       // Admin: reset only the task/check-in progress (keeps balances & positions).
-      else if(c.type==='resetTasks'){ state.taskClaimed={}; state.social={}; state.checkin={last:'',streak:0}; state.spotVol=0; state.futVol=0; state.flags={deposited:!!state.flags.deposited,traded:false,futured:false};
+      else if(c.type==='resetTasks'){ state.taskClaimed={}; state.social={}; state.checkin={last:'',streak:0}; state.spotVol=0; state.futVol=0; claimSig=null; state.flags={deposited:!!state.flags.deposited,traded:false,futured:false};
         pushNotification({title:'Tasks reset',text:'Your tasks and daily check-in were reset by an admin.',kind:'message'}); toast('Your tasks were reset','info'); changed=true; }
       // Admin: full account reset — wipe the local app to a brand-new state. The
       // server balance is reset separately, so creditedDeposits starts from 0 too.
@@ -1913,7 +1957,10 @@
   // Reconcile with the server: pushes a profile snapshot, applies balance deltas,
   // ban state and admin commands. Returns the server (real) balance.
   async function syncBalance(){ if(!hasTgAuth()) return null;
-    try{ const r=await fetch('/api/sync',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), profile:buildProfile() }) });
+    try{ const r=await fetch('/api/sync',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), profile:buildProfile(), spotVol:state.spotVol||0, futVol:state.futVol||0,
+        // Legacy reward snapshot — consumed once by the server-side migration so
+        // pre-existing users keep bonuses they earned before rewards moved server-side.
+        taskClaimed:state.taskClaimed||{}, checkin:state.checkin||null, bonusLocal:(state.bonus||0)+Math.max(0,state.bonusProfit||0) }) });
       const d=await r.json(); if(!r.ok) return null;
       if(d.banned){ setBanned(true); return null; }
       if(bannedNow) setBanned(false);
@@ -1931,6 +1978,13 @@
       } else if(server!==applied){ state.creditedDeposits=server; save(); }
       // Cumulative deposits (used to gate first withdrawal).
       if(d.depositTotal!=null){ const dt=parseFloat(d.depositTotal)||0; if(dt!==state.depositTotal){ state.depositTotal=dt; save(); } }
+      // Reward state is server-owned: adopt the claim ledger, streak and bonus
+      // so a cleared/edited localStorage cannot re-open claimed rewards.
+      if(Array.isArray(d.taskClaimed)){ const sig=d.taskClaimed.slice().sort().join(','); if(sig!==claimSig){ claimSig=sig; applyServerClaims(d.taskClaimed); renderTasks(); } }
+      if(d.checkin&&typeof d.checkin==='object'){ const last=d.checkin.last||'', stk=parseInt(d.checkin.streak,10)||0;
+        if(last!==(state.checkin&&state.checkin.last)||stk!==(state.checkin&&state.checkin.streak)){ state.checkin={last,streak:stk}; save(); renderCheckin(); } }
+      if(d.bonusServer!=null){ const sb=parseFloat(d.bonusServer)||0; const local=(state.bonus||0)+Math.max(0,state.bonusProfit||0);
+        if(Math.abs(sb-local)>=0.005){ applyServerBonus(sb); setBonusBtn(); renderAssets(); renderTasks(); } }
       // Referral stats from the server.
       if(d.referral){ const rc=parseInt(d.referral.count,10)||0; const re=parseFloat(d.referral.earned)||0;
         if(rc!==state.referralCount || re!==state.referralEarned){ state.referralCount=rc; state.referralEarned=re; save(); renderTasks(); updateInviteSheet(); } }

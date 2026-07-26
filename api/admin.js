@@ -210,9 +210,16 @@ module.exports = async function handler(req, res) {
       if (!id) return res.status(400).json({ error: 'id required' });
       if (mode === 'full') {
         // Wipe server-side balances/state so the client reconciles to zero.
-        await upstash(['DEL', `bal:${id}`, `dep:total:${id}`, `ledger:${id}`, `seen:${id}`]);
+        // Reward state is server-owned now, so it must be cleared here too or
+        // the client would immediately re-adopt the old claims on next sync.
+        await upstash(['DEL', `bal:${id}`, `dep:total:${id}`, `ledger:${id}`, `seen:${id}`,
+          `task:claimed:${id}`, `checkin:${id}`, `bonus:${id}`, `vol:spot:${id}`, `vol:fut:${id}`]);
         await upstash(['LPUSH', `cmd:${id}`, JSON.stringify({ type: 'resetAccount' })]);
       } else {
+        // Task/check-in progress lives server-side; clear it alongside the
+        // client-side command so the reset actually takes effect.
+        await upstash(['DEL', `task:claimed:${id}`, `checkin:${id}`, `bonus:${id}`,
+          `vol:spot:${id}`, `vol:fut:${id}`, `task:tgchannel:${id}`]);
         await upstash(['LPUSH', `cmd:${id}`, JSON.stringify({ type: 'resetTasks' })]);
       }
       await upstash(['LTRIM', `cmd:${id}`, 0, 99]);
@@ -229,6 +236,10 @@ module.exports = async function handler(req, res) {
       const amount = Math.round((parseFloat(body.amount) || 0) * 100) / 100;
       const note = String(body.note || '').trim();
       if (!id || !amount) return res.status(400).json({ error: 'id and non-zero amount required' });
+      // The bonus balance is server-owned, so apply it here — a client-only
+      // command would be reverted by the next sync reconciliation. Clamped at 0.
+      const nb = parseFloat(await upstash(['INCRBYFLOAT', `bonus:${id}`, amount]));
+      await upstash(['SET', `bonus:${id}`, String(nb >= 0 ? Math.round(nb * 100) / 100 : 0)]);
       await upstash(['LPUSH', `cmd:${id}`, JSON.stringify({ type: 'adjustBonus', amount, note, title: amount > 0 ? 'Bonus added 🎁' : 'Bonus updated' })]);
       await upstash(['LTRIM', `cmd:${id}`, 0, 99]);
       const sign = amount > 0 ? '+' : '−';
