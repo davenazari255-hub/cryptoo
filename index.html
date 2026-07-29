@@ -43,7 +43,15 @@
     .logo { font-size: 20px; font-weight: 600; color: var(--green); letter-spacing: 0.5px; }
     /* animated brand: K is the logo image, the rest slides out from inside it */
     .logo-anim { display:inline-flex; align-items:center; line-height:1; }
-    .logo-anim .logo-k { height:2.3em; width:auto; display:block; flex-shrink:0; margin:-0.55em -0.25em -0.55em -0.3em; }
+    .logo-anim .logo-k { height:2.3em; width:auto; display:block; flex-shrink:0; margin:-0.55em -0.25em -0.55em -0.3em;
+      transform-origin:50% 50%; will-change:transform; animation: logoMark 40s ease-in-out infinite; }
+    /* stops mirror logoReveal so mark and wordmark stay locked together:
+       wordmark retracted -> mark swells to fill the space, and back again */
+    @keyframes logoMark {
+      0%, 4%   { transform: scale(1.34); }
+      8%, 90%  { transform: scale(1); }
+      97%,100% { transform: scale(1.34); }
+    }
     .logo-anim .logo-rest { display:inline-block; white-space:nowrap; overflow:hidden; color:var(--green); font-weight:600; letter-spacing:0.5px;
       max-width:0; opacity:0; transform:translateX(-10px); animation: logoReveal 40s ease-in-out infinite; }
     @keyframes logoReveal {
@@ -51,7 +59,10 @@
       8%, 90%  { max-width:7em;   opacity:1; transform:translateX(0); }   /* visible ~33s of the 40s cycle */
       97%,100% { max-width:0;     opacity:0; transform:translateX(-10px); }
     }
-    @media (prefers-reduced-motion: reduce) { .logo-anim .logo-rest { max-width:7em; opacity:1; transform:none; animation:none; } }
+    @media (prefers-reduced-motion: reduce) {
+      .logo-anim .logo-rest { max-width:7em; opacity:1; transform:none; animation:none; }
+      .logo-anim .logo-k { animation:none; transform:none; }
+    }
     .header-icons { display: flex; gap: 14px; color: var(--text-2); font-size: 20px; align-items: center; }
     .bell-wrap { position:relative; display:inline-flex; cursor:pointer; }
     /* partner program button — purple neon diamond */
@@ -132,6 +143,16 @@
     .header-avatar { width: 26px; height: 26px; border-radius: 50%; background: #262a38; color:var(--green); display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; overflow:hidden; }
     .header-avatar img { width:100%; height:100%; object-fit:cover; }
     .header-name { font-size: 13px; color:var(--text-1); font-weight:500; max-width:90px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .header-sub { display:flex; align-items:center; gap:6px; }
+    .uid-chip { display:inline-flex; align-items:center; gap:3px; flex-shrink:0;
+      font-size:9.5px; font-weight:600; letter-spacing:.2px; font-variant-numeric:tabular-nums;
+      color:var(--text-2); background:rgba(255,255,255,.05);
+      border:0.5px solid var(--line-2); padding:1px 5px; border-radius:5px;
+      cursor:pointer; white-space:nowrap; -webkit-tap-highlight-color:transparent;
+      transition:background .15s ease, color .15s ease, border-color .15s ease; }
+    .uid-chip i { font-size:10px; }
+    .uid-chip:active,
+    .uid-chip.copied { background:rgba(78,234,160,.15); color:var(--green); border-color:rgba(78,234,160,.42); }
     .ws-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); transition: background 0.3s; }
     .ws-dot.connected { background: var(--green); }
     .content { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; scrollbar-width: none; }
@@ -195,7 +216,6 @@
       color: var(--text-2); font-size: 10px; letter-spacing: .2px;
       -webkit-tap-highlight-color: transparent;
       transition: color .28s ease;
-      overflow: hidden;
     }
     .nav-item i {
       font-size: 21px; line-height: 1;
@@ -213,17 +233,21 @@
     .nav-item.active span { opacity: 1; font-weight: 600; }
     .nav-item:not(.active):active i { transform: scale(.9); }
 
-    /* tap ripple */
+    /* tap bloom. Deliberately soft-edged and capped so it never reaches the
+       item's rounded-rect boundary: a hard circle scaled past the item got
+       clipped to that boundary and read as a square flashing round the icon. */
     .nav-item::after {
       content: ''; position: absolute; left: 50%; top: 50%;
-      width: 7px; height: 7px; border-radius: 50%;
-      background: rgba(78,234,160,.45);
-      transform: translate(-50%,-50%) scale(0); opacity: 0; pointer-events: none;
+      width: 40px; height: 40px; margin: -20px 0 0 -20px;
+      border-radius: 50%; pointer-events: none;
+      background: radial-gradient(circle,
+        rgba(78,234,160,.30) 0%, rgba(78,234,160,.13) 42%, rgba(78,234,160,0) 70%);
+      transform: scale(0); opacity: 0;
     }
-    .nav-item.rip::after { animation: navRip .6s cubic-bezier(.2,.72,.3,1); }
+    .nav-item.rip::after { animation: navRip .5s cubic-bezier(.25,.8,.35,1); }
     @keyframes navRip {
-      0%   { transform: translate(-50%,-50%) scale(0);  opacity: .5; }
-      100% { transform: translate(-50%,-50%) scale(13); opacity: 0; }
+      0%   { transform: scale(.25); opacity: .9; }
+      100% { transform: scale(1.15); opacity: 0; }   /* 46px max, ~32px visible */
     }
 
     /* directional page transitions, driven by tab order */
@@ -675,7 +699,10 @@
         <div class="header-avatar" id="hUserAvatar">K</div>
         <div>
           <div class="logo logo-anim" style="font-size:17px;"><img src="logo.png" class="logo-k" alt="K"><span class="logo-rest">olonoEX</span></div>
-          <div class="header-name" id="hUserName" style="font-size:11px;color:#7a8299;">Guest</div>
+          <div class="header-sub">
+            <span class="header-name" id="hUserName" style="font-size:11px;color:#7a8299;">Guest</span>
+            <span class="uid-chip" id="hUserUid" style="display:none;" title="Copy your UID" onclick="copyMyUid(event)"><span id="hUserUidVal"></span><i class="ti ti-copy"></i></span>
+          </div>
         </div>
       </div>
       <div class="header-icons">
@@ -1470,6 +1497,36 @@
       if(Math.abs(dx)<55 || Math.abs(dx)<Math.abs(dy)*1.4) return; // require a clear horizontal swipe
       const cur=ASSET_TABS.indexOf(ui.assetTab||'overview'); const step=dx<0?1:-1; const nx=Math.max(0,Math.min(ASSET_TABS.length-1,cur+step));
       if(nx!==cur) setAssetTab(ASSET_TABS[nx],step); },{passive:true}); }
+  // ── in-place painting ─────────────────────────────────────────────────
+  // Same output HTML, but reuse the live DOM when the structure is unchanged.
+  function pSame(a,b){
+    if(a.nodeType!==b.nodeType) return false;
+    if(a.nodeType===3) return true;                       // text: value synced later
+    if(a.nodeName!==b.nodeName) return false;
+    if(a.childNodes.length!==b.childNodes.length) return false;
+    for(let i=0;i<a.childNodes.length;i++) if(!pSame(a.childNodes[i],b.childNodes[i])) return false;
+    return true; }
+  function pSync(a,b){
+    if(a.nodeType===3){ if(a.nodeValue!==b.nodeValue) a.nodeValue=b.nodeValue; return; }
+    if(a.nodeType===1){
+      const bn=b.attributes;
+      for(let i=bn.length-1;i>=0;i--){ const n=bn[i].name;
+        if(n==='src') continue;                            // never re-trigger an image load
+        if(a.getAttribute(n)!==bn[i].value) a.setAttribute(n,bn[i].value); }
+      const an=a.attributes;
+      for(let i=an.length-1;i>=0;i--){ const n=an[i].name; if(!b.hasAttribute(n)) a.removeAttribute(n); } }
+    for(let i=0;i<a.childNodes.length;i++) pSync(a.childNodes[i],b.childNodes[i]); }
+  function paintInto(el,html){
+    if(!el) return;
+    if(el._pHTML===html) return;                           // byte-identical, nothing to do
+    const tmp=document.createElement('div'); tmp.innerHTML=html;
+    let reuse = el.childNodes.length>0 && el.childNodes.length===tmp.childNodes.length;
+    if(reuse) for(let i=0;i<el.childNodes.length;i++)
+      if(!pSame(el.childNodes[i],tmp.childNodes[i])){ reuse=false; break; }
+    if(reuse) for(let i=0;i<el.childNodes.length;i++) pSync(el.childNodes[i],tmp.childNodes[i]);
+    else el.innerHTML=html;
+    el._pHTML=html; }
+
   function renderAssets(){ const t=ui.assetTab||'overview';
     if(t==='overview') renderOverview(); else if(t==='spot') renderSpotAssets(); else if(t==='futures') renderFutAssets(); else renderBonus(); }
   function actIcons(items){ return '<div class="act-row">'+items.map(it=>'<div class="act-item" onclick="'+it.fn+'"><div class="act-ic"><i class="ti '+it.icon+'"></i></div><span>'+it.label+'</span></div>').join('')+'</div>'; }
@@ -1490,7 +1547,7 @@
       COIN_KEYS.forEach(k=>{ const a=state.balances[k]||0; if(a>1e-9){ const p=px(k)||0; rows.push(spAssetRow(tkr(k),COINS[k].name,COINS[k].color,a,a*p)); } });
       h+=rows.length?rows.join(''):'<div class="empty">No spot assets</div>';
     }
-    document.getElementById('at-overview').innerHTML=h; }
+    paintInto(document.getElementById('at-overview'),h); }
   function distRow(name,usd,tab){ const click=tab?(' onclick="setAssetTab(\''+tab+'\')" style="cursor:pointer;"'):'';
     const chev=tab?'<i class="ti ti-chevron-right" style="color:#4a5266;font-size:16px;margin-left:8px;"></i>':'';
     return '<div class="dist-row"'+click+'><div><div class="nm">'+name+'</div></div><div style="display:flex;align-items:center;"><div><div class="amt">'+btcOf(usd)+'</div><div class="sub2">'+fmtUSD(usd)+'</div></div>'+chev+'</div></div>'; }
@@ -1502,7 +1559,7 @@
     if(!ui.hideZero||usdt>1e-9) rows.push(spAssetRow('USDT','Tether','#26a17b',usdt,usdt));
     COIN_KEYS.forEach(k=>{ const a=state.balances[k]||0; if(ui.hideZero&&a<=1e-9) return; const p=px(k)||0; rows.push(spAssetRow(tkr(k),COINS[k].name,COINS[k].color,a,a*p)); });
     h+=rows.length?rows.join(''):'<div class="empty">No assets</div>';
-    document.getElementById('at-spot').innerHTML=h; }
+    paintInto(document.getElementById('at-spot'),h); }
   function spAssetRow(sym,name,color,amt,usd){ return '<div class="sp-asset">'+logoHTML(sym,color,38)+'<div class="nm"><div class="t">'+sym+'</div><div class="s">'+name+'</div></div><div class="bal"><div class="t">'+coinAmt(amt)+'</div><div class="s">'+fmtNum(usd,2)+' USDT</div></div></div>'; }
   function renderFutAssets(){ const fe=futEquity();
     let h=avHead('Asset valuation (BTC)',btcOf(fe),fmtUSD(fe))+profHTML();
@@ -1514,7 +1571,7 @@
     const wpos=state.positions.filter(p=>p.src!=='bonus');
     if(wpos.length){ h+='<div class="section-title" style="margin-top:14px;">Open Positions</div>'; h+=wpos.map(p=>{ const u=unrealized(p); const cls=u>=0?'pnl-pos':'pnl-neg';
       return '<div class="dist-row"><div style="display:flex;align-items:center;gap:10px;">'+coinLogo(p.pair,30)+'<div><div class="nm">'+tkr(p.pair)+'USDT</div><div class="sub2" style="text-align:left;color:'+(p.side==='long'?'#4eeaa0':'#ff5a5a')+'">'+p.side.toUpperCase()+' '+p.lev+'x</div></div></div><div><div class="amt '+cls+'">'+(u>=0?'+':'')+fmtNum(u,2)+'</div><div class="sub2">margin '+fmtNum(p.margin,2)+'</div></div></div>'; }).join(''); }
-    document.getElementById('at-futures').innerHTML=h; }
+    paintInto(document.getElementById('at-futures'),h); }
   function renderBonus(){ const be=bonusEquity(); const bpos=state.positions.filter(p=>p.src==='bonus');
     let h='<div class="bonus-card"><div class="lab"><i class="ti ti-gift"></i> Futures Bonus Balance</div><div class="val">'+fmtNum(state.bonus||0,2)+' <span style="font-size:15px;color:#7aa893;">USDT</span></div>'
       +'<div class="desc">Use this bonus as margin in Futures. Profits are credited to your wallet; the bonus principal itself is for trading only.</div></div>';
@@ -1527,7 +1584,7 @@
     if(bpos.length){ h+='<div class="section-title" style="margin-top:14px;">Bonus Positions</div>'; h+=bpos.map(p=>{ const u=unrealized(p); const cls=u>=0?'pnl-pos':'pnl-neg';
       return '<div class="dist-row"><div style="display:flex;align-items:center;gap:10px;">'+coinLogo(p.pair,30)+'<div><div class="nm">'+tkr(p.pair)+'USDT</div><div class="sub2" style="text-align:left;color:'+(p.side==='long'?'#4eeaa0':'#ff5a5a')+'">'+p.side.toUpperCase()+' '+p.lev+'x · Bonus</div></div></div><div><div class="amt '+cls+'">'+(u>=0?'+':'')+fmtNum(u,2)+'</div><div class="sub2">margin '+fmtNum(p.margin,2)+'</div></div></div>'; }).join(''); }
     else h+='<div class="empty" style="margin-top:14px;">No bonus positions open</div>';
-    document.getElementById('at-bonus').innerHTML=h; }
+    paintInto(document.getElementById('at-bonus'),h); }
   // Bonus history — bonus-related transactions (tasks, referrals, admin grants, transfers).
   function openBonusRecords(){
     const re=/bonus|referral|task reward/i;
@@ -2123,6 +2180,13 @@
   function tgInitData(){ try{ return (window.Telegram&&Telegram.WebApp&&Telegram.WebApp.initData)||''; }catch{ return ''; } }
   function hasTgAuth(){ return !!tgInitData(); }
   function escAttr(s){ return String(s).replace(/'/g,'&#39;').replace(/"/g,'&quot;'); }
+  function copyMyUid(e){ if(e) e.stopPropagation();
+    const chip=document.getElementById('hUserUid'); if(!chip) return;
+    const v=chip.getAttribute('data-uid'); if(!v) return;
+    copyText(v); hapticSelect();
+    chip.classList.add('copied'); clearTimeout(chip._ct);
+    chip._ct=setTimeout(()=>chip.classList.remove('copied'),900); }
+
   function copyText(t){ const done=()=>toast('Copied','ok');
     try{ if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(done,()=>fallbackCopy(t)); return; } }catch{}
     fallbackCopy(t); }
@@ -2511,7 +2575,9 @@
     // colour and visibly clashes with the dark theme
     try{ tg.setHeaderColor('#13151c'); }catch{}
     try{ tg.setBackgroundColor('#0d0e12'); }catch{}
-    const u=tg.initDataUnsafe&&tg.initDataUnsafe.user; if(u){ setText('hUserName',u.first_name||u.username||'Trader'); const av=document.getElementById('hUserAvatar'); if(u.photo_url) av.innerHTML='<img src="'+u.photo_url+'">'; else av.textContent=(u.first_name||'K').charAt(0).toUpperCase(); } }
+    const u=tg.initDataUnsafe&&tg.initDataUnsafe.user; if(u){ setText('hUserName',u.first_name||u.username||'Trader');
+      if(u.id){ const chip=document.getElementById('hUserUid'), val=document.getElementById('hUserUidVal');
+        if(chip&&val){ chip.setAttribute('data-uid',String(u.id)); val.textContent='UID '+u.id; chip.style.display=''; } } const av=document.getElementById('hUserAvatar'); if(u.photo_url) av.innerHTML='<img src="'+u.photo_url+'">'; else av.textContent=(u.first_name||'K').charAt(0).toUpperCase(); } }
     if(isAdmin()){ const ab=document.getElementById('adminBtn'); if(ab) ab.style.display=''; } }
 
   // boot
