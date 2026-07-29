@@ -676,36 +676,50 @@
 
     /* ── partner promo ── */
     #promoOverlay { position:fixed; inset:0; z-index:420; display:none;
-      align-items:center; justify-content:center; padding:18px;
+      align-items:center; justify-content:center; padding:15px;
       background:rgba(4,6,9,.78); -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px); }
     #promoOverlay.open { display:flex; animation: promoFade .24s ease; }
     @keyframes promoFade { from { opacity:0; } to { opacity:1; } }
-    .promo-card { width:100%; max-width:360px; max-height:88vh; overflow-y:auto;
-      background:linear-gradient(168deg,#1a1f2b,var(--surface-1) 62%);
-      border:0.5px solid #33405a; border-radius:20px; overflow:hidden;
+    /* Sized against the dynamic viewport, and split so the action row can never
+       be pushed off screen: only .promo-scroll scrolls, .promo-actions is pinned. */
+    .promo-card { position:relative; width:100%; max-width:360px;
+      display:flex; flex-direction:column;
+      max-height:calc(100vh - 30px); max-height:calc(100dvh - 30px);
+      background:#14161e; border:0.5px solid #33405a; border-radius:20px; overflow:hidden;
       box-shadow:0 26px 60px -14px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,255,255,.09);
-      animation: promoRise .34s cubic-bezier(.24,.9,.3,1); scrollbar-width:none; }
-    .promo-card::-webkit-scrollbar { display:none; }
+      animation: promoRise .34s cubic-bezier(.24,.9,.3,1); }
+    .promo-scroll { flex:1 1 auto; min-height:0; overflow-y:auto;
+      -webkit-overflow-scrolling:touch; overscroll-behavior:contain; scrollbar-width:none; }
+    .promo-scroll::-webkit-scrollbar { display:none; }
+    .promo-actions { flex:0 0 auto; position:relative; z-index:1;
+      padding:13px 18px calc(15px + env(safe-area-inset-bottom));
+      background:#14161e; border-top:0.5px solid var(--line); }
+    /* fade above the pinned actions so it reads as "there is more up there" */
+    .promo-actions::before { content:''; position:absolute; left:0; right:0; top:-24px; height:24px;
+      pointer-events:none; background:linear-gradient(180deg, rgba(20,22,30,0), rgba(20,22,30,.95)); }
     @keyframes promoRise { from { transform:translateY(16px) scale(.97); opacity:0; } to { transform:none; opacity:1; } }
-    .promo-hero { position:relative; aspect-ratio:900/502; background:var(--bg); }
+    /* shorter than the image's own 16:9 so the card fits without scrolling on
+       most phones; the photo is cropped, not letterboxed */
+    .promo-hero { position:relative; background:var(--bg); flex-shrink:0;
+      height:clamp(100px, 19dvh, 172px); }
     .promo-hero img { width:100%; height:100%; object-fit:cover; display:block; }
     .promo-hero::after { content:''; position:absolute; inset:0;
-      background:linear-gradient(180deg, transparent 42%, rgba(19,21,28,.55) 76%, #1b202c 100%); }
+      background:linear-gradient(180deg, transparent 38%, rgba(20,22,30,.55) 74%, #14161e 100%); }
     .promo-tag { position:absolute; top:11px; left:11px; z-index:2;
       display:inline-flex; align-items:center; gap:4px;
       font-size:9px; font-weight:800; letter-spacing:.13em; text-transform:uppercase;
       color:var(--purple); background:rgba(20,16,32,.72); border:0.5px solid rgba(176,123,255,.45);
       padding:4px 8px; border-radius:100px; -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); }
     .promo-tag i { font-size:11px; }
-    .promo-x { position:absolute; top:9px; right:9px; z-index:2; width:30px; height:30px;
+    .promo-x { position:absolute; top:9px; right:9px; z-index:3; width:30px; height:30px;
       display:grid; place-items:center; border-radius:50%; cursor:pointer; font-size:17px; color:#cfd6e6;
       background:rgba(10,12,17,.6); border:0.5px solid rgba(255,255,255,.14);
       -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); }
-    .promo-body { padding:2px 18px 18px; }
+    .promo-body { padding:2px 18px 16px; }
     .promo-body h3 { font-size:19px; font-weight:800; letter-spacing:-.02em; color:#eef3fb; margin-bottom:7px; }
     .promo-body h3 em { font-style:normal; color:var(--green); }
     .promo-lede { font-size:12.5px; line-height:1.6; color:#95a1b8; margin-bottom:14px; }
-    .promo-list { list-style:none; display:flex; flex-direction:column; gap:9px; margin-bottom:15px; }
+    .promo-list { list-style:none; display:flex; flex-direction:column; gap:9px; margin-bottom:2px; }
     .promo-list li { display:flex; gap:9px; align-items:flex-start; font-size:12.2px; line-height:1.5; color:#9aa6bd; }
     .promo-list i { flex-shrink:0; width:21px; height:21px; border-radius:6px; display:grid; place-items:center;
       font-size:12px; color:var(--green); background:rgba(78,234,160,.11); border:0.5px solid rgba(78,234,160,.26); }
@@ -717,8 +731,7 @@
       transition:filter .13s ease, transform .09s ease; }
     .promo-cta:active { transform:scale(.977); filter:brightness(.94); }
     .promo-fine { font-size:10px; color:var(--text-3); text-align:center; margin-top:9px; line-height:1.5; }
-    .promo-foot { display:flex; align-items:center; justify-content:space-between; gap:10px;
-      margin-top:14px; padding-top:12px; border-top:0.5px solid var(--line); }
+    .promo-foot { display:flex; align-items:center; justify-content:space-between; gap:10px; }
     .promo-never { display:flex; align-items:center; gap:7px; cursor:pointer;
       font-size:11px; color:var(--text-2); min-height:44px; -webkit-tap-highlight-color:transparent; }
     .promo-never input { position:absolute; opacity:0; pointer-events:none; }
@@ -1062,9 +1075,10 @@
 </div>
 <div id="promoOverlay">
   <div class="promo-card" onclick="event.stopPropagation()">
+    <div class="promo-x" onclick="promoClose()"><i class="ti ti-x"></i></div>
+    <div class="promo-scroll">
     <div class="promo-hero">
       <span class="promo-tag"><i class="ti ti-diamond"></i> Partner Program</span>
-      <div class="promo-x" onclick="promoClose()"><i class="ti ti-x"></i></div>
       <img src="partner-banner.jpg" alt="">
     </div>
     <div class="promo-body">
@@ -1076,6 +1090,9 @@
         <li><i class="ti ti-bolt"></i><span><b>Boosted task rewards</b>, so your audience earns more than everyone else</span></li>
         <li><i class="ti ti-chart-arrows-vertical"></i><span><b>Your own referral code</b> and live stats in the app</span></li>
       </ul>
+    </div>
+    </div>
+    <div class="promo-actions">
       <button class="promo-cta" onclick="promoGo()">Apply as a partner</button>
       <p class="promo-fine">Applications are reviewed by the KolonoEX team. Terms are set per channel on approval.</p>
       <div class="promo-foot">
