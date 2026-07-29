@@ -58,24 +58,26 @@
          28% -> 35%           mark tilts, letters slide out
          35% -> 95%           wordmark at rest                (~24s)  */
     @keyframes logoMark {
-      0%, 28%  { transform: perspective(420px) scale(1.34) rotateY(0deg); }
-      31%      { transform: perspective(420px) scale(1.16) rotateY(-16deg); }
-      35%, 95% { transform: perspective(420px) scale(1)    rotateY(0deg); }
-      99%,100% { transform: perspective(420px) scale(1.34) rotateY(0deg); }
+      0%,  60% { transform: perspective(420px) scale(1)    rotateY(0deg); }
+      64%, 94% { transform: perspective(420px) scale(1.34) rotateY(0deg); }
+      97%      { transform: perspective(420px) scale(1.16) rotateY(-16deg); }
+      100%     { transform: perspective(420px) scale(1)    rotateY(0deg); }
     }
-    .logo-anim .logo-clip { display:inline-block; overflow:hidden; max-width:0;
+    /* base state matches the 0% keyframe, so the very first painted frame
+       already shows the full wordmark — no flash of a bare mark on open */
+    .logo-anim .logo-clip { display:inline-block; overflow:hidden; max-width:8.6em;
       animation: logoClip 40s cubic-bezier(.5,0,.2,1) infinite; }
     @keyframes logoClip {
-      0%, 28%  { max-width:0; }
-      35%, 95% { max-width:8.6em; }
-      99%,100% { max-width:0; }
+      0%,  60% { max-width:8.6em; }
+      64%, 94% { max-width:0; }
+      100%     { max-width:8.6em; }
     }
     .logo-anim .logo-rest { display:inline-block; white-space:nowrap; color:var(--green); font-weight:600; letter-spacing:0.5px;
-      transform:translateX(-100%); animation: logoWord 40s cubic-bezier(.5,0,.2,1) infinite; }
+      transform:translateX(0); animation: logoWord 40s cubic-bezier(.5,0,.2,1) infinite; }
     @keyframes logoWord {
-      0%, 28%  { transform:translateX(-100%); }
-      35%, 95% { transform:translateX(0); }
-      99%,100% { transform:translateX(-100%); }
+      0%,  60% { transform:translateX(0); }
+      64%, 94% { transform:translateX(-100%); }
+      100%     { transform:translateX(0); }
     }
     @media (prefers-reduced-motion: reduce) {
       .logo-anim .logo-k { animation:none; transform:none; }
@@ -654,6 +656,82 @@
     .ch-tool i { font-size:20px; }
     .ch-open { flex:1; padding:13px; border:none; border-radius:11px; background:var(--green); color:var(--bg); font-size:15px; font-weight:600; cursor:pointer; }
     .ch-close { flex:1; padding:13px; border:none; border-radius:11px; background:var(--red); color:#fff; font-size:15px; font-weight:600; cursor:pointer; }
+    /* ── check-in: streak level furniture ── */
+    .ci-spin { display:inline-block; animation: ciSpin .9s linear infinite; }
+    @keyframes ciSpin { to { transform: rotate(360deg); } }
+    .ci-chips { display:flex; gap:5px; flex-wrap:wrap; margin-bottom:9px; }
+    .ci-chip { display:inline-flex; align-items:center; gap:3px; font-size:9.5px; font-weight:700;
+      letter-spacing:.2px; padding:2px 6px; border-radius:5px; white-space:nowrap;
+      color:var(--text-2); background:rgba(255,255,255,.05); border:0.5px solid var(--line-2); }
+    .ci-chip i { font-size:11px; }
+    .ci-chip.hot  { color:#ff9d5c; background:rgba(255,157,92,.12); border-color:rgba(255,157,92,.34); }
+    .ci-chip.mult { color:var(--gold-2); background:rgba(255,212,94,.12); border-color:rgba(255,212,94,.36); }
+    .ci-chip.ice  { color:#7ec8ff; background:rgba(126,200,255,.12); border-color:rgba(126,200,255,.34); }
+    .ci-goal { margin-bottom:11px; }
+    .ci-bar { height:3px; border-radius:3px; background:rgba(255,255,255,.07); overflow:hidden; margin-bottom:5px; }
+    .ci-bar i { display:block; height:100%; border-radius:3px;
+      background:linear-gradient(90deg,var(--green),var(--gold-2)); transition:width .5s ease; }
+    .ci-goal span { font-size:9.5px; color:var(--text-2); }
+    .ci-goal b { color:var(--text-1b); font-weight:700; }
+
+    /* ── partner promo ── */
+    #promoOverlay { position:fixed; inset:0; z-index:420; display:none;
+      align-items:center; justify-content:center; padding:18px;
+      background:rgba(4,6,9,.78); -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px); }
+    #promoOverlay.open { display:flex; animation: promoFade .24s ease; }
+    @keyframes promoFade { from { opacity:0; } to { opacity:1; } }
+    .promo-card { width:100%; max-width:360px; max-height:88vh; overflow-y:auto;
+      background:linear-gradient(168deg,#1a1f2b,var(--surface-1) 62%);
+      border:0.5px solid #33405a; border-radius:20px; overflow:hidden;
+      box-shadow:0 26px 60px -14px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,255,255,.09);
+      animation: promoRise .34s cubic-bezier(.24,.9,.3,1); scrollbar-width:none; }
+    .promo-card::-webkit-scrollbar { display:none; }
+    @keyframes promoRise { from { transform:translateY(16px) scale(.97); opacity:0; } to { transform:none; opacity:1; } }
+    .promo-hero { position:relative; aspect-ratio:900/502; background:var(--bg); }
+    .promo-hero img { width:100%; height:100%; object-fit:cover; display:block; }
+    .promo-hero::after { content:''; position:absolute; inset:0;
+      background:linear-gradient(180deg, transparent 42%, rgba(19,21,28,.55) 76%, #1b202c 100%); }
+    .promo-tag { position:absolute; top:11px; left:11px; z-index:2;
+      display:inline-flex; align-items:center; gap:4px;
+      font-size:9px; font-weight:800; letter-spacing:.13em; text-transform:uppercase;
+      color:var(--purple); background:rgba(20,16,32,.72); border:0.5px solid rgba(176,123,255,.45);
+      padding:4px 8px; border-radius:100px; -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); }
+    .promo-tag i { font-size:11px; }
+    .promo-x { position:absolute; top:9px; right:9px; z-index:2; width:30px; height:30px;
+      display:grid; place-items:center; border-radius:50%; cursor:pointer; font-size:17px; color:#cfd6e6;
+      background:rgba(10,12,17,.6); border:0.5px solid rgba(255,255,255,.14);
+      -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); }
+    .promo-body { padding:2px 18px 18px; }
+    .promo-body h3 { font-size:19px; font-weight:800; letter-spacing:-.02em; color:#eef3fb; margin-bottom:7px; }
+    .promo-body h3 em { font-style:normal; color:var(--green); }
+    .promo-lede { font-size:12.5px; line-height:1.6; color:#95a1b8; margin-bottom:14px; }
+    .promo-list { list-style:none; display:flex; flex-direction:column; gap:9px; margin-bottom:15px; }
+    .promo-list li { display:flex; gap:9px; align-items:flex-start; font-size:12.2px; line-height:1.5; color:#9aa6bd; }
+    .promo-list i { flex-shrink:0; width:21px; height:21px; border-radius:6px; display:grid; place-items:center;
+      font-size:12px; color:var(--green); background:rgba(78,234,160,.11); border:0.5px solid rgba(78,234,160,.26); }
+    .promo-list b { color:#e2e8f0; font-weight:600; }
+    .promo-cta { width:100%; padding:13px; border:0; border-radius:12px; cursor:pointer;
+      font-size:14.5px; font-weight:700; color:#08130d;
+      background:linear-gradient(135deg,var(--green),#3fd190);
+      box-shadow:0 6px 18px -4px rgba(78,234,160,.45);
+      transition:filter .13s ease, transform .09s ease; }
+    .promo-cta:active { transform:scale(.977); filter:brightness(.94); }
+    .promo-fine { font-size:10px; color:var(--text-3); text-align:center; margin-top:9px; line-height:1.5; }
+    .promo-foot { display:flex; align-items:center; justify-content:space-between; gap:10px;
+      margin-top:14px; padding-top:12px; border-top:0.5px solid var(--line); }
+    .promo-never { display:flex; align-items:center; gap:7px; cursor:pointer;
+      font-size:11px; color:var(--text-2); min-height:44px; -webkit-tap-highlight-color:transparent; }
+    .promo-never input { position:absolute; opacity:0; pointer-events:none; }
+    .promo-never .promo-box { width:17px; height:17px; flex-shrink:0; border-radius:5px;
+      border:1.5px solid #3a465e; display:grid; place-items:center;
+      font-size:11px; line-height:1; color:#08130d;
+      transition:background .15s ease, border-color .15s ease; }
+    .promo-never input:checked + .promo-box { background:var(--green); border-color:var(--green); }
+    .promo-never input:checked + .promo-box::after { content:'\2713'; font-weight:900; }
+    .promo-later { background:none; border:0; cursor:pointer; padding:0 2px; min-height:44px;
+      font-size:12.5px; font-weight:600; color:var(--text-2); }
+    .promo-later:active { color:var(--text-1); }
+
     /* ─────────── audit: interaction feedback ─────────── */
     /* every primary control now confirms the press */
     .btn, .action-btn, .fut-box, .dd, .bonus-btn, .sup-send {
@@ -982,6 +1060,31 @@
 <div class="sheet-overlay" id="sheetOverlay" onclick="closeSheet(event)">
   <div class="sheet" id="sheetBody" onclick="event.stopPropagation()"></div>
 </div>
+<div id="promoOverlay">
+  <div class="promo-card" onclick="event.stopPropagation()">
+    <div class="promo-hero">
+      <span class="promo-tag"><i class="ti ti-diamond"></i> Partner Program</span>
+      <div class="promo-x" onclick="promoClose()"><i class="ti ti-x"></i></div>
+      <img src="partner-banner.jpg" alt="">
+    </div>
+    <div class="promo-body">
+      <h3>Run a crypto channel?<br><em>Get paid for your audience.</em></h3>
+      <p class="promo-lede">KolonoEX partners earn from every trader they bring in &mdash; with terms set for their own channel, not a flat affiliate rate.</p>
+      <ul class="promo-list">
+        <li><i class="ti ti-percentage"></i><span><b>Commission on your referrals' deposits</b>, at a rate agreed for your channel</span></li>
+        <li><i class="ti ti-user-plus"></i><span><b>A higher signup bonus</b> than the standard $0.5 per invite</span></li>
+        <li><i class="ti ti-bolt"></i><span><b>Boosted task rewards</b>, so your audience earns more than everyone else</span></li>
+        <li><i class="ti ti-chart-arrows-vertical"></i><span><b>Your own referral code</b> and live stats in the app</span></li>
+      </ul>
+      <button class="promo-cta" onclick="promoGo()">Apply as a partner</button>
+      <p class="promo-fine">Applications are reviewed by the KolonoEX team. Terms are set per channel on approval.</p>
+      <div class="promo-foot">
+        <label class="promo-never"><input type="checkbox" id="promoNever"><span class="promo-box"></span>Don't show this again</label>
+        <button class="promo-later" onclick="promoClose()">Maybe later</button>
+      </div>
+    </div>
+  </div>
+</div>
 <div class="toast-wrap" id="toastWrap"></div>
 <div id="chartOverlay"></div>
 <div id="supportOverlay">
@@ -1168,18 +1271,32 @@
   // ── Daily Check-in (7-day streak) ──
   // Days 1-3 → 0.1, days 4-6 → 0.2, day 7 → 1 USDT bonus. Missing a day resets to day 1.
   const CHECKIN_REWARDS=[0.1,0.1,0.1,0.2,0.2,0.2,1];
+  // Mirrors api/sync.js. Display only — the server computes and credits every
+  // reward, so a tampered client changes nothing but its own labels.
+  const CI_TIERS=[{min:180,mult:2},{min:90,mult:1.75},{min:30,mult:1.5},{min:7,mult:1.25},{min:0,mult:1}];
+  const CI_MILESTONES=[{at:7,bonus:1},{at:30,bonus:5},{at:90,bonus:15},{at:180,bonus:40}];
+  function ciTier(streak){ return CI_TIERS.find(t=>streak>=t.min)||CI_TIERS[CI_TIERS.length-1]; }
+  function ciNextMs(streak){ const m=CI_MILESTONES.find(x=>x.at>streak); return m?{...m,left:m.at-streak}:null; }
   // Day keys come from the server (UTC) whenever we have them. Deriving them
   // locally breaks in any timezone where the local date differs from UTC (e.g.
   // UTC+03:30 between 00:00 and 03:29), which left an already-claimed check-in
   // looking claimable. Local values are only a pre-first-sync fallback.
   let srvToday=null, srvYest=null;
-  function checkinInfo(){ const c=state.checkin||{last:'',streak:0}; const today=srvToday||dayStr(), yest=srvYest||dayStrOffset(-1); const streak=c.streak||0;
-    const claimedToday=(c.last===today);
-    let doneDays, claimDay; // doneDays = filled cells in current cycle; claimDay = day claimable today (0 = already claimed)
-    if(claimedToday){ doneDays=streak; claimDay=0; }
-    else if(c.last===yest && streak<7){ doneDays=streak; claimDay=streak+1; } // continuing streak
-    else { doneDays=0; claimDay=1; }                                          // missed / first time / new cycle after day 7
-    return { doneDays, claimDay, claimedToday, streak }; }
+  function ciFromServer(o,fallbackStreak){
+    o=o||{}; return { last:String(o.last||''), streak:parseInt(o.streak,10)||fallbackStreak||0,
+                      freeze:Math.max(0,parseInt(o.freeze,10)||0), best:Math.max(0,parseInt(o.best,10)||0) }; }
+
+  function checkinInfo(){ const c=state.checkin||{last:'',streak:0,freeze:0}; const today=srvToday, yest=srvYest;
+    const streak=c.streak||0, freeze=c.freeze||0;
+    const claimedToday=!!today && c.last===today;
+    const continues=!!yest && c.last===yest;
+    // The streak itself now runs indefinitely; the 7 cells show its current week.
+    let doneDays, claimDay, week;
+    if(claimedToday){   doneDays=((streak-1)%7)+1; claimDay=0;          week=Math.floor((streak-1)/7)+1; }
+    else if(continues){ doneDays=streak%7;         claimDay=doneDays+1; week=Math.floor(streak/7)+1; }
+    else {              doneDays=0;                claimDay=1;          week=1; }
+    return { doneDays, claimDay, claimedToday, streak, freeze, week,
+             atRisk: !claimedToday && !continues && streak>0 }; }
   // Check-in is granted by the server (/api/sync action=checkin), which owns the
   // streak and the "already claimed today" guard.
   let ciBusy=false;
@@ -1195,26 +1312,70 @@
         toast((d&&d.error)||'Could not check in','err'); renderCheckin(); return;
       }
       const day=parseInt(d.day,10)||1, reward=parseFloat(d.reward)||0;
-      if(d.checkin) state.checkin={last:d.checkin.last||'',streak:parseInt(d.checkin.streak,10)||day};
+      const streak=parseInt(d.streak,10)||day, milestone=parseFloat(d.milestone)||0, total=Math.round((reward+milestone)*100)/100;
+      if(d.checkin) state.checkin=ciFromServer(d.checkin,day);
       applyServerBonus(d.bonus);
-      addTx({type:'Daily Check-in',sub:'Day '+day+' reward',value:reward,sign:'+',coin:'USDT',isUSDT:true});
-      pushNotification({title:'Daily check-in 🎁',text:'Day '+day+' streak · +'+reward+' USDT bonus',kind:'bonus'});
+      const ciSub='Day '+day+' \u00b7 '+streak+'-day streak'+(milestone>0?' \u00b7 '+streak+'-day badge':'');
+      addTx({type:'Daily Check-in',sub:ciSub,value:total,sign:'+',coin:'USDT',isUSDT:true});
+      pushNotification({title:'Daily check-in \u{1F381}',text:ciSub+' \u00b7 +'+total+' USDT bonus',kind:'bonus'});
       save(); renderCheckin(); setBonusBtn(); renderAssets(); tgHaptic()&&tgHaptic().notificationOccurred('success');
-      toast((day===7?'🏆 Day 7! ':'🎁 Day '+day+' · ')+'+'+fmtNum(reward,2)+' USDT bonus claimed','ok');
-      botNotify('🎁 Daily check-in — Day '+day+' claimed (+'+reward+' USDT bonus)');
+      const ciHead = milestone>0 ? ('\u{1F3C6} '+streak+'-day badge! ')
+                   : d.usedFreeze ? '\u2744\uFE0F Freeze used \u00b7 streak saved \u00b7 '
+                   : (day===7 ? '\u{1F3C6} Week complete! ' : '\u{1F381} Day '+day+' \u00b7 ');
+      toast(ciHead+'+'+fmtNum(total,2)+' USDT bonus claimed','ok');
+      botNotify('\u{1F381} Daily check-in \u2014 '+ciSub+' (+'+total+' USDT bonus)');
     }catch(e){ toast('Network error','err'); }
     finally{ ciBusy=false; } }
-  function renderCheckin(){ const el=document.getElementById('daily-checkin'); if(!el) return; const info=checkinInfo();
+  function ciCells(doneDays, claimDay, claimedToday, mult){
     let cells='';
-    for(let i=1;i<=7;i++){ const rw=CHECKIN_REWARDS[i-1]; const claimed=i<=info.doneDays; const isToday=(i===info.claimDay&&!info.claimedToday);
+    for(let i=1;i<=7;i++){ const rw=Math.round(CHECKIN_REWARDS[i-1]*mult*100)/100;
+      const claimed=i<=doneDays; const isToday=(i===claimDay&&!claimedToday);
       const cls=(i===7?'d7 ':'')+(claimed?'claimed':(isToday?'today':'locked'));
       const ic=claimed?'<i class="ti ti-circle-check"></i>':(i===7?'<i class="ti ti-trophy"></i>':'<i class="ti ti-gift"></i>');
       cells+='<div class="ci-day '+cls+'"><div class="ci-dn">Day '+i+'</div><div class="ci-ic">'+ic+'</div><div class="ci-rw">+'+rw+'</div></div>'; }
-    const sub=info.claimedToday ? ('🔥 '+info.doneDays+'-day streak · back tomorrow') : ('Day '+info.claimDay+' of 7 · don\'t break the streak');
+    return cells; }
+
+  function renderCheckin(){ const el=document.getElementById('daily-checkin'); if(!el) return;
+
+    // Until the server reports its calendar day we cannot know which cell is
+    // "today", and the device clock is not a safe stand-in: at UTC+3:30 the
+    // local date runs a day ahead of UTC every evening, which is exactly what
+    // made the wrong day light up and then correct itself a second later.
+    if(!srvToday){
+      el.innerHTML='<div class="checkin-card"><div class="ci-head"><div class="ci-title">'
+        +'<i class="ti ti-calendar-heart"></i> Daily Check-in</div><div class="ci-sub">syncing\u2026</div></div>'
+        +'<div class="ci-days">'+ciCells(0,0,false,1)+'</div>'
+        +'<button class="ci-btn done" disabled><i class="ti ti-loader-2 ci-spin"></i> Syncing\u2026</button></div>';
+      return; }
+
+    const info=checkinInfo();
+    const tier=ciTier(info.streak), nx=ciNextMs(info.streak);
+    const cells=ciCells(info.doneDays, info.claimDay, info.claimedToday, tier.mult);
+
+    const chips=[];
+    if(info.streak>0) chips.push('<span class="ci-chip hot"><i class="ti ti-flame"></i>'+info.streak+'d</span>');
+    if(info.week>1)   chips.push('<span class="ci-chip">Week '+info.week+'</span>');
+    if(tier.mult>1)   chips.push('<span class="ci-chip mult">\u00d7'+tier.mult+' rewards</span>');
+    if(info.freeze>0) chips.push('<span class="ci-chip ice"><i class="ti ti-snowflake"></i>'+info.freeze+'</span>');
+    const meta=chips.length?'<div class="ci-chips">'+chips.join('')+'</div>':'';
+
+    const goal=nx
+      ? '<div class="ci-goal"><div class="ci-bar"><i style="width:'+Math.min(100,Math.round(info.streak/nx.at*100))+'%"></i></div>'
+        +'<span>'+nx.left+' more day'+(nx.left===1?'':'s')+' \u2192 <b>'+nx.at+'-day badge</b> +'+nx.bonus+' USDT</span></div>'
+      : '<div class="ci-goal"><span>\u{1F3C6} Every milestone unlocked \u00b7 maximum rewards</span></div>';
+
+    const sub=info.claimedToday ? ('\u{1F525} '+info.streak+'-day streak \u00b7 back tomorrow')
+      : info.atRisk ? (info.freeze>0 ? 'Streak at risk \u00b7 a \u2744\uFE0F freeze may save it' : 'Streak broken \u00b7 start a new one')
+      : ('Day '+info.claimDay+' of 7 \u00b7 keep the streak alive');
+
+    const due=Math.round(CHECKIN_REWARDS[info.claimDay-1]*tier.mult*100)/100;
     const btn=info.claimedToday
       ? '<button class="ci-btn done" disabled><i class="ti ti-circle-check"></i> Checked in today</button>'
-      : '<button class="ci-btn" onclick="claimCheckin()"><i class="ti ti-gift"></i> Check in · +'+CHECKIN_REWARDS[info.claimDay-1]+' USDT</button>';
-    el.innerHTML='<div class="checkin-card"><div class="ci-head"><div class="ci-title"><i class="ti ti-calendar-heart"></i> Daily Check-in</div><div class="ci-sub">'+sub+'</div></div><div class="ci-days">'+cells+'</div>'+btn+'</div>'; }
+      : '<button class="ci-btn" onclick="claimCheckin()"><i class="ti ti-gift"></i> Check in \u00b7 +'+due+' USDT</button>';
+
+    el.innerHTML='<div class="checkin-card"><div class="ci-head"><div class="ci-title">'
+      +'<i class="ti ti-calendar-heart"></i> Daily Check-in</div><div class="ci-sub">'+sub+'</div></div>'
+      +'<div class="ci-days">'+cells+'</div>'+meta+goal+btn+'</div>'; }
   function checkSnap(){ const ds=dayStr(); if(!state.snap||state.snap.day!==ds||state.snap.v!==2){ state.snap={day:ds,equity:pnlEquity(),v:2}; save(); } return state.snap; }
   function todayProfit(){ const s=checkSnap(); const t=pnlEquity(); const pf=t-s.equity; return { pf, pct: s.equity>0?pf/s.equity*100:0 }; }
   function btcOf(usd){ const b=px('BTC'); if(!b||!usd) return '0.0'; const x=usd/b; return x.toLocaleString('en-US',{maximumFractionDigits:8}); }
@@ -1806,6 +1967,24 @@
     if(!recPoll){ recPoll=setInterval(()=>{ if(!document.getElementById('rec-body')){ clearInterval(recPoll); recPoll=null; return; } loadRecords(); }, 12000); } }
 
   // ── SHEETS ──
+  // ── Partner promo ──────────────────────────────────────────────────
+  // Shown once per install shortly after open. The checkbox is honoured
+  // whichever way the sheet is closed, so a user who ticks it and taps the CTA
+  // still never sees it again.
+  const PROMO_KEY='kx_promo_partner_v1';
+  function promoDone(){
+    try{ const cb=document.getElementById('promoNever');
+      if(cb&&cb.checked) localStorage.setItem(PROMO_KEY,'off'); }catch{} }
+  function promoClose(){ promoDone(); const ov=document.getElementById('promoOverlay');
+    if(ov) ov.classList.remove('open'); }
+  function promoGo(){ promoDone(); const ov=document.getElementById('promoOverlay');
+    if(ov) ov.classList.remove('open'); openPartner(); }
+  function maybePromo(){
+    try{ if(localStorage.getItem(PROMO_KEY)==='off') return; }catch{}
+    if(myPartner) return;                       // already applied or approved
+    const ov=document.getElementById('promoOverlay'); if(!ov) return;
+    ov.classList.add('open'); }
+
   function openSheet(html){ const ov=document.getElementById('sheetOverlay');
     clearTimeout(ov._closeT); ov.classList.remove('closing');   // cancel a pending exit
     document.getElementById('sheetBody').innerHTML=html; ov.classList.add('open'); }
@@ -2600,6 +2779,7 @@
     if(isAdmin()){ const ab=document.getElementById('adminBtn'); if(ab) ab.style.display=''; } }
 
   // boot
+  setTimeout(maybePromo, 1800);   // after first paint, and after partner state loads
   // if no feed ever arrives, stop shimmering and fall back to the placeholder
   setTimeout(()=>{ document.querySelectorAll('.skel-txt').forEach(e=>e.classList.remove('skel-txt')); }, 15000);
   initTelegram(); buildHomeList(); setFutTab('pos'); setSpotSub('orders'); setAssetTab('overview'); setBonusBtn(); bindPctSliders(); bindAssetSwipe(); renderCheckin(); startSupportStatus(); regenOB(); setInterval(regenOB,1500); renderAll(); startCountdown(); connectWS();

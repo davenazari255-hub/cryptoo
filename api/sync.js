@@ -82,7 +82,59 @@ async function effectiveTasks(upstashFn, userId) {
 // ── Daily check-in (7-day streak) ──
 // Mirrors the client's reward table; the server is the arbiter of which day is
 // claimable so clearing local storage cannot restart the cycle.
-const CHECKIN_REWARDS = [0.1, 0.1, 0.1, 0.2, 0.2, 0.2, 1];
+const CHECKIN_REWARDS = [0.1, 0.1, 0.1, 0.2, 0.2, 0.2, 1];   // one week of the cycle
+// The streak runs indefinitely. Each further week pays the same shape scaled by
+// the tier the streak has reached, plus a one-off badge at each milestone.
+const STREAK_TIERS = [
+  { min: 180, mult: 2 },
+  { min: 90,  mult: 1.75 },
+  { min: 30,  mult: 1.5 },
+  { min: 7,   mult: 1.25 },
+  { min: 0,   mult: 1 },
+];
+const STREAK_MILESTONES = { 7: 1, 30: 5, 90: 15, 180: 40 };  // paid once each, ever
+const FREEZE_EVERY = 10;   // one streak freeze earned per 10 consecutive days
+const FREEZE_MAX = 2;      // never bank more than this
+const streakMult = (n) => (STREAK_TIERS.find((t) => n >= t.min) || { mult: 1 }).mult;
+
+// Pure decision step for a check-in, split out so it can be tested directly.
+// `st` is the stored { last, streak, freeze, best, ms }; the three day keys are
+// today / yesterday / the day before, all from the server clock.
+function computeCheckin(st, today, yest, before) {
+  // parseInt, not `|| 0`: a stored string would make `+ 1` concatenate
+  // ('5' + 1 === '51'), which would fabricate a huge streak and tier.
+  const prevStreak = Math.max(0, parseInt(st.streak, 10) || 0);
+  const banked = Math.max(0, parseInt(st.freeze, 10) || 0);
+
+  // Continue, or spend a banked freeze to forgive exactly one missed day.
+  let streak, usedFreeze = false;
+  if (st.last === yest) {
+    streak = prevStreak + 1;
+  } else if (st.last === before && banked > 0) {
+    streak = prevStreak + 1; usedFreeze = true;
+  } else {
+    streak = 1;
+  }
+
+  const day = ((streak - 1) % 7) + 1;              // position within the current week
+  const mult = streakMult(streak);
+  const reward = Math.round((CHECKIN_REWARDS[day - 1] || 0) * mult * 100) / 100;
+
+  // Milestone badges pay once per account, tracked by the ms list.
+  const ms = Array.isArray(st.ms) ? st.ms.slice(0, 24) : [];
+  let milestone = 0;
+  if (STREAK_MILESTONES[streak] && !ms.includes(String(streak))) {
+    milestone = STREAK_MILESTONES[streak];
+    ms.push(String(streak));
+  }
+
+  let freeze = banked - (usedFreeze ? 1 : 0);
+  if (streak % FREEZE_EVERY === 0) freeze = Math.min(FREEZE_MAX, freeze + 1);
+
+  const credit = Math.round((reward + milestone) * 100) / 100;
+  const next = { last: today, streak, freeze, best: Math.max(parseInt(st.best, 10) || 0, streak), ms };
+  return { day, streak, mult, reward, milestone, freeze, usedFreeze, credit, next };
+}
 const dayKey = (ts) => { const d = ts ? new Date(ts) : new Date(); return d.getUTCFullYear() + '-' + (d.getUTCMonth() + 1) + '-' + d.getUTCDate(); };
 
 // Does this user satisfy a task's condition? Checked against server-held state
@@ -262,18 +314,22 @@ module.exports = async function handler(req, res) {
       const today = dayKey(), yest = dayKey(Date.now() - 86400000);
       if (st.last === today) return res.status(409).json({ error: 'Already checked in today', checkin: st, today, yesterday: yest });
 
-      const day = (st.last === yest && (st.streak || 0) < 7) ? (st.streak || 0) + 1 : 1;
-      const reward = CHECKIN_REWARDS[day - 1] || 0;
-      const next = { last: today, streak: day };
+      const before = dayKey(Date.now() - 172800000);   // the day before yesterday
+      const c = computeCheckin(st, today, yest, before);
+      const { day, streak, mult, reward, milestone, freeze, usedFreeze, credit, next } = c;
+
       await upstash(['SET', `checkin:${userId}`, JSON.stringify(next)]);
-      if (reward > 0) {
-        const nb = parseFloat(await upstash(['INCRBYFLOAT', `bonus:${userId}`, reward]));
+      if (credit > 0) {
+        const nb = parseFloat(await upstash(['INCRBYFLOAT', `bonus:${userId}`, credit]));
         await upstash(['SET', `bonus:${userId}`, String(Math.round(nb * 100) / 100)]);
-        await upstash(['LPUSH', `ledger:${userId}`, JSON.stringify({ usd: reward, coin: 'BONUS', note: 'Daily check-in day ' + day, at: Date.now() })]);
+        const note = 'Daily check-in day ' + day + ' (' + streak + '-day streak' +
+          (milestone > 0 ? ', ' + streak + '-day badge' : '') + (usedFreeze ? ', freeze used' : '') + ')';
+        await upstash(['LPUSH', `ledger:${userId}`, JSON.stringify({ usd: credit, coin: 'BONUS', note, at: Date.now() })]);
         await upstash(['LTRIM', `ledger:${userId}`, 0, 99]);
       }
       const bonus = parseFloat(await upstash(['GET', `bonus:${userId}`])) || 0;
-      return res.status(200).json({ ok: true, day, reward, bonus, checkin: next, today, yesterday: yest });
+      return res.status(200).json({ ok: true, day, streak, reward, milestone, mult, freeze, usedFreeze,
+        best: next.best, bonus, checkin: next, today, yesterday: yest });
     }
 
     // Merge & store the profile snapshot (preserve original join date).
@@ -367,3 +423,5 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: 'Server error: ' + ((err && err.message) || 'unknown') });
   }
 };
+
+module.exports.computeCheckin = computeCheckin;
