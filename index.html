@@ -650,11 +650,9 @@
     @keyframes sheetDown { from { transform: translateY(0); } to { transform: translateY(100%); } }
     @keyframes ovFade { from { opacity: 1; } to { opacity: 0; } }
 
-    /* coin logos fade in — the CDN fallback chain used to flicker.
-       Pure CSS on purpose: an onload hook can be missed on a cached image,
-       which would strand the logo at opacity 0. This always resolves to 1. */
-    .coin-logo { opacity: 0; animation: coinIn .26s ease .08s forwards; }
-    @keyframes coinIn { to { opacity: 1; } }
+    /* NOTE: no fade-in on .coin-logo. renderAssets() rebuilds its innerHTML on a
+       250ms throttle, so new <img> nodes are created ~4x a second and any entry
+       animation restarts each time, which strobes the logos. */
 
     /* ─────────── audit: honour reduced-motion globally ─────────── */
     /* previously only the logo animation respected this */
@@ -2448,7 +2446,7 @@
     if(chartOpen() && chartKl && chartKl.length){ drawChart(); updateChartStats(); } }
   function onTick(sym,price,chg){ const k=SYM_TO_KEY[sym]; if(!k) return; const p=parseFloat(price),c=parseFloat(chg); const up=prevPx[k]!=null?p>=prevPx[k]:true; prevPx[k]=p; prices[k]={p,chg:c};
     // cheap inline updates (text only)
-    ['home','mkt'].forEach(pref=>{ const pe=document.getElementById(pref+'-'+k+'-price'); if(pe){ pe.textContent=fmtUSD(p); pe.classList.remove('flash-up','flash-dn'); void pe.offsetWidth; pe.classList.add(up?'flash-up':'flash-dn'); setTimeout(()=>{pe.classList.remove('flash-up','flash-dn');},600); }
+    ['home','mkt'].forEach(pref=>{ const pe=document.getElementById(pref+'-'+k+'-price'); if(pe){ pe.textContent=fmtUSD(p); pe.classList.remove('flash-up','flash-dn','skel-txt'); void pe.offsetWidth; pe.classList.add(up?'flash-up':'flash-dn'); setTimeout(()=>{pe.classList.remove('flash-up','flash-dn');},600); }
       const ce=document.getElementById(pref+'-'+k+'-chg'); if(ce){ const s=c>=0?'+':''; ce.textContent=s+c.toFixed(2)+'%'; ce.className='badge '+(c>=0?'badge-up':'badge-dn'); } });
     if(k===ui.spotPair){ renderSpotHead(); if(ui.spotType==='Market') setV('spot-price',p.toFixed(dp(k))); }
     if(k===ui.futPair){ renderFutHead(); if(ui.futType==='Market') setV('fut-price',p.toFixed(dp(k))); }
@@ -2517,6 +2515,8 @@
     if(isAdmin()){ const ab=document.getElementById('adminBtn'); if(ab) ab.style.display=''; } }
 
   // boot
+  // if no feed ever arrives, stop shimmering and fall back to the placeholder
+  setTimeout(()=>{ document.querySelectorAll('.skel-txt').forEach(e=>e.classList.remove('skel-txt')); }, 15000);
   initTelegram(); buildHomeList(); setFutTab('pos'); setSpotSub('orders'); setAssetTab('overview'); setBonusBtn(); bindPctSliders(); bindAssetSwipe(); renderCheckin(); startSupportStatus(); regenOB(); setInterval(regenOB,1500); renderAll(); startCountdown(); connectWS();
   updateBellBadge();
   // pull any deposits credited server-side while the app was closed, then keep checking
