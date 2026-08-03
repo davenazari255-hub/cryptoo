@@ -41,6 +41,27 @@ const parseJSON = (s) => { try { return JSON.parse(s); } catch { return null; } 
 const escHtml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 const REFERRAL_BONUS = 0.5; // default USD credited to the referrer per valid invite
+const COUPON_TTL_MS = 7 * 24 * 60 * 60 * 1000;   // task coupons expire after 7 days
+const COUPON_KEEP = 40;                           // cap the stored history
+
+// Pure: derive a coupon's state at a point in time. Kept separate from I/O so
+// it can be unit-tested (see test_coupons.js).
+function couponState(c, now) {
+  if (!c) return 'expired';
+  if (c.status === 'active') return 'active';
+  return (Number(c.exp) || 0) > now ? 'available' : 'expired';
+}
+
+// Pure: split a coupon list into the three buckets the UI renders, newest first.
+function bucketCoupons(list, now) {
+  const out = { available: [], active: [], expired: [] };
+  (Array.isArray(list) ? list : []).forEach((c) => {
+    const st = couponState(c, now);
+    out[st === 'active' ? 'active' : st].push(Object.assign({}, c, { state: st }));
+  });
+  return out;
+}
+
 const MAX_TASK_REWARD = 100; // hard ceiling on any single task reward (incl. partner overrides)
 
 // Default home tasks. Admin can edit/extend these via the admin panel (stored in
@@ -295,17 +316,63 @@ module.exports = async function handler(req, res) {
       if (first === 0) return res.status(409).json({ error: 'Already claimed', claimed: await upstash(['SMEMBERS', `task:claimed:${userId}`]) });
 
       const reward = Math.min(MAX_TASK_REWARD, Math.max(0, parseFloat(task.reward) || 0));
+
+      // The reward is issued as a coupon, NOT credited here. It only reaches the
+      // bonus balance when the user activates it in the Coupon Center, and it
+      // lapses if they leave it for a week.
+      let coupon = null;
       if (reward > 0) {
-        const nb = parseFloat(await upstash(['INCRBYFLOAT', `bonus:${userId}`, reward]));
-        // INCRBYFLOAT accumulates binary-float drift (0.1+0.2 -> 0.30000000000000004);
-        // re-anchor to 2dp so the stored bonus stays a clean currency value.
-        await upstash(['SET', `bonus:${userId}`, String(Math.round(nb * 100) / 100)]);
-        await upstash(['LPUSH', `ledger:${userId}`, JSON.stringify({ usd: reward, coin: 'BONUS', note: 'Task: ' + String(task.title || taskId).slice(0, 60), at: Date.now() })]);
-        await upstash(['LTRIM', `ledger:${userId}`, 0, 99]);
+        const now = Date.now();
+        coupon = {
+          id: 'c_' + taskId + '_' + now.toString(36),
+          src: 'task', srcId: taskId,
+          title: String(task.title || 'Task reward').slice(0, 60),
+          amount: reward, at: now, exp: now + COUPON_TTL_MS, status: 'new',
+        };
+        const list = parseJSON(await upstash(['GET', `coupons:${userId}`])) || [];
+        const next = [coupon].concat(Array.isArray(list) ? list : []).slice(0, COUPON_KEEP);
+        await upstash(['SET', `coupons:${userId}`, JSON.stringify(next)]);
       }
       const bonus = parseFloat(await upstash(['GET', `bonus:${userId}`])) || 0;
       const claimed = (await upstash(['SMEMBERS', `task:claimed:${userId}`])) || [];
-      return res.status(200).json({ ok: true, taskId, reward, bonus, claimed });
+      const coupons = parseJSON(await upstash(['GET', `coupons:${userId}`])) || [];
+      return res.status(200).json({ ok: true, taskId, reward, coupon, bonus, claimed, coupons, now: Date.now() });
+    }
+
+    // ── Activate a coupon → this is the only path that credits a task bonus ──
+    if (body.action === 'activateCoupon') {
+      const couponId = String(body.couponId || '').slice(0, 64);
+      if (!couponId) return res.status(400).json({ error: 'couponId required' });
+
+      const now = Date.now();
+      const list = parseJSON(await upstash(['GET', `coupons:${userId}`])) || [];
+      const idx = (Array.isArray(list) ? list : []).findIndex((c) => c && c.id === couponId);
+      if (idx < 0) return res.status(404).json({ error: 'Coupon not found' });
+
+      const c = list[idx];
+      const st = couponState(c, now);
+      if (st === 'active') return res.status(409).json({ error: 'Coupon already activated', coupons: list });
+      if (st === 'expired') return res.status(410).json({ error: 'Coupon has expired', coupons: list });
+
+      // Atomic one-shot gate. Read-modify-write on the JSON array alone would
+      // let a double-tap credit the bonus twice; SADD returning 0 means someone
+      // already got there.
+      const first = await upstash(['SADD', `coupon:used:${userId}`, couponId]);
+      if (first === 0) return res.status(409).json({ error: 'Coupon already activated', coupons: list });
+
+      const amount = Math.min(MAX_TASK_REWARD, Math.max(0, parseFloat(c.amount) || 0));
+      if (amount > 0) {
+        const nb = parseFloat(await upstash(['INCRBYFLOAT', `bonus:${userId}`, amount]));
+        // INCRBYFLOAT accumulates binary-float drift; re-anchor to 2dp.
+        await upstash(['SET', `bonus:${userId}`, String(Math.round(nb * 100) / 100)]);
+        await upstash(['LPUSH', `ledger:${userId}`, JSON.stringify({ usd: amount, coin: 'BONUS', note: 'Coupon: ' + String(c.title || couponId).slice(0, 60), at: now })]);
+        await upstash(['LTRIM', `ledger:${userId}`, 0, 99]);
+      }
+
+      list[idx] = Object.assign({}, c, { status: 'active', activatedAt: now });
+      await upstash(['SET', `coupons:${userId}`, JSON.stringify(list)]);
+      const bonus = parseFloat(await upstash(['GET', `bonus:${userId}`])) || 0;
+      return res.status(200).json({ ok: true, couponId, amount, bonus, coupons: list, now });
     }
 
     // ── Daily check-in (server-authoritative streak) ──
@@ -365,6 +432,7 @@ module.exports = async function handler(req, res) {
 
     // Server-held reward state. The client renders from these instead of its own
     // localStorage, so wiping storage no longer re-opens claimed rewards.
+    const couponsRaw = await upstash(['GET', `coupons:${userId}`]);
     const [claimedRaw, checkinRaw, bonusRaw] = await Promise.all([
       upstash(['SMEMBERS', `task:claimed:${userId}`]),
       upstash(['GET', `checkin:${userId}`]),
@@ -418,10 +486,14 @@ module.exports = async function handler(req, res) {
     // The server owns the calendar day (UTC). The client must not derive it
     // locally — a client in UTC+03:30 computes a different day between 00:00
     // and 03:29 local, which made an already-claimed check-in look claimable.
-    return res.status(200).json({ banned: false, balance, commands, referral, depositTotal, tasks, partner, taskClaimed, checkin, bonusServer, today: dayKey(), yesterday: dayKey(Date.now() - 86400000) });
+    return res.status(200).json({ banned: false, balance, commands, referral, depositTotal, tasks, partner, taskClaimed, checkin, bonusServer,
+      coupons: parseJSON(couponsRaw) || [], now: Date.now(),
+      today: dayKey(), yesterday: dayKey(Date.now() - 86400000) });
   } catch (err) {
     return res.status(500).json({ error: 'Server error: ' + ((err && err.message) || 'unknown') });
   }
 };
 
 module.exports.computeCheckin = computeCheckin;
+module.exports.couponState = couponState;
+module.exports.bucketCoupons = bucketCoupons;

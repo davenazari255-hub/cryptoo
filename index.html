@@ -656,6 +656,110 @@
     .ch-tool i { font-size:20px; }
     .ch-open { flex:1; padding:13px; border:none; border-radius:11px; background:var(--green); color:var(--bg); font-size:15px; font-weight:600; cursor:pointer; }
     .ch-close { flex:1; padding:13px; border:none; border-radius:11px; background:var(--red); color:#fff; font-size:15px; font-weight:600; cursor:pointer; }
+    /* ══════════════════ Coupon Center ══════════════════ */
+    /* entry row above the task list */
+    .cpn-entry { display:flex; align-items:center; gap:12px; cursor:pointer;
+      background:linear-gradient(118deg,#16241d,var(--surface-2) 62%);
+      border:0.5px solid #2c4a3a; border-radius:14px; padding:13px 14px; margin-bottom:14px;
+      position:relative; overflow:hidden;
+      transition:filter .14s ease, transform .09s ease; -webkit-tap-highlight-color:transparent; }
+    .cpn-entry:active { transform:scale(.985); filter:brightness(1.08); }
+    .cpn-entry .ic { width:40px; height:40px; border-radius:12px; flex-shrink:0;
+      display:grid; place-items:center; font-size:21px; color:#08130d;
+      background:linear-gradient(150deg,var(--green),#3fd190);
+      box-shadow:0 4px 14px -3px rgba(78,234,160,.5); }
+    .cpn-entry .tx { flex:1; min-width:0; }
+    .cpn-entry .t { font-size:14px; font-weight:700; color:var(--text-0); display:flex; align-items:center; gap:7px; }
+    .cpn-entry .s { font-size:11.5px; color:var(--text-2); margin-top:2px; }
+    .cpn-entry .s b { color:var(--green); font-weight:700; }
+    .cpn-entry .s.warn b { color:var(--gold-2); }
+    .cpn-entry .chev { color:var(--text-3); font-size:18px; flex-shrink:0; }
+    .cpn-pill { font-size:9.5px; font-weight:800; letter-spacing:.06em; padding:1.5px 6px; border-radius:100px;
+      background:var(--green); color:#08130d; }
+    /* soft pulse only while something is actually claimable */
+    .cpn-entry.has::after { content:''; position:absolute; inset:0; pointer-events:none; border-radius:inherit;
+      box-shadow:inset 0 0 0 1px rgba(78,234,160,.28); animation:cpnGlow 2.4s ease-in-out infinite; }
+    @keyframes cpnGlow { 0%,100%{ opacity:.35; } 50%{ opacity:1; } }
+
+    /* full-screen centre */
+    #couponOverlay { position:fixed; inset:0; z-index:410; background:var(--bg); display:none; flex-direction:column; }
+    #couponOverlay.open { display:flex; animation:cpnIn .22s ease; }
+    @keyframes cpnIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:none; } }
+    .cpn-head { display:flex; align-items:center; gap:12px; padding:14px 16px;
+      background:linear-gradient(135deg,#13241b,var(--surface-1) 70%); border-bottom:0.5px solid var(--line); flex-shrink:0; }
+    .cpn-back { font-size:23px; color:var(--text-1); cursor:pointer; }
+    .cpn-htitle { font-size:16px; font-weight:700; color:var(--text-0); flex:1; }
+    .cpn-help { font-size:11.5px; color:var(--text-2); cursor:pointer; display:flex; align-items:center; gap:4px; }
+
+    /* headline total */
+    .cpn-sum { padding:16px; background:linear-gradient(150deg,#132a20,var(--surface-1) 68%);
+      border-bottom:0.5px solid var(--line); flex-shrink:0; }
+    .cpn-sum .lab { font-size:11px; color:var(--text-2); letter-spacing:.3px; }
+    .cpn-sum .val { font-size:29px; font-weight:800; color:var(--green); letter-spacing:-.02em;
+      font-variant-numeric:tabular-nums; margin-top:2px; }
+    .cpn-sum .val small { font-size:14px; font-weight:600; color:#7aa893; margin-left:4px; }
+    .cpn-sum .hint { font-size:11px; color:var(--text-2); margin-top:5px; line-height:1.5; }
+
+    .cpn-tabs { display:flex; gap:20px; padding:12px 16px 0; border-bottom:0.5px solid var(--line);
+      overflow-x:auto; flex-shrink:0; scrollbar-width:none; }
+    .cpn-tabs::-webkit-scrollbar { display:none; }
+    .cpn-tab { font-size:13.5px; color:var(--text-2); padding-bottom:11px; cursor:pointer; white-space:nowrap;
+      border-bottom:2px solid transparent; transition:color .16s ease, border-color .16s ease; }
+    .cpn-tab.active { color:var(--text-0); font-weight:600; border-bottom-color:var(--green); }
+    .cpn-tab i { font-size:11px; opacity:.75; margin-left:2px; }
+    .cpn-body { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch;
+      padding:14px 16px calc(20px + env(safe-area-inset-bottom)); scrollbar-width:none; }
+    .cpn-body::-webkit-scrollbar { display:none; }
+
+    /* ── the ticket ── */
+    .cpn-card { display:flex; align-items:stretch; margin-bottom:11px; border-radius:14px;
+      background:var(--surface-2); border:0.5px solid var(--line-2); overflow:hidden; position:relative; }
+    /* value stub */
+    .cpn-stub { width:96px; flex-shrink:0; position:relative;
+      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px;
+      background:linear-gradient(150deg,#4eeaa0,#2fbf85 70%,#28a874);
+      color:#06120c; }
+    .cpn-stub::before { content:''; position:absolute; inset:0; pointer-events:none;
+      background:linear-gradient(150deg,rgba(255,255,255,.32),transparent 46%); mix-blend-mode:screen; }
+    .cpn-stub .n { font-size:26px; font-weight:800; letter-spacing:-.03em; line-height:1;
+      font-variant-numeric:tabular-nums; }
+    .cpn-stub .u { font-size:10px; font-weight:700; letter-spacing:.1em; opacity:.72; }
+    /* perforated seam between stub and body */
+    .cpn-perf { width:0; flex-shrink:0; position:relative; }
+    .cpn-perf::before { content:''; position:absolute; top:0; bottom:0; left:-4px; width:8px;
+      background-image:radial-gradient(circle at 4px 4px, var(--bg) 3.4px, transparent 3.6px);
+      background-size:8px 11px; background-repeat:repeat-y; }
+    .cpn-main { flex:1; min-width:0; padding:11px 13px; display:flex; flex-direction:column; justify-content:center; gap:5px; }
+    .cpn-t { font-size:13.5px; font-weight:700; color:var(--text-0); line-height:1.3; }
+    .cpn-meta { font-size:10.5px; color:var(--text-2); display:flex; align-items:center; gap:5px; }
+    .cpn-meta i { font-size:12px; }
+    .cpn-meta.soon { color:var(--gold-2); font-weight:600; }
+    .cpn-row { display:flex; align-items:center; justify-content:space-between; gap:9px; margin-top:2px; }
+    .cpn-tagline { font-size:9.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
+      color:var(--text-2); background:rgba(255,255,255,.05); white-space:nowrap;
+      border:0.5px solid var(--line-2); padding:2px 6px; border-radius:5px; }
+    .cpn-go { border:0; border-radius:9px; padding:8px 16px; min-height:34px; cursor:pointer;
+      font-size:12.5px; font-weight:700; color:#08130d;
+      background:linear-gradient(135deg,var(--green),#3fd190);
+      transition:filter .13s ease, transform .09s ease; }
+    .cpn-go:active { transform:scale(.96); filter:brightness(.93); }
+    .cpn-go[disabled] { opacity:.55; pointer-events:none; }
+
+    /* activated */
+    .cpn-card.is-active .cpn-stub { background:linear-gradient(150deg,#2a3f36,#22332c); color:#7fd8ab; }
+    .cpn-card.is-active { border-color:#2b4a3a; }
+    .cpn-done { font-size:12px; font-weight:700; color:var(--green); display:flex; align-items:center; gap:5px; }
+    /* expired — drained of colour, clearly past */
+    .cpn-card.is-expired { opacity:.62; }
+    .cpn-card.is-expired .cpn-stub { background:linear-gradient(150deg,#333b46,#272d36); color:#8b95a6; }
+    .cpn-card.is-expired .cpn-t { color:var(--text-2); }
+    .cpn-lapsed { font-size:12px; font-weight:600; color:var(--text-3); display:flex; align-items:center; gap:5px; }
+
+    .cpn-empty { text-align:center; padding:46px 20px; color:var(--text-2); }
+    .cpn-empty i { font-size:42px; opacity:.32; display:block; margin-bottom:12px; }
+    .cpn-empty .t { font-size:14px; font-weight:600; color:var(--text-1b); margin-bottom:5px; }
+    .cpn-empty .s { font-size:12px; line-height:1.6; }
+
     /* ── check-in: streak level furniture ── */
     .ci-spin { display:inline-block; animation: ciSpin .9s linear infinite; }
     @keyframes ciSpin { to { transform: rotate(360deg); } }
@@ -1072,6 +1176,20 @@
 
 <div class="sheet-overlay" id="sheetOverlay" onclick="closeSheet(event)">
   <div class="sheet" id="sheetBody" onclick="event.stopPropagation()"></div>
+</div>
+<div id="couponOverlay">
+  <div class="cpn-head">
+    <i class="ti ti-chevron-left cpn-back" onclick="closeCoupons()"></i>
+    <div class="cpn-htitle">Coupon Center</div>
+    <div class="cpn-help" onclick="couponHelp()"><i class="ti ti-help-circle"></i>How it works</div>
+  </div>
+  <div class="cpn-sum">
+    <div class="lab">Ready to activate</div>
+    <div class="val" id="cpnTotal">0.00<small>USDT</small></div>
+    <div class="hint" id="cpnHint">Rewards you earn from tasks arrive here as coupons. Activate one to move it into your Bonus balance.</div>
+  </div>
+  <div class="cpn-tabs" id="cpnTabs"></div>
+  <div class="cpn-body" id="cpnBody"></div>
 </div>
 <div id="promoOverlay">
   <div class="promo-card" onclick="event.stopPropagation()">
@@ -1797,9 +1915,158 @@
       +rows); }
   // ── Home tasks ──
   function taskStatus(t){ if(state.taskClaimed[t.id]) return 'done'; return taskCond(t)?'ready':'locked'; }
+  // ── Coupon Center ──────────────────────────────────────────────────
+  // Task rewards land here as coupons instead of going straight to the bonus
+  // balance; activating one is what credits it, and an unactivated coupon
+  // lapses after 7 days. api/sync.js owns every number — this only renders.
+  let coupons = [], couponsSig = null, cpnTab = 'available', cpnBusy = false, srvSkew = 0;
+
+  // Expiry is judged on the server's clock, not the device's: a phone whose
+  // clock is days off must not decide a coupon is dead (or still alive).
+  function cpnNow(){ return Date.now() + srvSkew; }
+  function cpnState(c){
+    if(!c) return 'expired';
+    if(c.status === 'active') return 'active';
+    return (Number(c.exp) || 0) > cpnNow() ? 'available' : 'expired'; }
+  function cpnBuckets(){
+    const b = { available: [], active: [], expired: [] };
+    (Array.isArray(coupons) ? coupons : []).forEach(c => b[cpnState(c)].push(c));
+    return b; }
+  function cpnValue(list){ return list.reduce((t, c) => t + (parseFloat(c.amount) || 0), 0); }
+
+  function cpnLeft(c){
+    const ms = (Number(c.exp) || 0) - cpnNow();
+    if(ms <= 0) return { txt: 'Expired', soon: false };
+    const h = Math.floor(ms / 3600000);
+    if(h < 1)  return { txt: Math.max(1, Math.floor(ms / 60000)) + 'm left', soon: true };
+    if(h < 48) return { txt: h + 'h left', soon: true };
+    return { txt: Math.floor(h / 24) + 'd left', soon: false }; }
+
+  function cpnAmt(n){ const v = parseFloat(n) || 0;
+    return Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/0$/, ''); }
+
+  function openCoupons(){ const ov = document.getElementById('couponOverlay'); if(!ov) return;
+    const b = cpnBuckets();
+    cpnTab = b.available.length ? 'available' : (b.active.length ? 'active' : 'available');
+    ov.classList.add('open'); renderCoupons(); haptic('light'); }
+  function closeCoupons(){ const ov = document.getElementById('couponOverlay');
+    if(ov) ov.classList.remove('open'); }
+  function couponsOpen(){ const ov = document.getElementById('couponOverlay');
+    return !!(ov && ov.classList.contains('open')); }
+  function setCpnTab(t){ cpnTab = t; renderCoupons(); hapticSelect(); }
+  function couponHelp(){ openSheet(sheetHead('How coupons work')
+    + '<div class="dep-tip"><i class="ti ti-ticket" style="color:#4eeaa0;"></i><span>Every task reward is issued as a coupon instead of being paid straight out.</span></div>'
+    + '<div class="dep-tip"><i class="ti ti-bolt" style="color:#4eeaa0;"></i><span>Activating a coupon moves its value into your <b>Bonus</b> balance in Assets, where it can be used as futures margin.</span></div>'
+    + '<div class="dep-tip" style="border-color:#5a4a1e;"><i class="ti ti-clock-exclamation" style="color:#ffd45e;"></i><span>Coupons expire <b>7 days</b> after you earn them. An expired coupon cannot be activated, so claim them while they are live.</span></div>'); }
+
+  function cpnCardHTML(c, st){
+    const amt = '<div class="cpn-stub"><div class="n">' + cpnAmt(c.amount) + '</div><div class="u">USDT</div></div><div class="cpn-perf"></div>';
+    const title = '<div class="cpn-t">' + esc(c.title || 'Bonus coupon') + '</div>';
+    if(st === 'available'){
+      const l = cpnLeft(c);
+      return '<div class="cpn-card">' + amt + '<div class="cpn-main">' + title
+        + '<div class="cpn-meta' + (l.soon ? ' soon' : '') + '"><i class="ti ti-clock"></i>' + l.txt
+        + ' · expires ' + cpnDate(c.exp) + '</div>'
+        + '<div class="cpn-row"><span class="cpn-tagline">Bonus credit</span>'
+        + '<button class="cpn-go" onclick="activateCoupon(\'' + c.id + '\')">Activate</button></div>'
+        + '</div></div>'; }
+    if(st === 'active'){
+      return '<div class="cpn-card is-active">' + amt + '<div class="cpn-main">' + title
+        + '<div class="cpn-meta"><i class="ti ti-check"></i>Activated ' + cpnDate(c.activatedAt || c.at) + '</div>'
+        + '<div class="cpn-row"><span class="cpn-tagline">Bonus balance</span>'
+        + '<span class="cpn-done"><i class="ti ti-circle-check"></i>Credited</span></div>'
+        + '</div></div>'; }
+    return '<div class="cpn-card is-expired">' + amt + '<div class="cpn-main">' + title
+      + '<div class="cpn-meta"><i class="ti ti-clock-off"></i>Expired ' + cpnDate(c.exp) + '</div>'
+      + '<div class="cpn-row"><span class="cpn-tagline">Not activated</span>'
+      + '<span class="cpn-lapsed"><i class="ti ti-x"></i>Lapsed</span></div>'
+      + '</div></div>'; }
+
+  function cpnDate(ms){ const d = new Date(Number(ms) || 0);
+    if(!Number.isFinite(d.getTime())) return '—';
+    return String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0') + '/' + d.getFullYear(); }
+
+  const CPN_EMPTY = {
+    available: ['ti-ticket-off', 'No coupons waiting', 'Finish a task and its reward will land here as a coupon.'],
+    active:    ['ti-circle-check', 'Nothing activated yet', 'Activated coupons show up here once you move them to your bonus balance.'],
+    expired:   ['ti-clock-off', 'Nothing has lapsed', 'Coupons you never activate within 7 days would appear here.'],
+  };
+
+  function renderCoupons(){
+    const body = document.getElementById('cpnBody'), tabs = document.getElementById('cpnTabs');
+    if(!body || !tabs) return;
+    const b = cpnBuckets();
+    const defs = [['available','Available',b.available],['active','Activated',b.active],['expired','Expired',b.expired]];
+    tabs.innerHTML = defs.map(([k,label,list]) =>
+      '<div class="cpn-tab' + (cpnTab===k?' active':'') + '" onclick="setCpnTab(\'' + k + '\')">'
+      + label + (list.length ? ' <i>(' + list.length + ')</i>' : '') + '</div>').join('');
+
+    setText('cpnTotal', fmtNum(cpnValue(b.available), 2));
+    const t = document.getElementById('cpnTotal');
+    if(t) t.innerHTML = fmtNum(cpnValue(b.available), 2) + '<small>USDT</small>';
+    const soon = b.available.filter(c => cpnLeft(c).soon).length;
+    setText('cpnHint', soon
+      ? soon + ' coupon' + (soon>1?'s':'') + ' expiring within 48 hours — activate before they lapse.'
+      : 'Rewards you earn from tasks arrive here as coupons. Activate one to move it into your Bonus balance.');
+
+    const list = cpnTab==='available' ? b.available : cpnTab==='active' ? b.active : b.expired;
+    if(!list.length){ const [ic,tt,ss] = CPN_EMPTY[cpnTab];
+      body.innerHTML = '<div class="cpn-empty"><i class="ti ' + ic + '"></i><div class="t">' + tt + '</div><div class="s">' + ss + '</div></div>';
+      return; }
+    body.innerHTML = list.map(c => cpnCardHTML(c, cpnTab)).join(''); }
+
+  // entry row above the task list
+  function cpnEntryHTML(){
+    const b = cpnBuckets(), n = b.available.length, val = cpnValue(b.available);
+    const soon = b.available.filter(c => cpnLeft(c).soon).length;
+    const sub = n
+      ? (soon ? '<span class="s warn"><b>' + fmtNum(val,2) + ' USDT</b> ready · ' + soon + ' expiring soon</span>'
+              : '<span class="s"><b>' + fmtNum(val,2) + ' USDT</b> ready to activate</span>')
+      : '<span class="s">Task rewards arrive here as coupons</span>';
+    return '<div class="cpn-entry' + (n?' has':'') + '" onclick="openCoupons()">'
+      + '<div class="ic"><i class="ti ti-ticket"></i></div>'
+      + '<div class="tx"><div class="t">Coupon Center'
+      + (n ? '<span class="cpn-pill">' + n + '</span>' : '') + '</div>' + sub + '</div>'
+      + '<i class="ti ti-chevron-right chev"></i></div>'; }
+
+  // Accepts the server's coupon list plus its clock, so expiry is judged
+  // against server time rather than the device's.
+  function applyCoupons(list, serverNow){
+    if(Number(serverNow)) srvSkew = Number(serverNow) - Date.now();
+    if(!Array.isArray(list)) return false;
+    const sig = JSON.stringify(list);
+    if(sig === couponsSig) return false;
+    couponsSig = sig; coupons = list;
+    renderTasks(); if(couponsOpen()) renderCoupons();
+    return true; }
+
+  async function activateCoupon(id){
+    if(cpnBusy) return;
+    if(!hasTgAuth()){ toast('Open the app from Telegram to activate','err'); return; }
+    cpnBusy = true;
+    try{
+      const r = await fetch('/api/sync', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ initData: tgInitData(), action:'activateCoupon', couponId: id }) });
+      const d = await r.json().catch(()=>null);
+      if(d && Array.isArray(d.coupons)){ couponsSig = null; applyCoupons(d.coupons, d.now); }
+      if(!r.ok || !d || !d.ok){
+        toast((d && d.error) || 'Could not activate coupon','err');
+        renderCoupons(); renderTasks(); return; }
+      const amt = parseFloat(d.amount) || 0;
+      applyServerBonus(d.bonus);
+      addTx({ type:'Coupon Activated', sub:'Bonus credit', value:amt, sign:'+', coin:'USDT', isUSDT:true });
+      pushNotification({ title:'Coupon activated \u{1F39F}\uFE0F', text:'+' + fmtNum(amt,2) + ' USDT added to your bonus balance', kind:'bonus' });
+      save(); renderCoupons(); renderTasks(); setBonusBtn(); renderAssets();
+      tgHaptic() && tgHaptic().notificationOccurred('success');
+      toast('\u{1F39F}\uFE0F +' + fmtNum(amt,2) + ' USDT added to your bonus balance','ok');
+      botNotify('\u{1F39F}\uFE0F Coupon activated \u2014 +' + fmtNum(amt,2) + ' USDT bonus credited.');
+    }catch(e){ toast('Network error','err'); }
+    finally{ cpnBusy = false; } }
+
   function renderTasks(){ const el=document.getElementById('home-tasks'); if(!el) return;
     const done=TASKS.filter(t=>state.taskClaimed[t.id]).length;
-    let h='<div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 10px;"><div class="section-title" style="margin:0;">Tasks · Earn Bonus</div><span style="font-size:11px;color:#7a8299;">'+done+'/'+TASKS.length+' done</span></div>';
+    let h=cpnEntryHTML();
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 10px;"><div class="section-title" style="margin:0;">Tasks · Earn Bonus</div><span style="font-size:11px;color:#7a8299;">'+done+'/'+TASKS.length+' done</span></div>';
     h+=TASKS.map(t=>{ const st=taskStatus(t);
       const social = (t.metric==='tgChannel'||t.metric==='xFollow'||t.go==='social');
       const goAction = t.go==='invite' ? 'openInvite()' : social ? 'doSocialTask(\''+t.id+'\')' : 'goPage(\''+t.go+'\')';
@@ -1837,10 +2104,14 @@
       if(Array.isArray(d.claimed)) applyServerClaims(d.claimed); else state.taskClaimed[id]=true;
       const reward=parseFloat(d.reward)||0;
       applyServerBonus(d.bonus);
-      addTx({type:'Task Reward',sub:t.title,value:reward,sign:'+',coin:'USDT',isUSDT:true}); save();
-      pushNotification({title:'Bonus earned 🎁',text:t.title+' · +'+fmtNum(reward,2)+' USDT bonus',kind:'bonus'});
-      botNotify('🎁 Bonus earned: +'+fmtNum(reward,2)+' USDT for completing "'+t.title+'".');
-      toast('+'+fmtNum(reward,2)+' USDT bonus claimed!','ok'); renderTasks(); setBonusBtn(); renderAssets();
+      // The reward is a coupon now: nothing reaches the bonus balance until the
+      // user activates it in the Coupon Center, and it lapses after 7 days.
+      if(Array.isArray(d.coupons)){ couponsSig=null; applyCoupons(d.coupons, d.now); }
+      addTx({type:'Coupon Earned',sub:t.title,value:reward,sign:'',coin:'USDT',isUSDT:true,neutral:true}); save();
+      pushNotification({title:'Coupon earned \u{1F39F}\uFE0F',text:t.title+' \u00b7 '+fmtNum(reward,2)+' USDT \u00b7 activate within 7 days',kind:'bonus'});
+      botNotify('\u{1F39F}\uFE0F Coupon earned: '+fmtNum(reward,2)+' USDT for "'+t.title+'". Activate it in the Coupon Center within 7 days.');
+      toast('\u{1F39F}\uFE0F '+fmtNum(reward,2)+' USDT coupon earned \u2014 activate it in the Coupon Center','ok');
+      renderTasks(); setBonusBtn(); renderAssets();
     }catch(e){ toast('Network error','err'); }
     finally{ claimBusy=false; } }
 
@@ -2501,6 +2772,7 @@
       if(d.referral){ const rc=parseInt(d.referral.count,10)||0; const re=parseFloat(d.referral.earned)||0;
         if(rc!==state.referralCount || re!==state.referralEarned){ state.referralCount=rc; state.referralEarned=re; save(); renderTasks(); updateInviteSheet(); } }
       // Admin-editable task list (with any partner reward boosts).
+      applyCoupons(d.coupons, d.now);
       if(Array.isArray(d.tasks) && d.tasks.length){ const sig=JSON.stringify(d.tasks); if(sig!==tasksSig){ tasksSig=sig; TASKS=mergeTasks(d.tasks); renderTasks(); } }
       // Partner status (this user's own application/approval).
       if(d.partner!==undefined){ const sig=JSON.stringify(d.partner||null); if(sig!==partnerSig){ partnerSig=sig; myPartner=d.partner||null; updatePartnerBtn(); if(partnerOpen()) renderPartner(); } }
