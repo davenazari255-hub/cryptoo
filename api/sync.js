@@ -41,8 +41,71 @@ const parseJSON = (s) => { try { return JSON.parse(s); } catch { return null; } 
 const escHtml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 const REFERRAL_BONUS = 0.5; // default USD credited to the referrer per valid invite
-const COUPON_TTL_MS = 7 * 24 * 60 * 60 * 1000;   // task coupons expire after 7 days
+const COUPON_TTL_MS = 7 * 24 * 60 * 60 * 1000;   // coupons expire after 7 days
+
+// Small, frequent rewards (daily check-in, referrals) collect in a pot instead
+// of minting a coupon each time — a 0.10 ticket per check-in would bury the
+// Coupon Center. Once the pot reaches the threshold the WHOLE pot becomes one
+// coupon and the pot resets, so nothing is left stranded as dust.
+const POT_THRESHOLD = 5;
+
+// Net deposit ladder. Each rung pays once; reaching a higher rung does not
+// void the lower ones.
+const DEPOSIT_TIERS = [
+  { id: 'd100',  at: 100,  reward: 10 },
+  { id: 'd200',  at: 200,  reward: 25 },
+  { id: 'd1000', at: 1000, reward: 150 },
+];
+
+// Pure: add to the pot and decide whether it tips over into a coupon.
+// Returns the amount to mint (0 = nothing yet) and the pot to store.
+function potAdd(pot, amount) {
+  const cur = Math.max(0, parseFloat(pot) || 0);
+  const add = Math.max(0, parseFloat(amount) || 0);
+  const next = Math.round((cur + add) * 100) / 100;
+  if (next >= POT_THRESHOLD) return { mint: next, pot: 0 };
+  return { mint: 0, pot: next };
+}
+
+// Pure: the ladder's state for a given net deposit and set of claimed rungs.
+function depositLadder(total, claimedIds) {
+  const dep = Math.max(0, parseFloat(total) || 0);
+  const done = new Set(Array.isArray(claimedIds) ? claimedIds : []);
+  return DEPOSIT_TIERS.map((t) => ({
+    id: t.id, at: t.at, reward: t.reward,
+    state: done.has(t.id) ? 'claimed' : (dep >= t.at ? 'ready' : 'locked'),
+  }));
+}
 const COUPON_KEEP = 40;                           // cap the stored history
+
+// Mints a coupon into coupons:${userId}. Shared by every reward path so the
+// record shape and the 7-day window can never drift between them.
+async function mintCoupon(upstashFn, userId, { src, srcId, title, amount }) {
+  const now = Date.now();
+  const c = {
+    id: 'c_' + String(srcId || src).slice(0, 20) + '_' + now.toString(36) + Math.floor(Math.random() * 1e4).toString(36),
+    src, srcId: srcId || null,
+    title: String(title || 'Bonus coupon').slice(0, 60),
+    amount: Math.round((parseFloat(amount) || 0) * 100) / 100,
+    at: now, exp: now + COUPON_TTL_MS, status: 'new',
+  };
+  const list = parseJSON(await upstashFn(['GET', `coupons:${userId}`])) || [];
+  const next = [c].concat(Array.isArray(list) ? list : []).slice(0, COUPON_KEEP);
+  await upstashFn(['SET', `coupons:${userId}`, JSON.stringify(next)]);
+  return c;
+}
+
+// Adds a small reward to the pot, minting a coupon if it tips the threshold.
+async function creditPot(upstashFn, userId, amount, label) {
+  const cur = parseFloat(await upstashFn(['GET', `pot:${userId}`])) || 0;
+  const { mint, pot } = potAdd(cur, amount);
+  await upstashFn(['SET', `pot:${userId}`, String(pot)]);
+  if (!mint) return { pot, coupon: null };
+  const coupon = await mintCoupon(upstashFn, userId, {
+    src: 'pot', srcId: 'pot', title: label || 'Rewards bundle', amount: mint,
+  });
+  return { pot, coupon };
+}
 
 // Pure: derive a coupon's state at a point in time. Kept separate from I/O so
 // it can be unit-tested (see test_coupons.js).
@@ -69,7 +132,6 @@ const MAX_TASK_REWARD = 100; // hard ceiling on any single task reward (incl. pa
 // | spotVol | futVol | referral. `target` is the numeric goal (0 = instant).
 const DEFAULT_TASKS = [
   { id: 'welcome', icon: 'ti-gift', title: 'Welcome Bonus', desc: 'Sign in to KolonoEX', reward: 10, metric: 'always', target: 0, go: 'home' },
-  { id: 'deposit', icon: 'ti-wallet', title: 'Net Deposit', desc: 'Deposit a total of 100 USDT', reward: 10, metric: 'deposit', target: 100, go: 'assets' },
   { id: 'spot', icon: 'ti-arrows-exchange', title: 'First Spot Trade', desc: 'Trade 100 USDT volume in Spot', reward: 5, metric: 'spotVol', target: 100, go: 'trade' },
   { id: 'futures', icon: 'ti-trending-up', title: 'First Futures Trade', desc: 'Trade 20,000 USDT volume in Futures', reward: 15, metric: 'futVol', target: 20000, go: 'futures' },
   { id: 'tgchannel', icon: 'ti-brand-telegram', title: 'Join our Telegram', desc: 'Join the @KolonoEX channel', reward: 0.5, metric: 'tgChannel', target: 0, go: 'social', link: 'https://t.me/KolonoEX' },
@@ -224,15 +286,17 @@ async function recordReferral(upstashFn, userId, startParam, newUserName) {
   // Credit the referrer and track the relationship.
   await upstashFn(['SADD', `ref:list:${referrer}`, userId]);
   await upstashFn(['INCR', `ref:count:${referrer}`]);
+  // Referral rewards go through the same pot as check-ins: they collect until
+  // POT_THRESHOLD, then become one activatable coupon.
   if (bonus > 0) {
-    await upstashFn(['INCRBYFLOAT', `bal:${referrer}`, bonus]);
-    await upstashFn(['LPUSH', `ledger:${referrer}`, JSON.stringify({ usd: bonus, coin: 'REFERRAL', note: 'Referral bonus', at: Date.now() })]);
+    await creditPot(upstashFn, referrer, bonus, 'Referral rewards');
+    await upstashFn(['LPUSH', `ledger:${referrer}`, JSON.stringify({ usd: bonus, coin: 'POT', note: 'Referral bonus', at: Date.now() })]);
     await upstashFn(['LTRIM', `ledger:${referrer}`, 0, 99]);
   }
 
   // Notify the referrer: in-bot push + in-app notification (delivered on next sync).
   const who = escHtml(newUserName || 'A new user');
-  const text = `🎉 <b>${who}</b> just joined KolonoEX using your invite link!\n\n💰 You earned <b>$${bonus}</b> referral bonus — it has been added to your balance.`;
+  const text = `🎉 <b>${who}</b> just joined KolonoEX using your invite link!\n\n💰 You earned <b>$${bonus}</b> — it is collecting in your Coupon Center and becomes an activatable coupon once your rewards reach $${POT_THRESHOLD}.`;
   await tgSend(referrer.slice(3), text);
   await upstashFn(['LPUSH', `cmd:${referrer}`, JSON.stringify({ type: 'message', kind: 'referral', title: 'New referral 🎉', text: `${newUserName || 'A friend'} joined with your link. You earned $${bonus} bonus!` })]);
   await upstashFn(['LTRIM', `cmd:${referrer}`, 0, 99]);
@@ -339,6 +403,37 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true, taskId, reward, coupon, bonus, claimed, coupons, now: Date.now() });
     }
 
+    // ── Claim a rung of the net-deposit ladder ──
+    if (body.action === 'claimDeposit') {
+      const depTotal = parseFloat(await upstash(['GET', `dep:total:${userId}`])) || 0;
+      const already = (await upstash(['SMEMBERS', `dep:tiers:${userId}`])) || [];
+      const ready = DEPOSIT_TIERS.filter((t) => depTotal >= t.at && already.indexOf(t.id) < 0);
+      if (!ready.length) return res.status(400).json({ error: 'Nothing to claim yet', depTiers: already, depositTotal: depTotal });
+
+      // Every rung that is due is claimed in one call — a 1000 USDT deposit
+      // opens all three at once and should not need three taps. Each rung keeps
+      // its own atomic SADD gate, so a concurrent call cannot double-pay one.
+      const minted = [];
+      let total = 0;
+      for (const t of ready) {
+        const first = await upstash(['SADD', `dep:tiers:${userId}`, t.id]);
+        if (first === 0) continue;                       // someone else got this rung
+        const c = await mintCoupon(upstash, userId, {
+          src: 'deposit', srcId: t.id,
+          title: 'Net deposit ' + t.at + ' USDT', amount: t.reward,
+        });
+        minted.push(c); total += t.reward;
+        await upstash(['LPUSH', `ledger:${userId}`, JSON.stringify({ usd: t.reward, coin: 'COUPON', note: 'Deposit ladder ' + t.at, at: Date.now() })]);
+      }
+      if (!minted.length) return res.status(409).json({ error: 'Already claimed', depTiers: (await upstash(['SMEMBERS', `dep:tiers:${userId}`])) || [] });
+      await upstash(['LTRIM', `ledger:${userId}`, 0, 99]);
+
+      const depTiers = (await upstash(['SMEMBERS', `dep:tiers:${userId}`])) || [];
+      const coupons = parseJSON(await upstash(['GET', `coupons:${userId}`])) || [];
+      return res.status(200).json({ ok: true, reward: Math.round(total * 100) / 100, minted: minted.length,
+        coupons, depTiers, depositTotal: depTotal, now: Date.now() });
+    }
+
     // ── Activate a coupon → this is the only path that credits a task bonus ──
     if (body.action === 'activateCoupon') {
       const couponId = String(body.couponId || '').slice(0, 64);
@@ -386,17 +481,22 @@ module.exports = async function handler(req, res) {
       const { day, streak, mult, reward, milestone, freeze, usedFreeze, credit, next } = c;
 
       await upstash(['SET', `checkin:${userId}`, JSON.stringify(next)]);
+
+      // Check-in rewards are small and daily, so they collect in the pot and
+      // only become a coupon once it reaches POT_THRESHOLD.
+      let potOut = { pot: parseFloat(await upstash(['GET', `pot:${userId}`])) || 0, coupon: null };
       if (credit > 0) {
-        const nb = parseFloat(await upstash(['INCRBYFLOAT', `bonus:${userId}`, credit]));
-        await upstash(['SET', `bonus:${userId}`, String(Math.round(nb * 100) / 100)]);
         const note = 'Daily check-in day ' + day + ' (' + streak + '-day streak' +
           (milestone > 0 ? ', ' + streak + '-day badge' : '') + (usedFreeze ? ', freeze used' : '') + ')';
-        await upstash(['LPUSH', `ledger:${userId}`, JSON.stringify({ usd: credit, coin: 'BONUS', note, at: Date.now() })]);
+        potOut = await creditPot(upstash, userId, credit, 'Check-in rewards');
+        await upstash(['LPUSH', `ledger:${userId}`, JSON.stringify({ usd: credit, coin: 'POT', note, at: Date.now() })]);
         await upstash(['LTRIM', `ledger:${userId}`, 0, 99]);
       }
       const bonus = parseFloat(await upstash(['GET', `bonus:${userId}`])) || 0;
+      const coupons = parseJSON(await upstash(['GET', `coupons:${userId}`])) || [];
       return res.status(200).json({ ok: true, day, streak, reward, milestone, mult, freeze, usedFreeze,
-        best: next.best, bonus, checkin: next, today, yesterday: yest });
+        best: next.best, bonus, checkin: next, today, yesterday: yest,
+        pot: potOut.pot, potCoupon: potOut.coupon, potThreshold: POT_THRESHOLD, coupons, now: Date.now() });
     }
 
     // Merge & store the profile snapshot (preserve original join date).
@@ -433,6 +533,8 @@ module.exports = async function handler(req, res) {
     // Server-held reward state. The client renders from these instead of its own
     // localStorage, so wiping storage no longer re-opens claimed rewards.
     const couponsRaw = await upstash(['GET', `coupons:${userId}`]);
+    const potVal = parseFloat(await upstash(['GET', `pot:${userId}`])) || 0;
+    const depTiers = (await upstash(['SMEMBERS', `dep:tiers:${userId}`])) || [];
     const [claimedRaw, checkinRaw, bonusRaw] = await Promise.all([
       upstash(['SMEMBERS', `task:claimed:${userId}`]),
       upstash(['GET', `checkin:${userId}`]),
@@ -488,6 +590,8 @@ module.exports = async function handler(req, res) {
     // and 03:29 local, which made an already-claimed check-in look claimable.
     return res.status(200).json({ banned: false, balance, commands, referral, depositTotal, tasks, partner, taskClaimed, checkin, bonusServer,
       coupons: parseJSON(couponsRaw) || [], now: Date.now(),
+      pot: potVal, potThreshold: POT_THRESHOLD,
+      depTiers, depositLadder: depositLadder(depositTotal, depTiers),
       today: dayKey(), yesterday: dayKey(Date.now() - 86400000) });
   } catch (err) {
     return res.status(500).json({ error: 'Server error: ' + ((err && err.message) || 'unknown') });
@@ -497,3 +601,5 @@ module.exports = async function handler(req, res) {
 module.exports.computeCheckin = computeCheckin;
 module.exports.couponState = couponState;
 module.exports.bucketCoupons = bucketCoupons;
+module.exports.potAdd = potAdd;
+module.exports.depositLadder = depositLadder;
