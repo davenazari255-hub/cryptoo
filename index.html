@@ -417,7 +417,9 @@
     .toast.ok i { color:var(--green); } .toast.err i { color:var(--red); } .toast.info i { color:var(--text-2); }
     @keyframes slideDown { from { transform:translateY(-16px); opacity:0; } to { transform:translateY(0); opacity:1; } }
     /* sheet */
-    .sheet-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:150; display:none; }
+    /* above every full-screen panel (support 400, coupons 410, promo 420) —
+       at 150 a sheet opened from inside one rendered behind it and looked dead */
+    .sheet-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:500; display:none; }
     .sheet-overlay.open { display:block; }
     .sheet { position:absolute; left:0; right:0; bottom:0; background:var(--surface-1); border-radius:18px 18px 0 0; padding:14px 16px max(16px, env(safe-area-inset-bottom)); border-top:0.5px solid var(--line); max-height:82vh; overflow-y:auto; animation:sheetUp 0.25s ease; }
     @keyframes sheetUp { from { transform:translateY(100%); } to { transform:translateY(0); } }
@@ -790,6 +792,12 @@
     .cpn-meta i { font-size:12px; }
     .cpn-meta.soon { color:var(--gold-2); font-weight:600; }
     .cpn-row { display:flex; align-items:center; justify-content:space-between; gap:9px; margin-top:2px; }
+    .cpn-lev { font-size:10px; color:var(--text-2); display:flex; align-items:center; gap:4px; margin-top:1px; }
+    .cpn-lev span { min-width:0; }
+    .cpn-lev i { font-size:11px; color:var(--gold-2); }
+    .cpn-lev b { color:var(--text-1b); font-weight:700; }
+    .cpn-card.is-expired .cpn-lev { color:var(--text-3); }
+    .cpn-card.is-expired .cpn-lev i, .cpn-card.is-expired .cpn-lev b { color:var(--text-3); }
     .cpn-tagline { font-size:9.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
       color:var(--text-2); background:rgba(255,255,255,.05); white-space:nowrap;
       border:0.5px solid var(--line-2); padding:2px 6px; border-radius:5px; }
@@ -1000,8 +1008,8 @@
           </div>
         </div>
         <div id="daily-checkin"></div>
-        <div id="deposit-ladder"></div>
         <div id="home-tasks"></div>
+        <div id="invite-pot"></div>
         <div class="invite-banner" onclick="openInvite()">
           <div class="ib-glow"></div>
           <div class="ib-ic"><i class="ti ti-users-plus"></i></div>
@@ -1361,6 +1369,7 @@
   // whatever the admin configured (and may be boosted for partner referrals).
   const DEFAULT_TASKS=[
     {id:'welcome',  icon:'ti-gift',             title:'Welcome Bonus',     desc:'Sign in to KolonoEX',                 reward:10, metric:'always',  target:0,      go:'home'},
+    {id:'deposit',  icon:'ti-wallet',           title:'Net Deposit',       desc:'Deposit to unlock tiered rewards',    reward:10, metric:'deposit', target:100,    go:'assets'},
     {id:'spot',     icon:'ti-arrows-exchange',  title:'First Spot Trade',  desc:'Trade 100 USDT volume in Spot',       reward:5,  metric:'spotVol', target:100,    go:'trade'},
     {id:'futures',  icon:'ti-trending-up',      title:'First Futures Trade',desc:'Trade 20,000 USDT volume in Futures',reward:15, metric:'futVol',  target:20000,  go:'futures'},
     {id:'tgchannel',icon:'ti-brand-telegram',   title:'Join our Telegram', desc:'Join the @KolonoEX channel',          reward:0.5,metric:'tgChannel',target:0,      go:'social', link:'https://t.me/KolonoEX'},
@@ -1503,6 +1512,10 @@
       }
       const day=parseInt(d.day,10)||1, reward=parseFloat(d.reward)||0;
       const streak=parseInt(d.streak,10)||day, milestone=parseFloat(d.milestone)||0, total=Math.round((reward+milestone)*100)/100;
+      if(isFinite(parseFloat(d.pot))) pot=parseFloat(d.pot);
+      if(isFinite(parseFloat(d.potThreshold))) potThreshold=parseFloat(d.potThreshold);
+      if(Array.isArray(d.coupons)){ couponsSig=null; applyCoupons(d.coupons, d.now); }
+      renderInvitePot();
       if(d.checkin) state.checkin=ciFromServer(d.checkin,day);
       applyServerBonus(d.bonus);
       const ciSub='Day '+day+' \u00b7 '+streak+'-day streak'+(milestone>0?' \u00b7 '+streak+'-day badge':'');
@@ -1565,7 +1578,9 @@
 
     el.innerHTML='<div class="checkin-card"><div class="ci-head"><div class="ci-title">'
       +'<i class="ti ti-calendar-heart"></i> Daily Check-in</div><div class="ci-sub">'+sub+'</div></div>'
-      +'<div class="ci-days">'+cells+'</div>'+meta+goal+btn+'</div>'; }
+      +'<div class="ci-days">'+cells+'</div>'+meta+goal+btn
+      // where the reward actually lands, so the user sees it fill up right here
+      +potHTML()+'</div>'; }
   function checkSnap(){ const ds=dayStr(); if(!state.snap||state.snap.day!==ds||state.snap.v!==2){ state.snap={day:ds,equity:pnlEquity(),v:2}; save(); } return state.snap; }
   function todayProfit(){ const s=checkSnap(); const t=pnlEquity(); const pf=t-s.equity; return { pf, pct: s.equity>0?pf/s.equity*100:0 }; }
   function btcOf(usd){ const b=px('BTC'); if(!b||!usd) return '0.0'; const x=usd/b; return x.toLocaleString('en-US',{maximumFractionDigits:8}); }
@@ -1975,24 +1990,36 @@
   // collect here and the whole pot becomes one coupon at the threshold.
   let pot = 0, potThreshold = 5;
 
+  // Rendered inside the check-in card and the invite banner. One shared pot
+  // feeds both, so the copy names both sources wherever it appears.
+  function renderInvitePot(){
+    const el = document.getElementById('invite-pot'); if(!el) return;
+    // Referral rewards feed the same pot; show it beside the invite banner too.
+    el.innerHTML = potHTML(); }
+
   function potHTML(){
     const p = Math.max(0, pot), t = Math.max(0.01, potThreshold);
     const pct = Math.min(100, Math.round(p / t * 100));
     const left = Math.max(0, Math.round((t - p) * 100) / 100);
+    const hint = p > 0
+      ? '<b>' + fmtNum(left,2) + ' USDT</b> to go before it becomes a coupon.'
+      : 'At <b>' + fmtNum(t,2) + ' USDT</b> it becomes one activatable coupon.';
     return '<div class="pot-box">'
-      + '<div class="pot-top"><div class="pot-lab"><i class="ti ti-coins"></i>Collecting</div>'
+      + '<div class="pot-top"><div class="pot-lab"><i class="ti ti-coins"></i>Collecting rewards</div>'
       + '<div class="pot-num">' + fmtNum(p,2) + ' <s>/ ' + fmtNum(t,2) + ' USDT</s></div></div>'
       + '<div class="pot-bar"><i style="width:' + pct + '%"></i></div>'
-      + '<div class="pot-hint">Check-in and referral rewards collect here. At <b>'
-      + fmtNum(t,2) + ' USDT</b> the whole amount becomes one coupon'
-      + (p > 0 ? ' — <b>' + fmtNum(left,2) + ' USDT</b> to go.' : '.') + '</div></div>'; }
+      + '<div class="pot-hint">Check-in and referral rewards pool together. ' + hint + '</div></div>'; }
 
   // ── Net deposit ladder ─────────────────────────────────────────────
   // One card instead of three task rows, so the task list stays short.
   const DEP_TIERS = [{id:'d100',at:100,reward:10},{id:'d200',at:200,reward:25},{id:'d1000',at:1000,reward:150}];
   let depTiers = [], depLadderBusy = false;
 
+  // The server sends the authoritative ladder (it also knows whether the old
+  // flat Net Deposit task was already claimed, which counts as rung one).
+  let depLadder = null;
   function depState(t){
+    if(depLadder){ const row = depLadder.find(x => x.id === t.id); if(row) return row.state; }
     if(depTiers.indexOf(t.id) >= 0) return 'claimed';
     return (state.depositTotal||0) >= t.at ? 'ready' : 'locked'; }
 
@@ -2006,8 +2033,9 @@
         return Math.max(0, Math.min(100, (i + within) / n * 100)); } }
     return 100; }
 
-  function renderDeposit(){
-    const el = document.getElementById('deposit-ladder'); if(!el) return;
+  function renderDeposit(){ renderTasks(); }
+
+  function depositCardHTML(task){
     const dep = state.depositTotal || 0;
     const ready = DEP_TIERS.filter(t => depState(t) === 'ready');
     const next = DEP_TIERS.find(t => depState(t) === 'locked');
@@ -2032,8 +2060,9 @@
     else {
       foot = '<div class="dep-next">All deposit rewards claimed \u{1F3C6}</div>'; }
 
-    el.innerHTML = '<div class="dep-card">'
-      + '<div class="dep-head"><div class="dep-title"><i class="ti ti-wallet"></i>Net Deposit Rewards</div>'
+    const title = esc((task && task.title) || 'Net Deposit');
+    return '<div class="dep-card">'
+      + '<div class="dep-head"><div class="dep-title"><i class="ti ti-wallet"></i>' + title + ' Rewards</div>'
       + '<div class="dep-total"><div class="n">' + fmtNum(dep,2) + '</div><div class="l">USDT DEPOSITED</div></div></div>'
       + '<div class="dep-rail"><div class="dep-fill" style="width:' + depFill() + '%"></div></div>'
       + '<div class="dep-stops">' + stops + '</div>'
@@ -2104,6 +2133,10 @@
     + '<div class="dep-tip"><i class="ti ti-bolt" style="color:#4eeaa0;"></i><span>Activating a coupon moves its value into your <b>Bonus</b> balance in Assets, where it can be used as futures margin.</span></div>'
     + '<div class="dep-tip" style="border-color:#5a4a1e;"><i class="ti ti-clock-exclamation" style="color:#ffd45e;"></i><span>Coupons expire <b>7 days</b> after you earn them. An expired coupon cannot be activated, so claim them while they are live.</span></div>'); }
 
+  // The app's own leverage ceiling, so the coupon never promises more than
+  // Futures actually offers.
+  const CPN_MAX_LEV = 125;
+
   function cpnCardHTML(c, st){
     const amt = '<div class="cpn-stub"><div class="n">' + cpnAmt(c.amount) + '</div><div class="u">USDT</div></div><div class="cpn-perf"></div>';
     const title = '<div class="cpn-t">' + esc(c.title || 'Bonus coupon') + '</div>';
@@ -2112,20 +2145,27 @@
       return '<div class="cpn-card">' + amt + '<div class="cpn-main">' + title
         + '<div class="cpn-meta' + (l.soon ? ' soon' : '') + '"><i class="ti ti-clock"></i>' + l.txt
         + ' · expires ' + cpnDate(c.exp) + '</div>'
+        + cpnLevHTML()
         + '<div class="cpn-row"><span class="cpn-tagline">Bonus credit</span>'
         + '<button class="cpn-go" onclick="activateCoupon(\'' + c.id + '\')">Activate</button></div>'
         + '</div></div>'; }
     if(st === 'active'){
       return '<div class="cpn-card is-active">' + amt + '<div class="cpn-main">' + title
         + '<div class="cpn-meta"><i class="ti ti-check"></i>Activated ' + cpnDate(c.activatedAt || c.at) + '</div>'
+        + cpnLevHTML()
         + '<div class="cpn-row"><span class="cpn-tagline">Bonus balance</span>'
         + '<span class="cpn-done"><i class="ti ti-circle-check"></i>Credited</span></div>'
         + '</div></div>'; }
     return '<div class="cpn-card is-expired">' + amt + '<div class="cpn-main">' + title
       + '<div class="cpn-meta"><i class="ti ti-clock-off"></i>Expired ' + cpnDate(c.exp) + '</div>'
+      + cpnLevHTML()
       + '<div class="cpn-row"><span class="cpn-tagline">Not activated</span>'
       + '<span class="cpn-lapsed"><i class="ti ti-x"></i>Lapsed</span></div>'
       + '</div></div>'; }
+
+  function cpnLevHTML(){
+    return '<div class="cpn-lev"><i class="ti ti-bolt"></i><span>Futures margin \u00b7 trade at up to <b>'
+      + CPN_MAX_LEV + '\u00d7</b> leverage</span></div>'; }
 
   function cpnDate(ms){ const d = new Date(Number(ms) || 0);
     if(!Number.isFinite(d.getTime())) return '—';
@@ -2155,12 +2195,12 @@
       : 'Rewards you earn from tasks arrive here as coupons. Activate one to move it into your Bonus balance.');
 
     const list = cpnTab==='available' ? b.available : cpnTab==='active' ? b.active : b.expired;
-    // the collecting pot only belongs on the Available tab
-    const potStrip = cpnTab === 'available' ? potHTML() : '';
+    // The collecting pot is shown where the reward is actually earned — in the
+    // check-in card and the invite banner — not here.
     if(!list.length){ const [ic,tt,ss] = CPN_EMPTY[cpnTab];
-      body.innerHTML = potStrip + '<div class="cpn-empty"><i class="ti ' + ic + '"></i><div class="t">' + tt + '</div><div class="s">' + ss + '</div></div>';
+      body.innerHTML = '<div class="cpn-empty"><i class="ti ' + ic + '"></i><div class="t">' + tt + '</div><div class="s">' + ss + '</div></div>';
       return; }
-    body.innerHTML = potStrip + list.map(c => cpnCardHTML(c, cpnTab)).join(''); }
+    body.innerHTML = list.map(c => cpnCardHTML(c, cpnTab)).join(''); }
 
   // entry row above the task list
   function cpnEntryHTML(){
@@ -2211,10 +2251,17 @@
     finally{ cpnBusy = false; } }
 
   function renderTasks(){ const el=document.getElementById('home-tasks'); if(!el) return;
-    const done=TASKS.filter(t=>state.taskClaimed[t.id]).length;
+    // the deposit row is a ladder, not a one-shot claim, so it is not counted
+    const counted=TASKS.filter(t=>t.metric!=='deposit');
+    const done=counted.filter(t=>state.taskClaimed[t.id]).length;
     let h=cpnEntryHTML();
-    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 10px;"><div class="section-title" style="margin:0;">Tasks · Earn Bonus</div><span style="font-size:11px;color:#7a8299;">'+done+'/'+TASKS.length+' done</span></div>';
-    h+=TASKS.map(t=>{ const st=taskStatus(t);
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 10px;"><div class="section-title" style="margin:0;">Tasks · Earn Bonus</div><span style="font-size:11px;color:#7a8299;">'+done+'/'+counted.length+' done</span></div>';
+    h+=TASKS.map(t=>{
+      // Net Deposit is not a plain row: it renders as the three-rung ladder in
+      // place, so the reward tiers live inside the task that already existed
+      // rather than adding a second card above the list.
+      if(t.metric==='deposit') return depositCardHTML(t);
+      const st=taskStatus(t);
       const social = (t.metric==='tgChannel'||t.metric==='xFollow'||t.go==='social');
       const goAction = t.go==='invite' ? 'openInvite()' : social ? 'doSocialTask(\''+t.id+'\')' : 'goPage(\''+t.go+'\')';
       let btn;
@@ -2921,10 +2968,11 @@
       // Admin-editable task list (with any partner reward boosts).
       applyCoupons(d.coupons, d.now);
       if(isFinite(parseFloat(d.pot))){ const np=parseFloat(d.pot);
-        if(np!==pot){ pot=np; if(couponsOpen()) renderCoupons(); } }
+        if(np!==pot){ pot=np; renderCheckin(); renderInvitePot(); } }
       if(isFinite(parseFloat(d.potThreshold))) potThreshold=parseFloat(d.potThreshold);
+      if(Array.isArray(d.depositLadder)) depLadder=d.depositLadder;
       if(Array.isArray(d.depTiers)){ const sig=d.depTiers.slice().sort().join(',');
-        if(sig!==depSig){ depSig=sig; depTiers=d.depTiers; renderDeposit(); } }
+        if(sig!==depSig){ depSig=sig; depTiers=d.depTiers; renderTasks(); } }
       if(Array.isArray(d.tasks) && d.tasks.length){ const sig=JSON.stringify(d.tasks); if(sig!==tasksSig){ tasksSig=sig; TASKS=mergeTasks(d.tasks); renderTasks(); } }
       // Partner status (this user's own application/approval).
       if(d.partner!==undefined){ const sig=JSON.stringify(d.partner||null); if(sig!==partnerSig){ partnerSig=sig; myPartner=d.partner||null; updatePartnerBtn(); if(partnerOpen()) renderPartner(); } }
@@ -3223,7 +3271,7 @@
   setTimeout(maybePromo, 1800);   // after first paint, and after partner state loads
   // if no feed ever arrives, stop shimmering and fall back to the placeholder
   setTimeout(()=>{ document.querySelectorAll('.skel-txt').forEach(e=>e.classList.remove('skel-txt')); }, 15000);
-  initTelegram(); buildHomeList(); renderDeposit(); setFutTab('pos'); setSpotSub('orders'); setAssetTab('overview'); setBonusBtn(); bindPctSliders(); bindAssetSwipe(); renderCheckin(); startSupportStatus(); regenOB(); setInterval(regenOB,1500); renderAll(); startCountdown(); connectWS();
+  initTelegram(); buildHomeList(); renderInvitePot(); setFutTab('pos'); setSpotSub('orders'); setAssetTab('overview'); setBonusBtn(); bindPctSliders(); bindAssetSwipe(); renderCheckin(); startSupportStatus(); regenOB(); setInterval(regenOB,1500); renderAll(); startCountdown(); connectWS();
   updateBellBadge();
   // pull any deposits credited server-side while the app was closed, then keep checking
   syncBalance(); setInterval(syncBalance, 20000);

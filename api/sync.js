@@ -68,9 +68,13 @@ function potAdd(pot, amount) {
 }
 
 // Pure: the ladder's state for a given net deposit and set of claimed rungs.
-function depositLadder(total, claimedIds) {
+// `legacyDeposit` is true when the user already claimed the old flat "Net
+// Deposit" task; that reward was the same 10 USDT as rung d100, so it must
+// count as claimed or the ladder would pay it a second time.
+function depositLadder(total, claimedIds, legacyDeposit) {
   const dep = Math.max(0, parseFloat(total) || 0);
   const done = new Set(Array.isArray(claimedIds) ? claimedIds : []);
+  if (legacyDeposit) done.add('d100');
   return DEPOSIT_TIERS.map((t) => ({
     id: t.id, at: t.at, reward: t.reward,
     state: done.has(t.id) ? 'claimed' : (dep >= t.at ? 'ready' : 'locked'),
@@ -126,12 +130,17 @@ function bucketCoupons(list, now) {
 }
 
 const MAX_TASK_REWARD = 100; // hard ceiling on any single task reward (incl. partner overrides)
+// Coupons need their own, higher ceiling: the deposit ladder pays 150, which is
+// above MAX_TASK_REWARD. Clamping activation to the *task* ceiling silently ate
+// 50 USDT off a 150 coupon.
+const MAX_COUPON_VALUE = 1000;
 
 // Default home tasks. Admin can edit/extend these via the admin panel (stored in
 // Redis at config:tasks). `metric` drives client-side progress: always | deposit
 // | spotVol | futVol | referral. `target` is the numeric goal (0 = instant).
 const DEFAULT_TASKS = [
   { id: 'welcome', icon: 'ti-gift', title: 'Welcome Bonus', desc: 'Sign in to KolonoEX', reward: 10, metric: 'always', target: 0, go: 'home' },
+  { id: 'deposit', icon: 'ti-wallet', title: 'Net Deposit', desc: 'Deposit to unlock tiered rewards', reward: 10, metric: 'deposit', target: 100, go: 'assets' },
   { id: 'spot', icon: 'ti-arrows-exchange', title: 'First Spot Trade', desc: 'Trade 100 USDT volume in Spot', reward: 5, metric: 'spotVol', target: 100, go: 'trade' },
   { id: 'futures', icon: 'ti-trending-up', title: 'First Futures Trade', desc: 'Trade 20,000 USDT volume in Futures', reward: 15, metric: 'futVol', target: 20000, go: 'futures' },
   { id: 'tgchannel', icon: 'ti-brand-telegram', title: 'Join our Telegram', desc: 'Join the @KolonoEX channel', reward: 0.5, metric: 'tgChannel', target: 0, go: 'social', link: 'https://t.me/KolonoEX' },
@@ -371,6 +380,12 @@ module.exports = async function handler(req, res) {
         spot: parseFloat(await upstash(['GET', `vol:spot:${userId}`])) || 0,
         fut: parseFloat(await upstash(['GET', `vol:fut:${userId}`])) || 0,
       };
+      // The deposit reward is paid by the ladder (action=claimDeposit), which
+      // owns all three rungs. Letting claimTask pay it too would double-pay the
+      // first rung for anyone whose admin task config still lists it.
+      if (task.metric === 'deposit') {
+        return res.status(400).json({ error: 'Claim deposit rewards from the Net Deposit card' });
+      }
       if (!(await taskConditionMet(upstash, userId, task, vols))) {
         return res.status(400).json({ error: 'Task not completed yet' });
       }
@@ -407,6 +422,9 @@ module.exports = async function handler(req, res) {
     if (body.action === 'claimDeposit') {
       const depTotal = parseFloat(await upstash(['GET', `dep:total:${userId}`])) || 0;
       const already = (await upstash(['SMEMBERS', `dep:tiers:${userId}`])) || [];
+      // A user who claimed the old flat Net Deposit task already has rung one.
+      const legacy = ((await upstash(['SMEMBERS', `task:claimed:${userId}`])) || []).indexOf('deposit') >= 0;
+      if (legacy && already.indexOf('d100') < 0) { await upstash(['SADD', `dep:tiers:${userId}`, 'd100']); already.push('d100'); }
       const ready = DEPOSIT_TIERS.filter((t) => depTotal >= t.at && already.indexOf(t.id) < 0);
       if (!ready.length) return res.status(400).json({ error: 'Nothing to claim yet', depTiers: already, depositTotal: depTotal });
 
@@ -455,7 +473,7 @@ module.exports = async function handler(req, res) {
       const first = await upstash(['SADD', `coupon:used:${userId}`, couponId]);
       if (first === 0) return res.status(409).json({ error: 'Coupon already activated', coupons: list });
 
-      const amount = Math.min(MAX_TASK_REWARD, Math.max(0, parseFloat(c.amount) || 0));
+      const amount = Math.min(MAX_COUPON_VALUE, Math.max(0, parseFloat(c.amount) || 0));
       if (amount > 0) {
         const nb = parseFloat(await upstash(['INCRBYFLOAT', `bonus:${userId}`, amount]));
         // INCRBYFLOAT accumulates binary-float drift; re-anchor to 2dp.
@@ -591,7 +609,7 @@ module.exports = async function handler(req, res) {
     return res.status(200).json({ banned: false, balance, commands, referral, depositTotal, tasks, partner, taskClaimed, checkin, bonusServer,
       coupons: parseJSON(couponsRaw) || [], now: Date.now(),
       pot: potVal, potThreshold: POT_THRESHOLD,
-      depTiers, depositLadder: depositLadder(depositTotal, depTiers),
+      depTiers, depositLadder: depositLadder(depositTotal, depTiers, (Array.isArray(taskClaimed) ? taskClaimed : []).indexOf('deposit') >= 0),
       today: dayKey(), yesterday: dayKey(Date.now() - 86400000) });
   } catch (err) {
     return res.status(500).json({ error: 'Server error: ' + ((err && err.message) || 'unknown') });
