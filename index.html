@@ -2378,9 +2378,12 @@
     finally{ cpnBusy = false; } }
 
   function renderTasks(){ const el=document.getElementById('home-tasks'); if(!el) return;
-    // the deposit row is a ladder, not a one-shot claim, so it is not counted
-    const counted=TASKS.filter(t=>t.metric!=='deposit');
-    const done=counted.filter(t=>state.taskClaimed[t.id]).length;
+    // The deposit row is a ladder rather than a one-shot claim, so it counts as
+    // done only once every rung is taken. Excluding it entirely made the
+    // denominator disagree with the number of rows on screen.
+    const depDone=DEP_TIERS.every(t=>depState(t)==='claimed');
+    const counted=TASKS;
+    const done=TASKS.filter(t=>t.metric==='deposit' ? depDone : !!state.taskClaimed[t.id]).length;
     const openTk = !!folds.tk;
     const leftN = counted.length - done;
     const tkSub = leftN > 0
@@ -3056,6 +3059,10 @@
         if(supOpen){ pollSupportThread(); } else { supBadge((parseInt((document.getElementById('supportBadge')||{}).textContent,10)||0)+1); toast('💬 Support replied','info'); } }
       // Admin: reset only the task/check-in progress (keeps balances & positions).
       else if(c.type==='resetTasks'){ state.taskClaimed={}; state.social={}; state.checkin={last:'',streak:0}; state.spotVol=0; state.futVol=0; claimSig=null; state.flags={deposited:!!state.flags.deposited,traded:false,futured:false};
+        // the reward state the Coupon Center added — cleared alongside the rest,
+        // while the bonus balance itself is left untouched
+        coupons=[]; couponsSig=null; pot=0; depTiers=[]; depLadder=null; depSig=null;
+        renderCoupons(); renderDeposit();
         pushNotification({title:'Tasks reset',text:'Your tasks and daily check-in were reset by an admin.',kind:'message'}); toast('Your tasks were reset','info'); changed=true; }
       // Admin: full account reset — wipe the local app to a brand-new state. The
       // server balance is reset separately, so creditedDeposits starts from 0 too.

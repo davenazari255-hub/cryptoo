@@ -213,13 +213,23 @@ module.exports = async function handler(req, res) {
         // Reward state is server-owned now, so it must be cleared here too or
         // the client would immediately re-adopt the old claims on next sync.
         await upstash(['DEL', `bal:${id}`, `dep:total:${id}`, `ledger:${id}`, `seen:${id}`,
-          `task:claimed:${id}`, `checkin:${id}`, `bonus:${id}`, `vol:spot:${id}`, `vol:fut:${id}`]);
+          `task:claimed:${id}`, `checkin:${id}`, `bonus:${id}`, `vol:spot:${id}`, `vol:fut:${id}`,
+          // reward state introduced with the Coupon Center
+          `coupons:${id}`, `coupon:used:${id}`, `pot:${id}`, `dep:tiers:${id}`]);
         await upstash(['LPUSH', `cmd:${id}`, JSON.stringify({ type: 'resetAccount' })]);
       } else {
         // Task/check-in progress lives server-side; clear it alongside the
         // client-side command so the reset actually takes effect.
-        await upstash(['DEL', `task:claimed:${id}`, `checkin:${id}`, `bonus:${id}`,
-          `vol:spot:${id}`, `vol:fut:${id}`, `task:tgchannel:${id}`]);
+        //
+        // `bonus:` is deliberately NOT cleared. It is a balance, not progress:
+        // it holds coupons the user already activated plus anything an admin
+        // granted by hand, and the panel promises "Balances and positions are
+        // kept". Wiping it here destroyed money the user had legitimately
+        // banked. Only the earning slate is reset — including unactivated
+        // coupons and the collecting pot, so nothing can be claimed twice.
+        await upstash(['DEL', `task:claimed:${id}`, `checkin:${id}`,
+          `vol:spot:${id}`, `vol:fut:${id}`, `task:tgchannel:${id}`,
+          `coupons:${id}`, `coupon:used:${id}`, `pot:${id}`, `dep:tiers:${id}`]);
         await upstash(['LPUSH', `cmd:${id}`, JSON.stringify({ type: 'resetTasks' })]);
       }
       await upstash(['LTRIM', `cmd:${id}`, 0, 99]);
