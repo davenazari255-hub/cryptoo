@@ -62,6 +62,68 @@ async function tgSend(userId, text) {
   } catch (e) { /* ignore */ }
 }
 
+// ── shared partner-commission block ───────────────────────────────────────────
+// This block is duplicated verbatim in api/admin.js, because every file in api/
+// is its own Vercel bundle and cross-directory imports were unreliable here.
+// test_commission.js asserts the two copies are byte-identical, so they cannot
+// drift — a drifting money function is exactly how the 150-USDT coupon got
+// clamped to 100 earlier in this project.
+const SRC_LABEL = { deposit: 'deposit', admin: 'admin credit' };
+const SRC_VERB = { deposit: 'deposited', admin: 'was credited' };
+
+// How a referred user is named back to their partner. Falls back to a neutral
+// label rather than exposing the raw user id.
+async function referredLabel(userId) {
+  let prof = null;
+  try { prof = JSON.parse(await upstash(['GET', `profile:${userId}`])); } catch {}
+  const name = prof && prof.name ? String(prof.name).slice(0, 40) : null;
+  const user = prof && prof.username ? String(prof.username).slice(0, 40) : null;
+  if (name && user) return `${name} (@${user})`;
+  if (name) return name;
+  if (user) return `@${user}`;
+  return 'a referred user';
+}
+
+// Credit a partner a percentage of a referred user's deposit.
+async function payPartnerCommission(userId, amount, source) {
+  const code = await upstash(['GET', `ref:partner:${userId}`]);
+  if (!code) return;
+  const owner = await upstash(['GET', `partner:owner:${code}`]);
+  if (!owner) return;
+  let pct = 0;
+  const cfgRaw = await upstash(['GET', `partner:cfg:${code}`]);
+  try { const c = JSON.parse(cfgRaw); if (c && isFinite(parseFloat(c.depositPct))) pct = parseFloat(c.depositPct); } catch {}
+
+  // Volume is recorded even at 0% so the partner's list still shows what their
+  // referrals deposited, and so raising the rate later has history behind it.
+  await upstash(['HINCRBYFLOAT', `partner:vol:${code}`, userId, amount]);
+  await upstash(['HINCRBY', `partner:cnt:${code}`, userId, 1]);
+
+  if (!(pct > 0)) return;
+  const commission = Math.round(amount * (pct / 100) * 100) / 100;
+  if (!(commission > 0)) return;
+
+  await upstash(['INCRBYFLOAT', `bal:${owner}`, commission]);
+  await upstash(['INCRBYFLOAT', `partner:earned:${code}`, commission]);
+  // Commission is real earned money, unlike paper trading gains. Withdrawals are
+  // capped by what a user actually funded (see api/withdraw.js), so without this
+  // the commission sat in the balance and could never be taken out.
+  await upstash(['INCRBYFLOAT', `payout:earned:${owner}`, commission]);
+  // Per-referral ledger. The sorted set gives the ranking for free.
+  await upstash(['ZINCRBY', `partner:board:${code}`, commission, userId]);
+
+  const who = await referredLabel(userId);
+  await upstash(['LPUSH', `ledger:${owner}`, JSON.stringify({ usd: commission, coin: 'PARTNER',
+    note: `Partner commission ${pct}% \u00b7 ${who} \u00b7 $${amount} ${SRC_LABEL[source] || SRC_LABEL.deposit}`, at: Date.now() })]);
+  await upstash(['LTRIM', `ledger:${owner}`, 0, 99]);
+  await upstash(['LPUSH', `cmd:${owner}`, JSON.stringify({ type: 'message', kind: 'referral',
+    title: 'Partner commission \u{1F91D}',
+    text: `${who} ${SRC_VERB[source] || SRC_VERB.deposit} $${amount} \u2014 you earned $${commission} (${pct}%). It is in your withdrawable balance.` })]);
+  await upstash(['LTRIM', `cmd:${owner}`, 0, 99]);
+  await tgSend(owner, `\u{1F91D} <b>Partner commission</b>\n\n<b>${escHtml(who)}</b> ${SRC_VERB[source] || SRC_VERB.deposit} <b>$${amount}</b>.`
+    + `\nYou earned <b>$${commission}</b> (${pct}%) \u2014 added to your withdrawable balance.`);
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -151,7 +213,17 @@ module.exports = async function handler(req, res) {
       if (amount > 0) await upstash(['INCRBYFLOAT', `dep:total:${id}`, amount]);
       await upstash(['LPUSH', `ledger:${id}`, JSON.stringify({ usd: amount, coin: 'ADMIN', note: String(body.note || 'Admin adjustment'), at: Date.now() })]);
       await upstash(['LTRIM', `ledger:${id}`, 0, 99]);
-      return res.status(200).json({ ok: true, balance: newBal });
+      // An admin credit already counts as a deposit everywhere else — it raises
+      // dep:total, unlocks withdrawals and drives the deposit tiers — so it must
+      // reach the partner too, otherwise a partner-referred user credited by
+      // hand was invisible in the partner's own list. Opt out per adjustment
+      // with payCommission:false, for corrections and refunds.
+      let commissionPaid = false;
+      if (amount > 0 && body.payCommission !== false) {
+        try { await payPartnerCommission(id, amount, 'admin'); commissionPaid = true; }
+        catch (e) { /* best-effort: never fails the adjustment itself */ }
+      }
+      return res.status(200).json({ ok: true, balance: newBal, commissionPaid });
     }
 
     if (body.action === 'ban' || body.action === 'unban') {

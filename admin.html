@@ -258,6 +258,9 @@
       h += '<div class="sec-title">Controls</div><div class="card">'
         + '<div class="row"><span class="k">Adjust real balance (USDT)</span></div>'
         + '<div class="adj"><input id="adj-amt" inputmode="decimal" placeholder="+50 or -20"><input id="adj-note" placeholder="note (optional)" style="flex:1.4;"><button class="btn" onclick="doAdjust(\'' + esc(id) + '\')">Apply</button></div>'
+        + '<label class="mini" style="display:flex;align-items:center;gap:7px;margin-top:6px;cursor:pointer;">'
+        +   '<input type="checkbox" id="adj-comm" checked style="width:auto;"> Treat as a real deposit &mdash; pays partner commission and shows in their referral list'
+        + '</label>'
         + '<div class="row" style="margin-top:12px;"><span class="k">Adjust bonus (USDT) — notifies user</span></div>'
         + '<div class="adj"><input id="bon-amt" inputmode="decimal" placeholder="+10 or -5"><input id="bon-note" placeholder="note to user (optional)" style="flex:1.4;"><button class="btn amber" onclick="doBonus(\'' + esc(id) + '\')">Send</button></div>'
         + '<div class="acts" style="margin-top:12px;">'
@@ -280,9 +283,19 @@
 
     async function doAdjust(id) {
       const amount = parseFloat($('adj-amt').value); const note = $('adj-note').value.trim();
+      const box = $('adj-comm');
+      // Only meaningful for a credit; a deduction never pays commission.
+      const payCommission = amount > 0 && (!box || box.checked);
       if (!amount) return alert('Enter a non-zero amount (e.g. 50 or -20)');
-      if (!confirm((amount > 0 ? 'Add ' : 'Deduct ') + Math.abs(amount) + ' USDT?')) return;
-      try { await api({ action: 'adjust', id, amount, note }); openUser(id); } catch (e) { alert(e.message); }
+      const extra = payCommission
+        ? '\n\nIf this user came through a partner link, their partner will be paid commission and notified.'
+        : '';
+      if (!confirm((amount > 0 ? 'Add ' : 'Deduct ') + Math.abs(amount) + ' USDT?' + extra)) return;
+      try {
+        const d = await api({ action: 'adjust', id, amount, note, payCommission });
+        if (d && d.commissionPaid) console.log('partner commission attempted for', id);
+        openUser(id);
+      } catch (e) { alert(e.message); }
     }
     async function doBonus(id) {
       const amount = parseFloat($('bon-amt').value); const note = $('bon-note').value.trim();

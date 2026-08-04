@@ -52,9 +52,18 @@ async function creditDeposit(userId, paymentId, usd, meta) {
   await tgSend(userId, `💰 <b>Deposit received</b>\n\nYour ${escHtml(coin)} deposit worth <b>$${amount}</b> has been credited to your KolonoEX balance.`);
   // Partner commission: if this user came through a partner link, pay the partner
   // a % of the deposit (config set by admin). Best-effort — never blocks the credit.
-  try { await payPartnerCommission(userId, amount); } catch (e) { /* ignore */ }
+  try { await payPartnerCommission(userId, amount, 'deposit'); } catch (e) { /* ignore */ }
   return true;
 }
+
+// ── shared partner-commission block ───────────────────────────────────────────
+// This block is duplicated verbatim in api/admin.js, because every file in api/
+// is its own Vercel bundle and cross-directory imports were unreliable here.
+// test_commission.js asserts the two copies are byte-identical, so they cannot
+// drift — a drifting money function is exactly how the 150-USDT coupon got
+// clamped to 100 earlier in this project.
+const SRC_LABEL = { deposit: 'deposit', admin: 'admin credit' };
+const SRC_VERB = { deposit: 'deposited', admin: 'was credited' };
 
 // How a referred user is named back to their partner. Falls back to a neutral
 // label rather than exposing the raw user id.
@@ -70,7 +79,7 @@ async function referredLabel(userId) {
 }
 
 // Credit a partner a percentage of a referred user's deposit.
-async function payPartnerCommission(userId, amount) {
+async function payPartnerCommission(userId, amount, source) {
   const code = await upstash(['GET', `ref:partner:${userId}`]);
   if (!code) return;
   const owner = await upstash(['GET', `partner:owner:${code}`]);
@@ -99,13 +108,13 @@ async function payPartnerCommission(userId, amount) {
 
   const who = await referredLabel(userId);
   await upstash(['LPUSH', `ledger:${owner}`, JSON.stringify({ usd: commission, coin: 'PARTNER',
-    note: `Partner commission ${pct}% \u00b7 ${who} \u00b7 $${amount} deposit`, at: Date.now() })]);
+    note: `Partner commission ${pct}% \u00b7 ${who} \u00b7 $${amount} ${SRC_LABEL[source] || SRC_LABEL.deposit}`, at: Date.now() })]);
   await upstash(['LTRIM', `ledger:${owner}`, 0, 99]);
   await upstash(['LPUSH', `cmd:${owner}`, JSON.stringify({ type: 'message', kind: 'referral',
     title: 'Partner commission \u{1F91D}',
-    text: `${who} deposited $${amount} \u2014 you earned $${commission} (${pct}%). It is in your withdrawable balance.` })]);
+    text: `${who} ${SRC_VERB[source] || SRC_VERB.deposit} $${amount} \u2014 you earned $${commission} (${pct}%). It is in your withdrawable balance.` })]);
   await upstash(['LTRIM', `cmd:${owner}`, 0, 99]);
-  await tgSend(owner, `\u{1F91D} <b>Partner commission</b>\n\n<b>${escHtml(who)}</b> deposited <b>$${amount}</b>.`
+  await tgSend(owner, `\u{1F91D} <b>Partner commission</b>\n\n<b>${escHtml(who)}</b> ${SRC_VERB[source] || SRC_VERB.deposit} <b>$${amount}</b>.`
     + `\nYou earned <b>$${commission}</b> (${pct}%) \u2014 added to your withdrawable balance.`);
 }
 
