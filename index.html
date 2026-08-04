@@ -149,6 +149,31 @@
     .pn-card { background:#15131f; border:0.5px solid #2e2740; border-radius:14px; padding:16px; margin-bottom:14px; }
     .pn-card .ct { font-size:13px; font-weight:700; color:#e8e2f7; margin-bottom:12px; display:flex; align-items:center; gap:7px; } .pn-card .ct i { color:var(--purple); }
     .pn-perk { display:flex; align-items:center; gap:11px; padding:9px 0; } .pn-perk+.pn-perk { border-top:0.5px solid #221c33; }
+    /* ── referral leaderboard ── */
+    .pn-lb { display:flex; flex-direction:column; }
+    .pn-row { display:flex; align-items:center; gap:10px; padding:9px 0; }
+    .pn-row + .pn-row { border-top:0.5px solid #221c33; }
+    .pn-rank { width:22px; flex-shrink:0; text-align:center; font-size:12px; font-weight:800;
+      color:#6b6485; font-variant-numeric:tabular-nums; }
+    /* the top three read as a podium without needing a legend */
+    .pn-row.p1 .pn-rank { color:#ffd45e; } .pn-row.p2 .pn-rank { color:#cfd6e6; } .pn-row.p3 .pn-rank { color:#d99a5e; }
+    .pn-av { width:32px; height:32px; border-radius:50%; flex-shrink:0; display:grid; place-items:center;
+      font-size:13px; font-weight:800; color:#1c0f33; background:linear-gradient(135deg,#d9c2ff,var(--purple)); }
+    .pn-row.p1 .pn-av { background:linear-gradient(135deg,#ffe08a,var(--gold)); color:#3a2c00; }
+    .pn-row.p2 .pn-av { background:linear-gradient(135deg,#f2f5fa,#9aa6c4); color:#1a1f2b; }
+    .pn-row.p3 .pn-av { background:linear-gradient(135deg,#f0c08a,#c9803e); color:#2b1608; }
+    .pn-who { flex:1; min-width:0; }
+    .pn-who .nm { font-size:12.5px; font-weight:650; color:#e8e2f7;
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .pn-who .mt { font-size:10.5px; color:#8a82a0; margin-top:1px;
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .pn-amt { flex-shrink:0; text-align:right; }
+    .pn-amt .v { font-size:13px; font-weight:800; color:var(--green); font-variant-numeric:tabular-nums; }
+    .pn-amt .v.zero { color:#5b5470; }
+    .pn-amt .l { font-size:9.5px; color:#6b6485; margin-top:1px; letter-spacing:.03em; }
+    .pn-lb-empty { text-align:center; padding:18px 4px; color:#8a82a0; font-size:12px; }
+    .pn-lb-empty i { font-size:32px; opacity:.35; display:block; margin-bottom:8px; }
+    .pn-lb-more { text-align:center; font-size:10.5px; color:#6b6485; padding-top:10px; }
     .pn-perk .ic { width:34px; height:34px; border-radius:9px; background:#b07bff14; color:#c9a6ff; display:flex; align-items:center; justify-content:center; font-size:17px; flex-shrink:0; }
     .pn-perk .tx { font-size:12.5px; color:#cfc6e4; line-height:1.45; } .pn-perk .tx b { color:#fff; }
     .pn-field { margin-bottom:13px; } .pn-field label { font-size:11.5px; color:#a99bc8; display:block; margin-bottom:6px; }
@@ -3115,6 +3140,50 @@
     const body=document.getElementById('partnerBody'); body.innerHTML='<div class="sup-empty"><i class="ti ti-loader-2" style="animation:depSpin 1s linear infinite;font-size:34px;"></i></div>';
     const d=await partnerApi({action:'me'}); if(d){ myPartner=d.partner||null; partnerSig=JSON.stringify(myPartner); updatePartnerBtn(); }
     renderPartner(); }
+  // The partner's referrals, already ranked by the server (commission, then
+  // deposit volume, then most recent). Rows with no commission yet are still
+  // listed — the partner should see the whole funnel, not only the paying part.
+  function partnerBoardHTML(p){
+    const rows = (p && Array.isArray(p.board)) ? p.board : [];
+    if(!rows.length){
+      return '<div class="pn-card"><div class="ct"><i class="ti ti-users"></i> Your referrals</div>'
+        + '<div class="pn-lb-empty"><i class="ti ti-user-search"></i>'
+        + 'No one has joined through your link yet.<br>Share it above to get started.</div></div>'; }
+
+    const total = rows.reduce((a,r)=>a+(parseFloat(r.earned)||0),0);
+    const payers = rows.filter(r=>(parseFloat(r.earned)||0)>0).length;
+    const shown = rows.slice(0,25);
+
+    const body = shown.map((r,i)=>{
+      const nm = r.name || (r.username ? '@'+r.username : 'KolonoEX user \u00b7 ' + (r.ref||''));
+      const earned = parseFloat(r.earned)||0, vol = parseFloat(r.volume)||0, deps = parseInt(r.deposits,10)||0;
+      // Only rank the referrals that have actually earned something: a podium
+      // place for a row worth $0 would be meaningless.
+      const podium = earned>0 && i<3 ? ' p'+(i+1) : '';
+      const meta = deps>0
+        ? '$'+fmtNum(vol,2)+' deposited \u00b7 '+deps+(deps===1?' deposit':' deposits')
+        : 'Joined \u00b7 no deposit yet';
+      const sub = (r.name && r.username) ? '@'+esc(r.username)+' \u00b7 '+meta : meta;
+      return '<div class="pn-row'+podium+'">'
+        + '<div class="pn-rank">'+(i+1)+'</div>'
+        + '<div class="pn-av">'+esc(nm.replace(/^@/,'').charAt(0).toUpperCase()||'K')+'</div>'
+        + '<div class="pn-who"><div class="nm">'+esc(nm)+'</div><div class="mt">'+sub+'</div></div>'
+        + '<div class="pn-amt"><div class="v'+(earned>0?'':' zero')+'">'+(earned>0?'$'+fmtNum(earned,2):'\u2014')+'</div>'
+        + '<div class="l">EARNED</div></div>'
+        + '</div>'; }).join('');
+
+    return '<div class="pn-card"><div class="ct"><i class="ti ti-users"></i> Your referrals'
+      + ' <span style="margin-left:auto;font-size:11px;font-weight:600;color:#8a82a0;">'
+      + rows.length + ' joined \u00b7 ' + payers + ' earning</span></div>'
+      + '<div class="pn-lb">' + body + '</div>'
+      + (rows.length > shown.length ? '<div class="pn-lb-more">+' + (rows.length - shown.length) + ' more</div>' : '')
+      + '<div class="pn-row" style="border-top:0.5px solid #2e2740;margin-top:4px;">'
+      +   '<div class="pn-rank"><i class="ti ti-sum"></i></div>'
+      +   '<div class="pn-who"><div class="nm">Total commission</div>'
+      +   '<div class="mt">Paid into your withdrawable balance</div></div>'
+      +   '<div class="pn-amt"><div class="v">$' + fmtNum(total,2) + '</div><div class="l">ALL TIME</div></div>'
+      + '</div></div>'; }
+
   function partnerOpen(){ const ov=document.getElementById('partnerOverlay'); return ov&&ov.classList.contains('open'); }
   function closePartner(){ document.getElementById('partnerOverlay').classList.remove('open'); }
   function renderPartner(){ const body=document.getElementById('partnerBody'); if(!body) return; const p=myPartner;
@@ -3135,6 +3204,7 @@
         +'<div class="pn-perk"><div class="ic"><i class="ti ti-percentage"></i></div><div class="tx"><b>'+fmtNum(cfg.depositPct||0,1)+'%</b> commission on every deposit your referrals make.</div></div>'
         +'<div class="pn-perk"><div class="ic"><i class="ti ti-user-plus"></i></div><div class="tx"><b>$'+fmtNum(cfg.refBonus||0,2)+'</b> bonus credited to you per referral who joins.</div></div>'
         +(cfg.taskRewards&&Object.keys(cfg.taskRewards).length?'<div class="pn-perk"><div class="ic"><i class="ti ti-star"></i></div><div class="tx">Your referrals get <b>boosted task bonuses</b> — they earn more, you grow faster.</div></div>':'')+'</div>';
+      h+=partnerBoardHTML(p);
     } else if(p&&p.status==='pending'){
       h+='<div class="pn-hero"><div class="ring"><i class="ti ti-hourglass-high"></i></div><div class="h">Application <b>under review</b></div>'
         +'<div class="p">Thanks for applying! Our team is reviewing your channel. You\'ll be notified here and on Telegram once a decision is made.</div>'

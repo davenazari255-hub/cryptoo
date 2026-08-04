@@ -273,7 +273,10 @@ function cleanBanners(list) {
         await upstash(['DEL', `bal:${id}`, `dep:total:${id}`, `ledger:${id}`, `seen:${id}`,
           `task:claimed:${id}`, `checkin:${id}`, `bonus:${id}`, `vol:spot:${id}`, `vol:fut:${id}`,
           // reward state introduced with the Coupon Center
-          `coupons:${id}`, `coupon:used:${id}`, `pot:${id}`, `dep:tiers:${id}`]);
+          `coupons:${id}`, `coupon:used:${id}`, `pot:${id}`, `dep:tiers:${id}`,
+          // withdrawal allowance earned as partner commission — it tracks bal:,
+          // so a full wipe that zeroes the balance must zero this too
+          `payout:earned:${id}`]);
         await upstash(['LPUSH', `cmd:${id}`, JSON.stringify({ type: 'resetAccount' })]);
       } else {
         // Task/check-in progress lives server-side; clear it alongside the

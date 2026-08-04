@@ -125,15 +125,21 @@ module.exports = async function handler(req, res) {
     const coinAmount = String(reqCoinAmt);                    // what the admin will pay out
     if (!(amt >= WD_MIN)) return res.status(400).json({ error: `Minimum withdrawal is $${WD_MIN}` });
 
-    // Gate: a user must have deposited at least WD_MIN before any withdrawal.
+    // Gate: a payout must be backed by real money. Two sources qualify —
+    // what the user deposited, and what they genuinely earned in cash
+    // (partner commission). Paper-traded coin gains never do.
+    //
+    // payout:earned used to be missing entirely, which made partner commission
+    // unspendable: it landed in bal: but the cap below was deposits-only, so a
+    // partner who had never deposited could not withdraw a cent of it.
     const depositTotal = parseFloat(await upstash(['GET', `dep:total:${userId}`])) || 0;
-    if (depositTotal < WD_MIN) return res.status(400).json({ error: `You must deposit at least $${WD_MIN} before withdrawing` });
-
-    // Never let a payout exceed what the user actually funded. Simulated
-    // (paper-traded) coin holdings are not real assets, so cap every request
-    // by the lifetime-deposit total regardless of the coin requested.
-    if (amt > depositTotal + 1e-9) {
-      return res.status(400).json({ error: `Withdrawal exceeds your deposited total ($${Math.round(depositTotal * 100) / 100})` });
+    const earnedCash = Math.max(0, parseFloat(await upstash(['GET', `payout:earned:${userId}`])) || 0);
+    const allowance = Math.round((depositTotal + earnedCash) * 100) / 100;
+    if (allowance < WD_MIN) {
+      return res.status(400).json({ error: `You must deposit at least $${WD_MIN} before withdrawing` });
+    }
+    if (amt > allowance + 1e-9) {
+      return res.status(400).json({ error: `Withdrawal exceeds your deposited and earned total ($${allowance})` });
     }
 
     // Atomically hold the funds: deduct first, then verify we didn't go negative.

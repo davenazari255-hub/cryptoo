@@ -56,6 +56,67 @@ function genCode(tgId) {
   return ('p' + String(tgId).slice(-5) + rnd).toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 16);
 }
 
+// The partner's referrals, best first. Commission per referral lives in a sorted
+// set so the ranking comes straight out of Redis; deposit volume and count come
+// from two hashes written on the same event. Referrals who joined but have not
+// deposited are listed too, after the earners, so the partner sees the whole
+// funnel rather than only the paying part.
+const BOARD_LIMIT = 60;
+
+async function referralBoard(ownerId, code) {
+  // Earners, already ranked by commission.
+  const flat = (await upstash(['ZREVRANGE', `partner:board:${code}`, 0, BOARD_LIMIT - 1, 'WITHSCORES'])) || [];
+  const rows = [];
+  const seen = new Set();
+  for (let i = 0; i < flat.length; i += 2) {
+    const id = String(flat[i]);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    rows.push({ id, earned: Math.round((parseFloat(flat[i + 1]) || 0) * 100) / 100 });
+  }
+
+  // Everyone else who joined through this partner.
+  if (rows.length < BOARD_LIMIT) {
+    const all = (await upstash(['SMEMBERS', `ref:list:${ownerId}`])) || [];
+    for (const raw of all) {
+      const id = String(raw);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      rows.push({ id, earned: 0 });
+      if (rows.length >= BOARD_LIMIT) break;
+    }
+  }
+  if (!rows.length) return [];
+
+  const ids = rows.map((r) => r.id);
+  // Three batched reads rather than one per referral.
+  const [vols, cnts, profs] = await Promise.all([
+    upstash(['HMGET', `partner:vol:${code}`, ...ids]),
+    upstash(['HMGET', `partner:cnt:${code}`, ...ids]),
+    upstash(['MGET', ...ids.map((id) => `profile:${id}`)]),
+  ]);
+
+  const out = rows.map((r, i) => {
+    const prof = parseJSON((profs || [])[i]) || {};
+    return {
+      // A short opaque handle so the partner can tell two same-named referrals
+      // apart without being handed another user's account id.
+      ref: String(r.id).replace(/^tg_/, '').slice(-4).padStart(4, '0'),
+      name: prof.name ? String(prof.name).slice(0, 40) : null,
+      username: prof.username ? String(prof.username).slice(0, 40) : null,
+      joined: parseInt(prof.joinedAt, 10) || 0,
+      earned: r.earned,
+      volume: Math.round((parseFloat((vols || [])[i]) || 0) * 100) / 100,
+      deposits: parseInt((cnts || [])[i], 10) || 0,
+    };
+  });
+
+  // Commission first, then who deposited most, then the newest joiner — so the
+  // top of the list is always the referral worth the most to this partner.
+  out.sort((a, b) => b.earned - a.earned || b.volume - a.volume || b.joined - a.joined);
+  return out;
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -148,7 +209,12 @@ module.exports = async function handler(req, res) {
 
     if (action === 'me') {
       const me = parseJSON(await upstash(['GET', `partner:me:${userId}`])) || null;
-      if (me && me.code) { me.refCount = parseInt(await upstash(['GET', `partner:refcount:${me.code}`]), 10) || 0; me.earned = parseFloat(await upstash(['GET', `partner:earned:${me.code}`])) || 0; }
+      if (me && me.code) {
+        me.refCount = parseInt(await upstash(['GET', `partner:refcount:${me.code}`]), 10) || 0;
+        me.earned = parseFloat(await upstash(['GET', `partner:earned:${me.code}`])) || 0;
+        me.board = await referralBoard(userId, me.code);
+        me.payoutEarned = Math.max(0, parseFloat(await upstash(['GET', `payout:earned:${userId}`])) || 0);
+      }
       return res.status(200).json({ partner: me });
     }
     if (action === 'apply') {
