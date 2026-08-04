@@ -162,6 +162,64 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true, banned: body.action === 'ban' });
     }
 
+const DEFAULT_BANNERS = [
+  { id: 'partner', img: 'poster-partner.jpg', tag: 'Partner Program', accent: 'green',
+    title: 'Run a crypto channel?', sub: 'Get paid for your audience.',
+    hi: '', foot: 'Commission on every trader you bring in',
+    cta: 'Apply as a partner', action: 'partner', link: '', on: true },
+  { id: 'bonus', img: 'poster-bonus.jpg', tag: 'Coupon Center', accent: 'gold',
+    title: 'Every reward is a coupon.', sub: 'Collect them. Activate them. Trade them.',
+    hi: '125\u00d7', foot: 'Futures margin \u00b7 up to 125\u00d7 leverage',
+    cta: 'Open Coupon Center', action: 'coupons', link: '', on: true },
+];
+
+// Whatever the admin saved, normalised so a bad row cannot break the client.
+function cleanBanners(list) {
+  const ACTIONS = ['partner', 'coupons', 'invite', 'tasks', 'assets', 'trade', 'futures', 'link', 'none'];
+  const ACCENTS = ['green', 'gold', 'purple'];
+  // Either an absolute https URL or a same-origin image file. Deliberately
+  // strict: `javascript:` and `data:` are obvious, but a protocol-relative
+  // `//evil.com/a.jpg` also loads from someone else's origin, and a bare
+  // `https?://` prefix test would let a quote-breaking value through.
+  const cleanImg = (s) => { const v = String(s || '').trim().slice(0, 300);
+    if (/^https:\/\/[^\s"'<>\\]+$/i.test(v)) return v;
+    if (/^[\w.\-]+(\/[\w.\-]+)*\.(jpe?g|png|webp|avif|gif)$/i.test(v)) return v;
+    return ''; };
+  const cleanLink = (s) => { const v = String(s || '').trim().slice(0, 300);
+    return /^(https?:\/\/|tg:\/\/)/i.test(v) ? v : ''; };
+  return (Array.isArray(list) ? list : []).slice(0, 8).map((b, i) => ({
+    id: String(b.id || ('b' + i)).slice(0, 24).replace(/[^a-zA-Z0-9_]/g, '') || ('b' + i),
+    img: cleanImg(b.img),
+    tag: String(b.tag || '').slice(0, 28),
+    accent: ACCENTS.includes(b.accent) ? b.accent : 'green',
+    title: String(b.title || '').slice(0, 80),
+    sub: String(b.sub || '').slice(0, 90),
+    hi: String(b.hi || '').slice(0, 18),
+    foot: String(b.foot || '').slice(0, 90),
+    cta: String(b.cta || 'Learn more').slice(0, 32),
+    action: ACTIONS.includes(b.action) ? b.action : 'none',
+    link: cleanLink(b.link),
+    on: b.on !== false,
+  })).filter((b) => b.img || b.title);
+}
+
+    // ── Banner management (config:banners) ──
+    if (body.action === 'getBanners') {
+      const raw = await upstash(['GET', 'config:banners']);
+      const parsed = parseJSON(raw);
+      return res.status(200).json({ banners: Array.isArray(parsed) ? cleanBanners(parsed) : DEFAULT_BANNERS });
+    }
+    if (body.action === 'saveBanners') {
+      if (!Array.isArray(body.banners)) return res.status(400).json({ error: 'banners array required' });
+      const clean = cleanBanners(body.banners);
+      await upstash(['SET', 'config:banners', JSON.stringify(clean)]);
+      return res.status(200).json({ ok: true, banners: clean });
+    }
+    if (body.action === 'resetBannersConfig') {
+      await upstash(['DEL', 'config:banners']);
+      return res.status(200).json({ ok: true, banners: DEFAULT_BANNERS });
+    }
+
     // ── Task management (config:tasks) ──
     const DEFAULT_TASKS = [
       { id: 'welcome', icon: 'ti-gift', title: 'Welcome Bonus', desc: 'Sign in to KolonoEX', reward: 10, metric: 'always', target: 0, go: 'home' },

@@ -90,6 +90,7 @@
       <div class="tab" id="tab-dep" onclick="setTab('dep')">Deposits</div>
       <div class="tab" id="tab-sup" onclick="setTab('sup')">Support</div>
       <div class="tab" id="tab-tasks" onclick="setTab('tasks')">Tasks</div>
+      <div class="tab" id="tab-banners" onclick="setTab('banners')">Banners</div>
       <div class="tab" id="tab-partners" onclick="setTab('partners')">Partners</div>
     </div>
     <div class="bar">
@@ -133,8 +134,8 @@
       catch (e) { $('gate-err').textContent = e.message; }
     }
     function logout() { sessionStorage.removeItem('kx_admin'); location.reload(); }
-    function setTab(t) { TAB = t; ['users','wd','dep','sup','tasks','partners'].forEach(x => $('tab-' + x).classList.toggle('on', t === x)); if (t !== 'sup') stopThreadPoll(); refresh(); }
-    function refresh() { TAB === 'users' ? loadUsers() : TAB === 'wd' ? loadWithdrawals() : TAB === 'dep' ? loadDeposits() : TAB === 'sup' ? loadConversations() : TAB === 'tasks' ? loadTasks() : loadPartners(); }
+    function setTab(t) { TAB = t; ['users','wd','dep','sup','tasks','banners','partners'].forEach(x => $('tab-' + x).classList.toggle('on', t === x)); if (t !== 'sup') stopThreadPoll(); refresh(); }
+    function refresh() { TAB === 'users' ? loadUsers() : TAB === 'wd' ? loadWithdrawals() : TAB === 'dep' ? loadDeposits() : TAB === 'sup' ? loadConversations() : TAB === 'tasks' ? loadTasks() : TAB === 'banners' ? loadBanners() : loadPartners(); }
 
     /* ── Deposits report ── */
     async function loadDeposits() {
@@ -195,7 +196,7 @@
         + '<span><div class="u-name" style="font-size:14px;">' + esc(u.name || u.username || 'User') + (u.username ? ' <span style="color:#7a8299;font-weight:400;font-size:12px;">@' + esc(u.username) + '</span>' : '') + '</div>'
         + '<div class="u-id">' + esc(u.userId) + ' · ' + ago(u.lastSeen) + '</div></span></span>'
         + '<span style="text-align:right;">' + (u.banned ? '<span class="st banned">banned</span><br>' : '') + '<span class="amt" style="font-size:16px;">$' + fmt(u.balance) + '</span></span></div>'
-        + '<div class="row"><span class="k">Equity ≈ $' + fmt(u.equity) + ' · 🎁 $' + fmt(u.bonus) + '</span><span class="k"><i class="ti ti-users" style="font-size:11px;"></i> ' + (u.referrals || 0) + ' · ' + u.positions + ' pos</span></div></div>';
+        + '<div class="row"><span class="k">Equity ≈ $' + fmt(u.equity) + ' \u00b7 <i class="ti ti-ticket" style="font-size:11px;color:#f0b90b;"></i> $' + fmt(u.bonus) + '</span><span class="k"><i class="ti ti-users" style="font-size:11px;"></i> ' + (u.referrals || 0) + ' · ' + u.positions + ' pos</span></div></div>';
     }
     async function loadUsers() {
       $('view').innerHTML = '<div class="search"><i class="ti ti-search" style="color:#7a8299;"></i><input id="usearch" placeholder="Search name, username or id" oninput="renderUsers()"></div><div id="ulist"><div class="empty">Loading…</div></div>';
@@ -366,7 +367,98 @@
       try { const d = await api({ action: 'resetTasksConfig' }); TASKS_CACHE = d.tasks || []; renderTasksEditor(); } catch (e) { alert(e.message); }
     }
 
-    /* ── Partner management ── */
+
+    /* ── Entry banners ── */
+    // Slides shown in the carousel when a user opens the app. Ordering here is
+    // the ordering they swipe through.
+    let BANNERS_CACHE = [];
+    const B_ACTIONS = ['partner', 'coupons', 'invite', 'tasks', 'assets', 'trade', 'futures', 'link', 'none'];
+    const B_ACCENTS = ['green', 'gold', 'purple'];
+
+    async function loadBanners() {
+      $('view').innerHTML = '<div class="empty">Loading\u2026</div>';
+      try { const d = await api({ action: 'getBanners' }); BANNERS_CACHE = d.banners || [];
+        $('count').textContent = BANNERS_CACHE.length + ' banners'; renderBannersEditor(); }
+      catch (e) { $('view').innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
+    }
+    function renderBannersEditor() {
+      let h = '<div class="mini" style="margin-bottom:10px;">Posters shown in the swipeable card on app open, in this order. '
+        + '<b>image</b> is a filename committed next to index.html (e.g. <code>poster-bonus.jpg</code>) or a full https URL &mdash; portrait 3:4 works best. '
+        + '<b>title</b>/<b>subtitle</b> are drawn over the top of the art, <b>footer</b> over the bottom, so leave them blank if your image already has its own text. '
+        + '<b>action</b> is where the button takes the user. Turning a banner <b>off</b> hides it without deleting it.</div>';
+      h += BANNERS_CACHE.map((b, i) => bannerEditCard(b, i)).join('') || '<div class="empty">No banners \u2014 add one below.</div>';
+      h += '<div class="acts" style="margin-top:8px;"><button class="btn sec" onclick="addBannerRow()"><i class="ti ti-plus"></i> Add banner</button>'
+        + '<button class="btn" onclick="saveBanners()"><i class="ti ti-device-floppy"></i> Save all</button>'
+        + '<button class="btn red" onclick="resetBanners()">Reset to default</button></div>';
+      $('view').innerHTML = h;
+    }
+    function bannerEditCard(b, i) {
+      const opt = (arr, val) => arr.map(x => '<option' + (x === val ? ' selected' : '') + '>' + x + '</option>').join('');
+      const sel = 'style="flex:1;background:#0f1117;border:0.5px solid #2e3347;color:#e8edf7;border-radius:9px;padding:9px;"';
+      const last = BANNERS_CACHE.length - 1;
+      return '<div class="card" data-bi="' + i + '">'
+        + '<div class="row" style="align-items:center;">'
+        +   '<span style="font-weight:700;color:#cfd6e6;">#' + (i + 1) + '</span>'
+        +   '<span style="display:flex;gap:6px;">'
+        +     '<button class="btn sec" style="padding:5px 9px;font-size:12px;"' + (i === 0 ? ' disabled' : '') + ' onclick="moveBanner(' + i + ',-1)">\u2191</button>'
+        +     '<button class="btn sec" style="padding:5px 9px;font-size:12px;"' + (i === last ? ' disabled' : '') + ' onclick="moveBanner(' + i + ',1)">\u2193</button>'
+        +     '<button class="btn red" style="padding:5px 10px;font-size:12px;" onclick="delBannerRow(' + i + ')">Remove</button>'
+        +   '</span>'
+        + '</div>'
+        + '<div style="display:flex;gap:10px;align-items:flex-start;">'
+        +   '<img src="' + esc(b.img || '') + '" alt="" style="width:60px;height:80px;object-fit:cover;border-radius:8px;background:#0f1117;border:0.5px solid #2e3347;flex-shrink:0;" onerror="this.style.opacity=.25">'
+        +   '<div style="flex:1;min-width:0;">'
+        +     '<div class="adj"><input data-bf="img" placeholder="image (poster-bonus.jpg or https://\u2026)" value="' + esc(b.img || '') + '" style="flex:2;"></div>'
+        +     '<div class="adj"><input data-bf="id" placeholder="id" value="' + esc(b.id || '') + '"><input data-bf="tag" placeholder="tag chip" value="' + esc(b.tag || '') + '"></div>'
+        +   '</div>'
+        + '</div>'
+        + '<div class="adj"><input data-bf="title" placeholder="Headline (drawn over the art)" value="' + esc(b.title || '') + '" style="flex:2;"></div>'
+        + '<div class="adj"><input data-bf="sub" placeholder="Subtitle (accent colour)" value="' + esc(b.sub || '') + '" style="flex:2;"></div>'
+        + '<div class="adj"><input data-bf="hi" placeholder="badge e.g. 125x" style="flex:.7;" value="' + esc(b.hi || '') + '"><input data-bf="foot" placeholder="footer line" value="' + esc(b.foot || '') + '" style="flex:2;"></div>'
+        + '<div class="adj"><input data-bf="cta" placeholder="Button label" value="' + esc(b.cta || '') + '">'
+        +   '<select data-bf="action" ' + sel + '>' + opt(B_ACTIONS, b.action || 'none') + '</select>'
+        +   '<select data-bf="accent" ' + sel + '>' + opt(B_ACCENTS, b.accent || 'green') + '</select></div>'
+        + '<div class="adj"><input data-bf="link" placeholder="link (only used when action = link)" value="' + esc(b.link || '') + '" style="flex:2;">'
+        +   '<label class="mini" style="display:flex;align-items:center;gap:6px;white-space:nowrap;padding:0 4px;">'
+        +   '<input type="checkbox" data-bf="on"' + (b.on !== false ? ' checked' : '') + ' style="width:auto;"> live</label></div>'
+        + '</div>';
+    }
+    function collectBanners() {
+      return [...document.querySelectorAll('#view .card[data-bi]')].map(card => {
+        const g = f => { const el = card.querySelector('[data-bf="' + f + '"]'); return el ? el.value : ''; };
+        const chk = card.querySelector('[data-bf="on"]');
+        return { id: g('id'), img: g('img'), tag: g('tag'), accent: g('accent'), title: g('title'),
+          sub: g('sub'), hi: g('hi'), foot: g('foot'), cta: g('cta'), action: g('action'),
+          link: g('link'), on: chk ? chk.checked : true };
+      });
+    }
+    function addBannerRow() {
+      BANNERS_CACHE = collectBanners();
+      BANNERS_CACHE.push({ id: 'banner' + (BANNERS_CACHE.length + 1), img: '', tag: '', accent: 'green',
+        title: 'New banner', sub: '', hi: '', foot: '', cta: 'Learn more', action: 'none', link: '', on: true });
+      renderBannersEditor();
+    }
+    function delBannerRow(i) { BANNERS_CACHE = collectBanners(); BANNERS_CACHE.splice(i, 1); renderBannersEditor(); }
+    function moveBanner(i, d) {
+      BANNERS_CACHE = collectBanners();
+      const j = i + d; if (j < 0 || j >= BANNERS_CACHE.length) return;
+      const [row] = BANNERS_CACHE.splice(i, 1); BANNERS_CACHE.splice(j, 0, row); renderBannersEditor();
+    }
+    async function saveBanners() {
+      const banners = collectBanners();
+      if (banners.some(b => !b.img && !b.title)) return alert('Every banner needs an image or a headline.');
+      if (banners.some(b => b.action === 'link' && !b.link)) return alert('A banner with action = link needs a link.');
+      try { const d = await api({ action: 'saveBanners', banners }); BANNERS_CACHE = d.banners || banners;
+        alert('Banners saved \u2014 live for all users on their next sync.'); renderBannersEditor(); }
+      catch (e) { alert(e.message); }
+    }
+    async function resetBanners() {
+      if (!confirm('Reset the banners to the built-in defaults?')) return;
+      try { const d = await api({ action: 'resetBannersConfig' }); BANNERS_CACHE = d.banners || []; renderBannersEditor(); }
+      catch (e) { alert(e.message); }
+    }
+
+    /* \u2500\u2500 Partner management \u2500\u2500 */
     let PARTNERS = [];
     async function loadPartners() {
       $('view').innerHTML = '<div class="empty">Loading…</div>';

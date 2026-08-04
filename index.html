@@ -374,7 +374,8 @@
     /* bonus-funded positions stand out with a gold accent */
     .pos-card.bonus { border-color:#5a4a1e; background:linear-gradient(180deg,#1d1a10,var(--surface-2) 60%); }
     .pos-bonus { font-size:10px; font-weight:700; color:#3a2c00; background:linear-gradient(135deg,#ffe08a,var(--gold)); padding:2px 7px; border-radius:5px; display:inline-flex; align-items:center; gap:3px; }
-    .hist-bonus { font-size:9.5px; font-weight:700; color:var(--gold); border:0.5px solid #5a4a1e; background:#f0b90b14; padding:1px 6px; border-radius:5px; margin-left:6px; }
+    .hist-bonus { display:inline-flex; align-items:center; gap:3px; font-size:9.5px; font-weight:700; color:var(--gold); border:0.5px solid #5a4a1e; background:#f0b90b14; padding:1px 6px; border-radius:5px; margin-left:6px; }
+    .hist-bonus i { font-size:11px; }
     .pos-share-ic { font-size:17px; color:var(--text-2); cursor:pointer; flex-shrink:0; padding:4px; transition:color .15s; }
     .pos-share-ic:hover, .pos-share-ic:active { color:var(--gold); }
     /* share card sheet */
@@ -927,76 +928,91 @@
     .ci-goal span { font-size:9.5px; color:var(--text-2); }
     .ci-goal b { color:var(--text-1b); font-weight:700; }
 
-    /* ── partner promo ── */
+    /* ── entry poster carousel ── */
+    /* Everything is sized off dvh so the pinned actions row can never be
+       pushed off a short Telegram viewport, which is what made the old
+       single-card promo impossible to dismiss. */
     #promoOverlay { position:fixed; inset:0; z-index:420; display:none;
-      align-items:center; justify-content:center; padding:15px;
-      background:rgba(4,6,9,.78); -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px); }
-    #promoOverlay.open { display:flex; animation: promoFade .24s ease; }
+      background:rgba(4,6,10,.78); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
+      flex-direction:column; align-items:center; justify-content:center; gap:14px;
+      padding:14px 0 calc(14px + env(safe-area-inset-bottom)); }
+    #promoOverlay.open { display:flex; animation:promoFade .24s ease; }
     @keyframes promoFade { from { opacity:0; } to { opacity:1; } }
-    /* Sized against the dynamic viewport, and split so the action row can never
-       be pushed off screen: only .promo-scroll scrolls, .promo-actions is pinned. */
-    .promo-card { position:relative; width:100%; max-width:360px;
-      display:flex; flex-direction:column;
-      max-height:calc(100vh - 30px); max-height:calc(100dvh - 30px);
-      background:#14161e; border:0.5px solid #33405a; border-radius:20px; overflow:hidden;
-      box-shadow:0 26px 60px -14px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,255,255,.09);
-      animation: promoRise .34s cubic-bezier(.24,.9,.3,1); }
-    .promo-scroll { flex:1 1 auto; min-height:0; overflow-y:auto;
-      -webkit-overflow-scrolling:touch; overscroll-behavior:contain; scrollbar-width:none; }
-    .promo-scroll::-webkit-scrollbar { display:none; }
-    .promo-actions { flex:0 0 auto; position:relative; z-index:1;
-      padding:13px 18px calc(15px + env(safe-area-inset-bottom));
-      background:#14161e; border-top:0.5px solid var(--line); }
-    /* fade above the pinned actions so it reads as "there is more up there" */
-    .promo-actions::before { content:''; position:absolute; left:0; right:0; top:-24px; height:24px;
-      pointer-events:none; background:linear-gradient(180deg, rgba(20,22,30,0), rgba(20,22,30,.95)); }
-    @keyframes promoRise { from { transform:translateY(16px) scale(.97); opacity:0; } to { transform:none; opacity:1; } }
-    /* shorter than the image's own 16:9 so the card fits without scrolling on
-       most phones; the photo is cropped, not letterboxed */
-    .promo-hero { position:relative; background:var(--bg); flex-shrink:0;
-      height:clamp(100px, 19dvh, 172px); }
-    .promo-hero img { width:100%; height:100%; object-fit:cover; display:block; }
-    .promo-hero::after { content:''; position:absolute; inset:0;
-      background:linear-gradient(180deg, transparent 38%, rgba(20,22,30,.55) 74%, #14161e 100%); }
-    .promo-tag { position:absolute; top:11px; left:11px; z-index:2;
-      display:inline-flex; align-items:center; gap:4px;
-      font-size:9px; font-weight:800; letter-spacing:.13em; text-transform:uppercase;
-      color:var(--purple); background:rgba(20,16,32,.72); border:0.5px solid rgba(176,123,255,.45);
-      padding:4px 8px; border-radius:100px; -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); }
-    .promo-tag i { font-size:11px; }
-    .promo-x { position:absolute; top:9px; right:9px; z-index:3; width:30px; height:30px;
-      display:grid; place-items:center; border-radius:50%; cursor:pointer; font-size:17px; color:#cfd6e6;
-      background:rgba(10,12,17,.6); border:0.5px solid rgba(255,255,255,.14);
-      -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); }
-    .promo-body { padding:2px 18px 16px; }
-    .promo-body h3 { font-size:19px; font-weight:800; letter-spacing:-.02em; color:#eef3fb; margin-bottom:7px; }
-    .promo-body h3 em { font-style:normal; color:var(--green); }
-    .promo-lede { font-size:12.5px; line-height:1.6; color:#95a1b8; margin-bottom:14px; }
-    .promo-list { list-style:none; display:flex; flex-direction:column; gap:9px; margin-bottom:2px; }
-    .promo-list li { display:flex; gap:9px; align-items:flex-start; font-size:12.2px; line-height:1.5; color:#9aa6bd; }
-    .promo-list i { flex-shrink:0; width:21px; height:21px; border-radius:6px; display:grid; place-items:center;
-      font-size:12px; color:var(--green); background:rgba(78,234,160,.11); border:0.5px solid rgba(78,234,160,.26); }
-    .promo-list b { color:#e2e8f0; font-weight:600; }
-    .promo-cta { width:100%; padding:13px; border:0; border-radius:12px; cursor:pointer;
-      font-size:14.5px; font-weight:700; color:#08130d;
-      background:linear-gradient(135deg,var(--green),#3fd190);
-      box-shadow:0 6px 18px -4px rgba(78,234,160,.45);
-      transition:filter .13s ease, transform .09s ease; }
-    .promo-cta:active { transform:scale(.977); filter:brightness(.94); }
-    .promo-fine { font-size:10px; color:var(--text-3); text-align:center; margin-top:9px; line-height:1.5; }
-    .promo-foot { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+
+    /* the rail: native scroll-snap gives real momentum inside the webview */
+    /* 52dvh, not 58: at 58 the poster plus the pinned controls exactly filled a
+       430px-tall viewport with no slack, so the close button sat on the very
+       edge. This keeps ~24px of breathing room at the shortest size we support. */
+    .pcar { --pw: min(72vw, 288px); --ph: min(52dvh, 384px);
+      width:100%; flex:0 0 auto; display:flex; gap:12px; overflow-x:auto; overflow-y:hidden;
+      scroll-snap-type:x mandatory; -webkit-overflow-scrolling:touch;
+      scrollbar-width:none; padding:4px calc((100vw - var(--pw)) / 2); }
+    .pcar::-webkit-scrollbar { display:none; }
+
+    .pslide { flex:0 0 var(--pw); width:var(--pw); height:var(--ph);
+      scroll-snap-align:center; scroll-snap-stop:always;
+      position:relative; border-radius:18px; overflow:hidden; cursor:pointer;
+      background:#0b0e14; border:0.5px solid rgba(255,255,255,.09);
+      box-shadow:0 18px 44px rgba(0,0,0,.55);
+      transform:scale(.9); opacity:.5;
+      transition:transform .3s cubic-bezier(.24,.9,.3,1), opacity .3s ease; }
+    .pslide.on { transform:none; opacity:1; }
+    .pslide img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block; }
+    /* legibility for the headline set over the art */
+    .pslide::after { content:''; position:absolute; inset:0; pointer-events:none;
+      background:linear-gradient(180deg,rgba(4,6,10,.72) 0%,rgba(4,6,10,.28) 38%,rgba(4,6,10,0) 58%,rgba(4,6,10,.8) 100%); }
+
+    .ps-tag { position:absolute; top:12px; left:12px; z-index:2;
+      display:inline-flex; align-items:center; gap:5px; padding:4px 9px; border-radius:100px;
+      font-size:9.5px; font-weight:800; letter-spacing:.06em; text-transform:uppercase;
+      background:rgba(8,12,18,.62); -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px);
+      border:0.5px solid rgba(255,255,255,.14); color:var(--green); }
+    .pslide[data-accent="gold"]   .ps-tag { color:var(--gold-2); }
+    .pslide[data-accent="purple"] .ps-tag { color:var(--purple); }
+    .ps-tag i { font-size:11px; }
+
+    .ps-copy { position:absolute; z-index:2; left:16px; right:16px; top:40px; }
+    .ps-copy h3 { font-size:19px; line-height:1.22; font-weight:800; letter-spacing:-.025em;
+      color:#f4f7fc; text-shadow:0 2px 14px rgba(0,0,0,.6); }
+    .ps-copy p { margin-top:6px; font-size:12.5px; line-height:1.45; font-weight:600;
+      color:var(--green); text-shadow:0 2px 10px rgba(0,0,0,.6); }
+    .pslide[data-accent="gold"]   .ps-copy p { color:var(--gold-2); }
+    .pslide[data-accent="purple"] .ps-copy p { color:var(--purple); }
+
+    .ps-foot { position:absolute; z-index:2; left:16px; right:16px; bottom:14px;
+      display:flex; align-items:center; gap:8px; }
+    .ps-foot span { font-size:11.5px; line-height:1.35; color:#dbe3f0; font-weight:500;
+      text-shadow:0 2px 10px rgba(0,0,0,.7); }
+    .ps-hi { flex-shrink:0; padding:3px 9px; border-radius:7px;
+      font-size:12.5px; font-weight:900; letter-spacing:-.02em;
+      background:var(--green); color:#052b1c; }
+    .pslide[data-accent="gold"]   .ps-hi { background:var(--gold); color:#2a1f00; }
+    .pslide[data-accent="purple"] .ps-hi { background:var(--purple); color:#1c0f33; }
+
+    /* pinned controls — never inside the scroller */
+    .pcar-act { flex:0 0 auto; width:min(72vw, 288px); display:flex; flex-direction:column;
+      align-items:center; gap:11px; }
+    .pcar-cta { width:100%; padding:13px; border:0; border-radius:12px; cursor:pointer;
+      font-size:14px; font-weight:800; letter-spacing:-.01em;
+      background:#f2f5fa; color:#0b0e14; box-shadow:0 8px 22px rgba(0,0,0,.4);
+      transition:transform .12s ease, filter .12s ease; }
+    .pcar-cta:active { transform:scale(.977); filter:brightness(.93); }
+    .pcar-dots { display:flex; gap:6px; }
+    .pcar-dots i { width:5px; height:5px; border-radius:50%; background:rgba(255,255,255,.26);
+      transition:width .26s ease, background .26s ease; }
+    .pcar-dots i.on { width:16px; border-radius:3px; background:var(--green); }
     .promo-never { display:flex; align-items:center; gap:7px; cursor:pointer;
-      font-size:11px; color:var(--text-2); min-height:44px; -webkit-tap-highlight-color:transparent; }
+      font-size:11.5px; color:#9aa6bd; user-select:none; position:relative; }
     .promo-never input { position:absolute; opacity:0; pointer-events:none; }
     .promo-never .promo-box { width:17px; height:17px; flex-shrink:0; border-radius:5px;
-      border:1.5px solid #3a465e; display:grid; place-items:center;
-      font-size:11px; line-height:1; color:#08130d;
-      transition:background .15s ease, border-color .15s ease; }
+      border:1.2px solid #4a5068; display:grid; place-items:center; font-size:11px; color:#04120c;
+      transition:background .16s ease, border-color .16s ease; }
     .promo-never input:checked + .promo-box { background:var(--green); border-color:var(--green); }
     .promo-never input:checked + .promo-box::after { content:'\2713'; font-weight:900; }
-    .promo-later { background:none; border:0; cursor:pointer; padding:0 2px; min-height:44px;
-      font-size:12.5px; font-weight:600; color:var(--text-2); }
-    .promo-later:active { color:var(--text-1); }
+    .pcar-x { width:36px; height:36px; border-radius:50%; display:grid; place-items:center;
+      cursor:pointer; background:rgba(255,255,255,.09); color:#cfd6e6; font-size:17px;
+      border:0.5px solid rgba(255,255,255,.13); }
+    .pcar-x:active { background:rgba(255,255,255,.16); }
 
     /* ─────────── audit: interaction feedback ─────────── */
     /* every primary control now confirms the press */
@@ -1245,7 +1261,7 @@
                 <span style="color:#ff5a5a;font-weight:600;" id="fut-lev-short">125x</span>
               </div>
             </div>
-            <button class="bonus-btn" id="fut-bonus-btn" onclick="toggleBonus()"><i class="ti ti-gift"></i> Use Bonus</button>
+            <button class="bonus-btn" id="fut-bonus-btn" onclick="toggleBonus()"><i class="ti ti-ticket"></i> Use Bonus</button>
             <div class="seg" id="fut-mode-seg">
               <div class="open active" onclick="setFutMode('open')">Open</div>
               <div class="close" onclick="setFutMode('close')">Close</div>
@@ -1341,33 +1357,13 @@
   <div class="cpn-body" id="cpnBody"></div>
 </div>
 <div id="promoOverlay">
-  <div class="promo-card" onclick="event.stopPropagation()">
-    <div class="promo-x" onclick="promoClose()"><i class="ti ti-x"></i></div>
-    <div class="promo-scroll">
-    <div class="promo-hero">
-      <span class="promo-tag"><i class="ti ti-diamond"></i> Partner Program</span>
-      <img src="partner-banner.jpg" alt="">
-    </div>
-    <div class="promo-body">
-      <h3>Run a crypto channel?<br><em>Get paid for your audience.</em></h3>
-      <p class="promo-lede">KolonoEX partners earn from every trader they bring in &mdash; with terms set for their own channel, not a flat affiliate rate.</p>
-      <ul class="promo-list">
-        <li><i class="ti ti-percentage"></i><span><b>Commission on your referrals' deposits</b>, at a rate agreed for your channel</span></li>
-        <li><i class="ti ti-user-plus"></i><span><b>A higher signup bonus</b> than the standard $0.5 per invite</span></li>
-        <li><i class="ti ti-bolt"></i><span><b>Boosted task rewards</b>, so your audience earns more than everyone else</span></li>
-        <li><i class="ti ti-chart-arrows-vertical"></i><span><b>Your own referral code</b> and live stats in the app</span></li>
-      </ul>
-    </div>
-    </div>
-    <div class="promo-actions">
-      <button class="promo-cta" onclick="promoGo()">Apply as a partner</button>
-      <p class="promo-fine">Applications are reviewed by the KolonoEX team. Terms are set per channel on approval.</p>
-      <div class="promo-foot">
-        <label class="promo-never"><input type="checkbox" id="promoNever"><span class="promo-box"></span>Don't show this again</label>
-        <button class="promo-later" onclick="promoClose()">Maybe later</button>
-      </div>
-    </div>
+  <div class="pcar" id="pcarTrack"></div>
+  <div class="pcar-act">
+    <div class="pcar-dots" id="pcarDots"></div>
+    <button class="pcar-cta" id="pcarCta" onclick="promoGo()">Learn more</button>
+    <label class="promo-never"><input type="checkbox" id="promoNever"><span class="promo-box"></span>Don't show this again</label>
   </div>
+  <div class="pcar-x" onclick="promoClose()"><i class="ti ti-x"></i></div>
 </div>
 <div class="toast-wrap" id="toastWrap"></div>
 <div id="chartOverlay"></div>
@@ -1871,7 +1867,7 @@
   function recalcFutMargins(){ const amt=parseFloat(v('fut-amount'))||0; setText('fut-marginl',amt?fmtNum(amt/ui.levLong,2)+' USDT':'-- USDT'); setText('fut-margins',amt?fmtNum(amt/ui.levShort,2)+' USDT':'-- USDT'); }
   function updateFutInfo(){ const avail=futAvail(); setText('fut-avail',fmtNum(avail,2)+(ui.useBonus?' Bonus':' USDT')); setText('fut-maxl',Math.floor(avail*ui.levLong)+' Cont'); setText('fut-maxs',Math.floor(avail*ui.levShort)+' Cont'); recalcFutMargins(); setBonusBtn(); }
   function setBonusBtn(){ const btn=document.getElementById('fut-bonus-btn'); if(!btn) return; btn.classList.toggle('active',ui.useBonus);
-    btn.innerHTML='<i class="ti ti-gift"></i> '+(ui.useBonus?'Bonus Margin ON':'Use Bonus')+' ('+fmtNum(state.bonus||0,2)+' USDT)'; }
+    btn.innerHTML='<i class="ti ti-ticket"></i> '+(ui.useBonus?'Bonus Margin ON':'Use Bonus')+' ('+fmtNum(state.bonus||0,2)+' USDT)'; }
   function toggleBonus(){ if(!ui.useBonus && (state.bonus||0)<=0){ toast('No bonus — claim it in Assets ▸ Bonus','info'); return; }
     ui.useBonus=!ui.useBonus; setBonusBtn(); updateFutInfo(); toast(ui.useBonus?'Bonus margin enabled':'Switched to wallet margin', ui.useBonus?'ok':'info'); }
   function placeFut(side){ const k=ui.futPair,live=px(k); if(!live){ toast('Live price not ready','err'); return; }
@@ -1955,7 +1951,7 @@
     if(state.positions.length){ html+='<div class="pos-bar"><span class="hide" onclick="toggleHideOther()"><i class="ti '+(ui.hideOther?'ti-eye-off':'ti-eye')+'"></i> '+(ui.hideOther?'Show All Symbols':'Hide Other Symbols')+'</span><span class="closeall" onclick="closeAllPos()">Close All</span></div>'; }
     if(!list.length) html+='<div class="empty">'+(state.positions.length?'No positions for '+tkr(ui.futPair):'No open positions')+'</div>';
     else html+=list.map(p=>{ const u=unrealized(p); const roe=(u/p.margin)*100; const cls=u>=0?'pnl-pos':'pnl-neg'; const mark=px(p.pair); const liq=liqPrice(p); const risk=posRisk(p); const riskCls=risk>70?'pnl-neg':risk>40?'':'pnl-pos';
-      return '<div class="pos-card'+(p.src==='bonus'?' bonus':'')+'"><div class="pos-top">'+coinLogo(p.pair,24)+'<span class="pos-pair">'+tkr(p.pair)+'USDT Perp</span><span class="pos-mode '+p.side+'">'+p.side.toUpperCase()+' · '+(p.mode||'Cross')+' '+p.lev+'x</span>'+(p.src==='bonus'?'<span class="pos-bonus"><i class="ti ti-gift" style="font-size:11px;"></i>BONUS</span>':'')+'</div>'
+      return '<div class="pos-card'+(p.src==='bonus'?' bonus':'')+'"><div class="pos-top">'+coinLogo(p.pair,24)+'<span class="pos-pair">'+tkr(p.pair)+'USDT Perp</span><span class="pos-mode '+p.side+'">'+p.side.toUpperCase()+' · '+(p.mode||'Cross')+' '+p.lev+'x</span>'+(p.src==='bonus'?'<span class="pos-bonus"><i class="ti ti-ticket" style="font-size:11px;"></i>BONUS</span>':'')+'</div>'
         +'<div class="pos-pnlrow"><div><div class="lbl">PNL (USDT)</div><div class="big '+cls+'">'+(u>=0?'+':'')+fmtNum(u,2)+'</div></div><div style="text-align:right;"><div class="lbl">ROE</div><div class="big '+cls+'">'+(roe>=0?'+':'')+roe.toFixed(2)+'%</div></div></div>'
         +'<div class="pos-grid3"><div class="cell"><div class="lbl">Size (Cont)</div><div class="val">'+fmtNum(p.notional,2)+'</div></div>'
         +'<div class="cell"><div class="lbl">Margin (USDT) <span class="addm" onclick="openAddMargin('+p.id+')">⊕</span></div><div class="val">'+fmtNum(p.margin,2)+'</div></div>'
@@ -1968,7 +1964,7 @@
     wrap.innerHTML=html;
     const ordEl=document.getElementById('fut-ord-list');
     ordEl.innerHTML=state.closed.length?state.closed.map((p,ci)=>{ const cls=p.pnl>=0?'pnl-pos':'pnl-neg';
-      return '<div class="order-card"><div class="order-info"><div class="t">'+(p.liquidated?'⚠ ':'')+p.side.toUpperCase()+' '+tkr(p.pair)+' '+p.lev+'x'+(p.src==='bonus'?'<span class="hist-bonus">🎁 BONUS</span>':'')+'</div><div class="s">'+p.closedTime+(p.reason?' · '+p.reason:'')+' · entry '+fmtNum(p.entry,dp(p.pair))+'</div></div><div style="display:flex;align-items:center;gap:10px;"><div class="tx-right '+cls+'">'+(p.pnl>=0?'+':'')+fmtNum(p.pnl,2)+' USDT</div><i class="ti ti-share pos-share-ic" onclick="openClosedShare('+ci+')"></i></div></div>'; }).join(''):'<div class="empty">No history yet</div>'; }
+      return '<div class="order-card"><div class="order-info"><div class="t">'+(p.liquidated?'⚠ ':'')+p.side.toUpperCase()+' '+tkr(p.pair)+' '+p.lev+'x'+(p.src==='bonus'?'<span class="hist-bonus"><i class="ti ti-ticket"></i>BONUS</span>':'')+'</div><div class="s">'+p.closedTime+(p.reason?' · '+p.reason:'')+' · entry '+fmtNum(p.entry,dp(p.pair))+'</div></div><div style="display:flex;align-items:center;gap:10px;"><div class="tx-right '+cls+'">'+(p.pnl>=0?'+':'')+fmtNum(p.pnl,2)+' USDT</div><i class="ti ti-share pos-share-ic" onclick="openClosedShare('+ci+')"></i></div></div>'; }).join(''):'<div class="empty">No history yet</div>'; }
 
   // ── ASSETS (Overview / Spot / Futures / Bonus) ──
   const ASSET_TABS=['overview','spot','futures','bonus'];
@@ -2064,7 +2060,7 @@
       return '<div class="dist-row"><div style="display:flex;align-items:center;gap:10px;">'+coinLogo(p.pair,30)+'<div><div class="nm">'+tkr(p.pair)+'USDT</div><div class="sub2" style="text-align:left;color:'+(p.side==='long'?'#4eeaa0':'#ff5a5a')+'">'+p.side.toUpperCase()+' '+p.lev+'x</div></div></div><div><div class="amt '+cls+'">'+(u>=0?'+':'')+fmtNum(u,2)+'</div><div class="sub2">margin '+fmtNum(p.margin,2)+'</div></div></div>'; }).join(''); }
     paintInto(document.getElementById('at-futures'),h); }
   function renderBonus(){ const be=bonusEquity(); const bpos=state.positions.filter(p=>p.src==='bonus');
-    let h='<div class="bonus-card"><div class="lab"><i class="ti ti-gift"></i> Futures Bonus Balance</div><div class="val">'+fmtNum(state.bonus||0,2)+' <span style="font-size:15px;color:#7aa893;">USDT</span></div>'
+    let h='<div class="bonus-card"><div class="lab"><i class="ti ti-ticket"></i> Futures Bonus Balance</div><div class="val">'+fmtNum(state.bonus||0,2)+' <span style="font-size:15px;color:#7aa893;">USDT</span></div>'
       +'<div class="desc">Use this bonus as margin in Futures. Profits are credited to your wallet; the bonus principal itself is for trading only.</div></div>';
     // Live PnL of the currently-open bonus position(s) only — 0 when none are open.
     const bopen=bpos.reduce((s,p)=>s+unrealized(p),0); const bpcol=bopen>=0?'#4eeaa0':'#ff5a5a';
@@ -2081,13 +2077,13 @@
     const re=/bonus|referral|task reward/i;
     const list=(state.transactions||[]).filter(t=>re.test(t.type||'')||re.test(t.sub||''));
     const rows=list.length ? list.map(t=>{ const col=t.sign==='+'?'#4eeaa0':t.sign==='-'?'#ff5a5a':'#cfd6e6';
-      return '<div class="rec-card"><div class="rec-top"><div class="rec-ic"><div class="ic neu" style="background:#f0b90b1a;color:#f0b90b;"><i class="ti ti-gift"></i></div>'
+      return '<div class="rec-card"><div class="rec-top"><div class="rec-ic"><div class="ic neu" style="background:#f0b90b1a;color:#f0b90b;"><i class="ti ti-ticket"></i></div>'
         +'<div><div class="tt">'+esc(t.type||'Bonus')+'</div><div class="ss">'+esc(t.sub||'')+'</div></div></div>'
         +'<div class="rec-val" style="color:'+col+';">'+esc(t.sign||'')+fmtNum(t.value||0,2)+' USDT</div></div>'
         +'<div class="rec-kv"><span class="k">Time</span><span class="v">'+esc(t.time||'')+'</span></div></div>'; }).join('')
-      : '<div class="empty"><i class="ti ti-gift" style="font-size:40px;opacity:.4;"></i><div>No bonus activity yet</div></div>';
+      : '<div class="empty"><i class="ti ti-ticket" style="font-size:40px;opacity:.4;"></i><div>No bonus activity yet</div></div>';
     openSheet(sheetHead('Bonus Records')
-      +'<div class="bonus-card" style="margin-bottom:14px;"><div class="lab"><i class="ti ti-gift"></i> Current Bonus</div><div class="val">'+fmtNum(state.bonus||0,2)+' <span style="font-size:15px;color:#c9b777;">USDT</span></div></div>'
+      +'<div class="bonus-card" style="margin-bottom:14px;"><div class="lab"><i class="ti ti-ticket"></i> Current Bonus</div><div class="val">'+fmtNum(state.bonus||0,2)+' <span style="font-size:15px;color:#c9b777;">USDT</span></div></div>'
       +rows); }
   // ── Home tasks ──
   function taskStatus(t){ if(state.taskClaimed[t.id]) return 'done'; return taskCond(t)?'ready':'locked'; }
@@ -2608,23 +2604,126 @@
     if(!recPoll){ recPoll=setInterval(()=>{ if(!document.getElementById('rec-body')){ clearInterval(recPoll); recPoll=null; return; } loadRecords(); }, 12000); } }
 
   // ── SHEETS ──
-  // ── Partner promo ──────────────────────────────────────────────────
-  // Shown once per install shortly after open. The checkbox is honoured
-  // whichever way the sheet is closed, so a user who ticks it and taps the CTA
-  // still never sees it again.
-  const PROMO_KEY='kx_promo_partner_v1';
+  // ── Entry poster carousel ─────────────────────────────────
+  // Slides come from the server (config:banners) so the admin owns them. These
+  // defaults only cover the first open, before the first sync lands.
+  let banners = [
+    { id:'partner', img:'poster-partner.jpg', tag:'Partner Program', accent:'green',
+      title:'Run a crypto channel?', sub:'Get paid for your audience.', hi:'',
+      foot:'Commission on every trader you bring in',
+      cta:'Apply as a partner', action:'partner', link:'' },
+    { id:'bonus', img:'poster-bonus.jpg', tag:'Coupon Center', accent:'gold',
+      title:'Every reward is a coupon.', sub:'Collect them. Activate them. Trade them.',
+      hi:'125\u00d7', foot:'Futures margin \u00b7 up to 125\u00d7 leverage',
+      cta:'Open Coupon Center', action:'coupons', link:'' },
+  ];
+  let bannersSig = null, pcarIdx = 0, promoShown = false;
+
+  // The dismissal is remembered against the slide set, not forever: when the
+  // admin publishes a different set the signature changes and a user who
+  // dismissed the old posters is shown the new ones once.
+  const PROMO_KEY = 'kx_promo_off_v2';
+  function bannerSig(list){ return list.map(b => b.id).join('|'); }
+  function promoDismissed(){
+    try { return localStorage.getItem(PROMO_KEY) === bannerSig(banners); } catch { return false; } }
   function promoDone(){
-    try{ const cb=document.getElementById('promoNever');
-      if(cb&&cb.checked) localStorage.setItem(PROMO_KEY,'off'); }catch{} }
-  function promoClose(){ promoDone(); const ov=document.getElementById('promoOverlay');
-    if(ov) ov.classList.remove('open'); }
-  function promoGo(){ promoDone(); const ov=document.getElementById('promoOverlay');
-    if(ov) ov.classList.remove('open'); openPartner(); }
+    try { const cb = document.getElementById('promoNever');
+      if (cb && cb.checked) localStorage.setItem(PROMO_KEY, bannerSig(banners)); } catch {} }
+
+  function applyBanners(list){
+    if (!Array.isArray(list)) return;
+    const clean = list.filter(b => b && (b.img || b.title));
+    const sig = JSON.stringify(clean);
+    if (sig === bannersSig) return;
+    bannersSig = sig; banners = clean;
+    // Only repaint an already-open carousel if the user has not started
+    // swiping — rebuilding resets the rail to the first poster.
+    const ov = document.getElementById('promoOverlay');
+    const track = document.getElementById('pcarTrack');
+    if (ov && ov.classList.contains('open') && track && track.scrollLeft < 4) buildPromo(); }
+
+  function pcarSlides(){
+    // A slide the user has already acted on is not worth showing again.
+    return banners.filter(b => !(b.action === 'partner' && myPartner)); }
+
+  function buildPromo(){
+    const track = document.getElementById('pcarTrack');
+    const dots = document.getElementById('pcarDots');
+    if (!track || !dots) return;
+    const list = pcarSlides();
+    track.innerHTML = list.map((b, i) =>
+      '<div class="pslide' + (i === 0 ? ' on' : '') + '" data-accent="' + esc(b.accent || 'green') + '" onclick="pcarTap(' + i + ')">'
+      + (b.img ? '<img src="' + esc(b.img) + '" alt="" loading="eager">' : '')
+      + (b.tag ? '<span class="ps-tag"><i class="ti ti-sparkles"></i>' + esc(b.tag) + '</span>' : '')
+      + (b.title || b.sub
+          ? '<div class="ps-copy">' + (b.title ? '<h3>' + esc(b.title) + '</h3>' : '')
+            + (b.sub ? '<p>' + esc(b.sub) + '</p>' : '') + '</div>'
+          : '')
+      + (b.foot || b.hi
+          ? '<div class="ps-foot">' + (b.hi ? '<span class="ps-hi">' + esc(b.hi) + '</span>' : '')
+            + (b.foot ? '<span>' + esc(b.foot) + '</span>' : '') + '</div>'
+          : '')
+      + '</div>').join('');
+    dots.innerHTML = list.length > 1 ? list.map((_, i) => '<i' + (i === 0 ? ' class="on"' : '') + '></i>').join('') : '';
+    pcarIdx = 0; track.scrollLeft = 0; pcarSync(); }
+
+  // Which poster is centred, derived from scroll position rather than tracked
+  // by hand, so a flick that lands between slides still resolves correctly.
+  function pcarSync(){
+    const track = document.getElementById('pcarTrack'); if (!track) return;
+    const cards = [...track.children]; if (!cards.length) return;
+    const mid = track.scrollLeft + track.clientWidth / 2;
+    let best = 0, bestD = Infinity;
+    cards.forEach((c, i) => { const d = Math.abs(c.offsetLeft + c.offsetWidth / 2 - mid);
+      if (d < bestD) { bestD = d; best = i; } });
+    cards.forEach((c, i) => c.classList.toggle('on', i === best));
+    const dots = document.getElementById('pcarDots');
+    if (dots) [...dots.children].forEach((d, i) => d.classList.toggle('on', i === best));
+    if (best !== pcarIdx) { pcarIdx = best; hapticSelect(); }
+    const b = pcarSlides()[best];
+    const cta = document.getElementById('pcarCta');
+    if (cta && b) cta.textContent = b.cta || 'Learn more'; }
+
+  // Tapping a poster that is not centred brings it to the centre instead of
+  // firing the centred poster's action, which is what a user expects.
+  function pcarTap(i){
+    if (i === pcarIdx) { promoGo(); return; }
+    const track = document.getElementById('pcarTrack'); if (!track) return;
+    const c = track.children[i]; if (!c) return;
+    track.scrollTo({ left: c.offsetLeft - (track.clientWidth - c.offsetWidth) / 2, behavior: 'smooth' }); }
+
+  function promoClose(){ promoDone();
+    const ov = document.getElementById('promoOverlay'); if (ov) ov.classList.remove('open'); }
+
+  function promoGo(){
+    const b = pcarSlides()[pcarIdx]; promoDone();
+    const ov = document.getElementById('promoOverlay'); if (ov) ov.classList.remove('open');
+    if (!b) return;
+    switch (b.action) {
+      case 'partner':  openPartner(); break;
+      case 'coupons':  openCoupons(); break;
+      case 'invite':   openInvite();  break;
+      case 'tasks':    goPage('home'); folds.tk = true; saveFolds(); renderTasks(); break;
+      case 'assets':   goPage('assets'); break;
+      case 'trade':    goPage('trade'); break;
+      case 'futures':  goPage('futures'); break;
+      case 'link':     if (b.link) openLinkSmart(b.link); break;
+      default: break; } }
+
+  (function bindPcar(){
+    const track = document.getElementById('pcarTrack'); if (!track) return;
+    let raf = 0;
+    track.addEventListener('scroll', () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; pcarSync(); }); }, { passive: true });
+  })();
+
   function maybePromo(){
-    try{ if(localStorage.getItem(PROMO_KEY)==='off') return; }catch{}
-    if(myPartner) return;                       // already applied or approved
-    const ov=document.getElementById('promoOverlay'); if(!ov) return;
-    ov.classList.add('open'); }
+    if (promoShown) return;
+    if (promoDismissed()) return;
+    if (!pcarSlides().length) return;
+    const ov = document.getElementById('promoOverlay'); if (!ov) return;
+    promoShown = true; buildPromo(); ov.classList.add('open'); }
 
   function openSheet(html){ const ov=document.getElementById('sheetOverlay');
     clearTimeout(ov._closeT); ov.classList.remove('closing');   // cancel a pending exit
@@ -2710,6 +2809,35 @@
     p.tp=tp>0?tp:null; p.sl=sl>0?sl:null; save(); closeSheet(); toast('TP/SL updated','ok'); renderFutPositions(); }
 
   // ── PnL Share Card (canvas-generated image for Telegram/stories) ──
+  // A ticket glyph for the share canvas, which cannot use the icon font: a
+  // rounded rectangle with a semicircular notch bitten out of each side and a
+  // perforation down the stub. Filled solid rather than outlined — at the
+  // 30x19 it is drawn at, an outline reads as an ambiguous smudge while the
+  // solid silhouette is unmistakably a ticket.
+  function drawTicket(ctx, x, y, w, h, color){
+    const r = 3, n = h * 0.20;
+    ctx.save(); ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h / 2 - n);
+    ctx.arc(x + w, y + h / 2, n, -Math.PI / 2, Math.PI / 2, true);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + h / 2 + n);
+    ctx.arc(x, y + h / 2, n, Math.PI / 2, -Math.PI / 2, true);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+    ctx.fillStyle = color; ctx.fill();
+    // the perforation, punched in the card colour so it reads at any size
+    ctx.beginPath(); ctx.setLineDash([2, 2]);
+    ctx.moveTo(x + w * 0.34, y + 3); ctx.lineTo(x + w * 0.34, y + h - 3);
+    ctx.strokeStyle = '#0d1117'; ctx.lineWidth = 1.4; ctx.stroke();
+    ctx.setLineDash([]); ctx.restore(); }
+
   function pnlEmoji(pnl){ return pnl>=2?'💎':pnl>=0.5?'🚀':pnl>=0?'✨':pnl>-5?'😤':'💀'; }
   function pnlTitle(pnl){ return pnl>=2?'CRUSHED IT':pnl>=0.5?'UP ONLY':pnl>=0?'GREEN':pnl>-5?'SHAKING IT OFF':'REKT'; }
   function shareCardData(id,isOpen){ let p, pnl, roe;
@@ -2740,7 +2868,10 @@
     ctx.beginPath(); ctx.roundRect(50,172,sideW+40,34,8); ctx.fill();
     ctx.fillStyle='#0d0e12'; ctx.fillText(sideTxt,70,196);
     // bonus badge
-    if(isBonus){ ctx.fillStyle=gold; ctx.font='bold 20px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.fillText('🎁 BONUS',50+sideW+56,196); }
+    if(isBonus){ const bx=50+sideW+56, by=181;
+      drawTicket(ctx, bx, by, 30, 19, gold);
+      ctx.fillStyle=gold; ctx.font='bold 20px -apple-system,BlinkMacSystemFont,sans-serif';
+      ctx.textBaseline='middle'; ctx.fillText('BONUS', bx+38, by+10); ctx.textBaseline='alphabetic'; }
     // divider
     ctx.strokeStyle='#ffffff0d'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(50,240); ctx.lineTo(W-50,240); ctx.stroke();
     // PnL — big hero number
@@ -2827,7 +2958,7 @@
     if(c>0){ b.textContent=c>99?'99+':c; b.style.display='flex'; } else b.style.display='none'; }
   function notifTimeAgo(t){ const s=(Date.now()-t)/1000; if(s<60) return 'just now'; if(s<3600) return Math.floor(s/60)+'m ago'; if(s<86400) return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago'; }
   function openNotifications(){ const list=state.notifications||[];
-    const icon=k=>k==='referral'?'ti-users-plus':k==='bonus'?'ti-gift':k==='message'?'ti-message-2':'ti-bell';
+    const icon=k=>k==='referral'?'ti-users-plus':k==='bonus'?'ti-ticket':k==='message'?'ti-message-2':'ti-bell';
     const cls=k=>k==='referral'||k==='bonus'?'ref':k==='message'?'msg':'sys';
     const body=list.length ? list.map(n=>'<div class="ntf-item'+(n.read?'':' unread')+'"><div class="ntf-ic '+cls(n.kind)+'"><i class="ti '+icon(n.kind)+'"></i></div>'
       +'<div class="ntf-body"><div class="ntf-title">'+esc(n.title)+'</div><div class="ntf-text">'+esc(n.text)+'</div><div class="ntf-time">'+notifTimeAgo(n.at)+'</div></div>'
@@ -3134,6 +3265,7 @@
       if(isFinite(parseFloat(d.pot))){ const np=parseFloat(d.pot);
         if(np!==pot){ pot=np; renderCheckin(); renderInvitePot(); } }
       if(isFinite(parseFloat(d.potThreshold))) potThreshold=parseFloat(d.potThreshold);
+      if(Array.isArray(d.banners)) applyBanners(d.banners);
       if(Array.isArray(d.depositLadder)) depLadder=d.depositLadder;
       if(Array.isArray(d.depTiers)){ const sig=d.depTiers.slice().sort().join(',');
         if(sig!==depSig){ depSig=sig; depTiers=d.depTiers; renderTasks(); } }
