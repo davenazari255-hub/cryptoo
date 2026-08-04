@@ -187,11 +187,48 @@ function cleanBanners(list) {
   })).filter((b) => b.img || b.title);
 }
 
-async function loadBanners(upstashFn) {
+async function loadBanners(upstashFn, userId) {
   const raw = await upstashFn(['GET', 'config:banners']);
   const parsed = raw ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : null;
   const list = Array.isArray(parsed) ? cleanBanners(parsed) : DEFAULT_BANNERS;
-  return list.filter((b) => b.on !== false);
+
+  // Never pitch the partner programme to someone already in it. Pending counts:
+  // an application under review should not be asked to apply again. Decided
+  // here rather than in the client, because the client's partner record may not
+  // have loaded by the time the carousel opens.
+  let inProgramme = false;
+  if (userId) {
+    const me = parseJSON(await upstashFn(['GET', `partner:me:${userId}`]));
+    inProgramme = !!(me && (me.status === 'approved' || me.status === 'pending'));
+  }
+  return list.filter((b) => b.on !== false && !(inProgramme && b.action === 'partner'));
+}
+
+// Who invited this user, for display back to them. Returns null for an organic
+// signup. Deliberately does not include the referrer's user id: the point is
+// attribution, not exposing another account's identifier.
+async function invitedBy(upstashFn, userId) {
+  const ref = await upstashFn(['GET', `ref:by:${userId}`]);
+  if (!ref) return null;
+  const code = await upstashFn(['GET', `ref:partner:${userId}`]);
+  const [profRaw, pmRaw] = await Promise.all([
+    upstashFn(['GET', `profile:${ref}`]),
+    upstashFn(['GET', `partner:me:${ref}`]),
+  ]);
+  const prof = parseJSON(profRaw) || {};
+  const pm = parseJSON(pmRaw) || null;
+  // Only an approved partner is presented as one, and only their channel is
+  // shown — the rest of the application (audience, private note) stays private.
+  const approved = !!(pm && pm.status === 'approved');
+  const name = (approved && pm.name) || prof.name || null;
+  const username = (approved && pm.username) || prof.username || null;
+  return {
+    name: name ? String(name).slice(0, 40) : null,
+    username: username ? String(username).slice(0, 40) : null,
+    channel: approved && pm.channel ? String(pm.channel).slice(0, 120) : null,
+    partner: approved,
+    code: approved && code ? String(code).slice(0, 32) : null,
+  };
 }
 
 async function loadTasks(upstashFn) {
@@ -595,7 +632,8 @@ module.exports = async function handler(req, res) {
 
     // Effective task list, including any partner reward overrides (clamped).
     const tasks = await effectiveTasks(upstash, userId);
-    const banners = await loadBanners(upstash);
+    const banners = await loadBanners(upstash, userId);
+    const invited = await invitedBy(upstash, userId);
 
     // Server-held reward state. The client renders from these instead of its own
     // localStorage, so wiping storage no longer re-opens claimed rewards.
@@ -656,7 +694,7 @@ module.exports = async function handler(req, res) {
     // locally — a client in UTC+03:30 computes a different day between 00:00
     // and 03:29 local, which made an already-claimed check-in look claimable.
     return res.status(200).json({ banned: false, balance, commands, referral, depositTotal, tasks, partner, taskClaimed, checkin, bonusServer,
-      banners,
+      banners, invitedBy: invited,
       coupons: parseJSON(couponsRaw) || [], now: Date.now(),
       pot: potVal, potThreshold: POT_THRESHOLD,
       depTiers, depositLadder: depositLadder(depositTotal, depTiers, (Array.isArray(taskClaimed) ? taskClaimed : []).indexOf('deposit') >= 0),
@@ -667,6 +705,8 @@ module.exports = async function handler(req, res) {
 };
 
 module.exports.cleanBanners = cleanBanners;
+module.exports.loadBanners = loadBanners;
+module.exports.invitedBy = invitedBy;
 module.exports.DEFAULT_BANNERS = DEFAULT_BANNERS;
 module.exports.computeCheckin = computeCheckin;
 module.exports.couponState = couponState;

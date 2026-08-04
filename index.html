@@ -579,6 +579,31 @@
     .iv-hero .h { font-size:21px; font-weight:800; margin-top:13px; color:#fbf3df; letter-spacing:.2px; }
     .iv-hero .h b { background:linear-gradient(90deg,#ffe08a,var(--gold)); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
     .iv-hero .p { font-size:12.5px; color:#9aa0ad; margin-top:6px; line-height:1.65; padding:0 6px; }
+    /* who invited you — attribution, shown to referred users only */
+    .iv-from { display:flex; align-items:center; gap:11px; margin:0 0 14px;
+      padding:11px 13px; border-radius:14px;
+      background:linear-gradient(150deg,rgba(240,185,11,.10),rgba(240,185,11,.02));
+      border:0.5px solid rgba(240,185,11,.24); }
+    .iv-from .av { width:38px; height:38px; border-radius:50%; flex-shrink:0; display:grid; place-items:center;
+      font-size:16px; font-weight:800; color:#3a2c00;
+      background:linear-gradient(135deg,#ffe08a,var(--gold) 60%,#d99500); }
+    .iv-from .tx { flex:1; min-width:0; }
+    .iv-from .lab { font-size:9.5px; font-weight:800; letter-spacing:.07em; text-transform:uppercase; color:#9c8a5e; }
+    .iv-from .nm { font-size:13.5px; font-weight:700; color:#f4ecd8; margin-top:2px;
+      display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+    .iv-from .pb { display:inline-flex; align-items:center; gap:3px; padding:1px 6px; border-radius:5px;
+      font-size:9px; font-weight:800; letter-spacing:.05em; text-transform:uppercase;
+      color:var(--purple); background:rgba(176,123,255,.13); border:0.5px solid rgba(176,123,255,.34); }
+    .iv-from .pb i { font-size:10px; }
+    .iv-from .sb { font-size:11px; color:#8a8472; margin-top:2px;
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .iv-from .sb a { color:var(--gold-2); text-decoration:none; cursor:pointer; }
+    /* the same fact, restated inside the Partner panel */
+    .pn-from { display:flex; align-items:center; gap:10px; margin-bottom:12px;
+      padding:10px 12px; border-radius:12px; background:rgba(176,123,255,.08);
+      border:0.5px solid rgba(176,123,255,.22); font-size:12px; color:#c8bce0; }
+    .pn-from i { font-size:16px; color:var(--purple); flex-shrink:0; }
+    .pn-from b { color:#efe9fa; }
     .iv-stats { display:flex; gap:10px; margin-bottom:16px; }
     .iv-stat { flex:1; background:linear-gradient(160deg,#1d1a12,var(--surface-3)); border:0.5px solid #3a3320; border-radius:14px; padding:15px 10px; text-align:center; }
     .iv-stat .n { font-size:25px; font-weight:800; color:var(--gold-2); } .iv-stat .n.green { color:#ffce4a; } .iv-stat .l { font-size:11px; color:#8a8472; margin-top:4px; }
@@ -2617,7 +2642,51 @@
       hi:'125\u00d7', foot:'Futures margin \u00b7 up to 125\u00d7 leverage',
       cta:'Open Coupon Center', action:'coupons', link:'' },
   ];
-  let bannersSig = null, pcarIdx = 0, promoShown = false;
+  let bannersSig = null, pcarIdx = 0, promoShown = false, bannersFromServer = false;
+
+  // Who invited this user, from the server. null for an organic signup.
+  let invitedBy = null, invitedSig = null;
+
+  function applyInvitedBy(v){
+    const sig = JSON.stringify(v || null);
+    if (sig === invitedSig) return;
+    invitedSig = sig; invitedBy = v || null;
+    // Repaint wherever it is on screen.
+    if (partnerOpen()) renderPartner(); }
+
+  // A channel is free text in the partner application: turn it into a link only
+  // when it is unmistakably one, and never trust it as a URL otherwise.
+  function inviterChannelHTML(ch){
+    const v = String(ch || '').trim();
+    if (!v) return '';
+    const handle = v.match(/^@([A-Za-z0-9_]{4,32})$/);
+    if (handle) return '<a onclick="openLinkSmart(\'https://t.me/' + esc(handle[1]) + '\')">@' + esc(handle[1]) + '</a>';
+    const tme = v.match(/^https:\/\/t\.me\/[A-Za-z0-9_+/]{1,64}$/);
+    if (tme) return '<a onclick="openLinkSmart(\'' + escAttr(v) + '\')">' + esc(v.replace(/^https:\/\//, '')) + '</a>';
+    return esc(v); }
+
+  function inviterLabel(){
+    if (!invitedBy) return '';
+    return invitedBy.name || (invitedBy.username ? '@' + invitedBy.username : 'A KolonoEX member'); }
+
+  function invitedByHTML(){
+    if (!invitedBy) return '';
+    const nm = inviterLabel();
+    const badge = invitedBy.partner
+      ? '<span class="pb"><i class="ti ti-diamond"></i>Partner</span>' : '';
+    const at = invitedBy.username && invitedBy.name ? '@' + esc(invitedBy.username) : '';
+    const ch = inviterChannelHTML(invitedBy.channel);
+    const sub = [at, ch].filter(Boolean).join(' \u00b7 ');
+    return '<div class="iv-from"><div class="av">' + esc(nm.charAt(0).toUpperCase()) + '</div>'
+      + '<div class="tx"><div class="lab">You were invited by</div>'
+      + '<div class="nm">' + esc(nm) + badge + '</div>'
+      + (sub ? '<div class="sb">' + sub + '</div>' : '')
+      + '</div></div>'; }
+
+  function partnerFromHTML(){
+    if (!invitedBy || !invitedBy.partner) return '';
+    return '<div class="pn-from"><i class="ti ti-diamond"></i><span>You joined KolonoEX through <b>'
+      + esc(inviterLabel()) + '</b>\u2019s partner link.</span></div>'; }
 
   // The dismissal is remembered against the slide set, not forever: when the
   // admin publishes a different set the signature changes and a user who
@@ -2632,6 +2701,7 @@
 
   function applyBanners(list){
     if (!Array.isArray(list)) return;
+    bannersFromServer = true;
     const clean = list.filter(b => b && (b.img || b.title));
     const sig = JSON.stringify(clean);
     if (sig === bannersSig) return;
@@ -2717,6 +2787,16 @@
       if (raf) return;
       raf = requestAnimationFrame(() => { raf = 0; pcarSync(); }); }, { passive: true });
   })();
+
+  // Hold off until the server's slide set arrives. The client defaults still
+  // contain the partner poster, and flashing it at someone who is already a
+  // partner is the exact bug the server-side filter exists to prevent. Falls
+  // back to the defaults if sync never answers, where the myPartner check in
+  // pcarSlides is the backstop.
+  function schedulePromo(tries){
+    if (promoShown) return;
+    if (bannersFromServer || tries >= 12) { maybePromo(); return; }
+    setTimeout(() => schedulePromo(tries + 1), 400); }
 
   function maybePromo(){
     if (promoShown) return;
@@ -3038,7 +3118,9 @@
   function partnerOpen(){ const ov=document.getElementById('partnerOverlay'); return ov&&ov.classList.contains('open'); }
   function closePartner(){ document.getElementById('partnerOverlay').classList.remove('open'); }
   function renderPartner(){ const body=document.getElementById('partnerBody'); if(!body) return; const p=myPartner;
-    let h='';
+    // Restated here because a partner-referred user has the context to care:
+    // this is the page explaining the programme they were recruited into.
+    let h=partnerFromHTML();
     if(p&&p.status==='approved'){
       const link=getPartnerLink(p.code); const cfg=p.cfg||{};
       h+='<div class="pn-hero"><div class="ring"><i class="ti ti-diamond"></i></div><div class="h">You\'re a <b>Partner</b> 🎉</div>'
@@ -3111,6 +3193,7 @@
     const link=getRefLink(); const count=state.referralCount||0; const earned=state.referralEarned||0;
     const noAuth=!hasTgAuth();
     openSheet(sheetHead('Invite Friends')
+    +invitedByHTML()
     +'<div class="iv-hero"><div class="ring"><i class="ti ti-gift"></i></div>'
     +'<div class="h">Invite &amp; <b>Earn</b></div><div class="p">Share your link and earn <b style="color:#ffd45e;">$'+REF_BONUS+'</b> bonus for every friend who joins KolonoEX through it.</div></div>'
     +'<div class="iv-stats"><div class="iv-stat"><div class="n">'+count+'</div><div class="l">Friends invited</div></div>'
@@ -3266,6 +3349,7 @@
         if(np!==pot){ pot=np; renderCheckin(); renderInvitePot(); } }
       if(isFinite(parseFloat(d.potThreshold))) potThreshold=parseFloat(d.potThreshold);
       if(Array.isArray(d.banners)) applyBanners(d.banners);
+      if(d.invitedBy !== undefined) applyInvitedBy(d.invitedBy);
       if(Array.isArray(d.depositLadder)) depLadder=d.depositLadder;
       if(Array.isArray(d.depTiers)){ const sig=d.depTiers.slice().sort().join(',');
         if(sig!==depSig){ depSig=sig; depTiers=d.depTiers; renderTasks(); } }
@@ -3564,7 +3648,7 @@
     if(isAdmin()){ const ab=document.getElementById('adminBtn'); if(ab) ab.style.display=''; } }
 
   // boot
-  setTimeout(maybePromo, 1800);   // after first paint, and after partner state loads
+  setTimeout(() => schedulePromo(0), 1400);   // after first paint, then once the server's slides land
   // if no feed ever arrives, stop shimmering and fall back to the placeholder
   setTimeout(()=>{ document.querySelectorAll('.skel-txt').forEach(e=>e.classList.remove('skel-txt')); }, 15000);
   initTelegram(); buildHomeList(); renderInvitePot(); setFutTab('pos'); setSpotSub('orders'); setAssetTab('overview'); setBonusBtn(); bindPctSliders(); bindAssetSwipe(); renderCheckin(); startSupportStatus(); regenOB(); setInterval(regenOB,1500); renderAll(); startCountdown(); connectWS();
