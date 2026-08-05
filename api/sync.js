@@ -626,6 +626,36 @@ module.exports = async function handler(req, res) {
         pot: potOut.pot, potCoupon: potOut.coupon, potThreshold: POT_THRESHOLD, coupons, now: Date.now() });
     }
 
+    // ── Transfer bonus profit out, and clear the bonus ──
+    // The client cleared its own copy and the next sync handed the whole bonus
+    // straight back, because the server still held it. Clearing has to happen
+    // here to stick.
+    if (body.action === 'bonusTransfer') {
+      const want = Math.round((parseFloat(body.amount) || 0) * 100) / 100;
+      if (!(want > 0)) return res.status(400).json({ error: 'Enter an amount' });
+
+      const bonusNow = parseFloat(await upstash(['GET', `bonus:${userId}`])) || 0;
+      if (!(bonusNow > 0)) return res.status(400).json({ error: 'No bonus to transfer' });
+
+      // The profit figure comes from trading that happens entirely in the
+      // client, so this endpoint cannot verify it. What becomes real, spendable
+      // money is therefore capped at the bonus actually granted: the most any
+      // user can turn into a withdrawal is the bonus we chose to give them.
+      const credited = Math.min(want, bonusNow);
+
+      await upstash(['SET', `bonus:${userId}`, '0']);
+      const newBal = parseFloat(await upstash(['INCRBYFLOAT', `bal:${userId}`, credited]));
+      // Spendable, not just visible: the withdrawal gate is deposits + earned,
+      // so without this the money would sit in the balance and never come out.
+      await upstash(['INCRBYFLOAT', `payout:earned:${userId}`, credited]);
+
+      await upstash(['LPUSH', `ledger:${userId}`, JSON.stringify({
+        usd: credited, coin: 'BONUS', note: 'Bonus profit transferred to Spot', at: Date.now() })]);
+      await upstash(['LTRIM', `ledger:${userId}`, 0, 99]);
+
+      return res.status(200).json({ ok: true, balance: newBal, credited, cleared: bonusNow });
+    }
+
     // Merge & store the profile snapshot (preserve original join date).
     const prev = parseJSON(await upstash(['GET', `profile:${userId}`])) || {};
     const snap = sanitizeProfile(body.profile);

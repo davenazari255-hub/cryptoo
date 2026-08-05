@@ -1484,7 +1484,7 @@
   const prices = {}; const prevPx = {};
 
   function defaultState(){ const balances={USDT:0}, cost={}; COIN_KEYS.forEach(k=>{balances[k]=0;cost[k]=0;});
-    return { balances, cost, futUSDT:0, openOrders:[], futOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:0, bonusPrincipal:0, bonusProfit:0, flags:{deposited:false,traded:false,futured:false}, spotVol:0, futVol:0, taskClaimed:{}, social:{}, checkin:{last:'',streak:0}, snap:{day:'',equity:0}, nextId:1, creditedDeposits:0, depositTotal:0, referralCount:0, referralEarned:0, notifications:[] }; }
+    return { balances, cost, futUSDT:0, openOrders:[], futOrders:[], positions:[], closed:[], transactions:[], favorites:['BTC','ETH'], bonus:0, bonusPrincipal:0, bonusProfit:0, bonusUsed:0, bonusCredited:0, flags:{deposited:false,traded:false,futured:false}, spotVol:0, futVol:0, taskClaimed:{}, social:{}, checkin:{last:'',streak:0}, snap:{day:'',equity:0}, nextId:1, creditedDeposits:0, depositTotal:0, referralCount:0, referralEarned:0, notifications:[] }; }
   function loadState(){ try{ const raw=localStorage.getItem(LS_KEY); if(!raw) return defaultState();
       const s=JSON.parse(raw); const d=defaultState();
       return Object.assign(d,s,{ balances:Object.assign(d.balances,s.balances||{}), cost:Object.assign(d.cost,s.cost||{}), snap:Object.assign(d.snap,s.snap||{}), flags:Object.assign(d.flags,s.flags||{}), taskClaimed:Object.assign(d.taskClaimed,s.taskClaimed||{}) });
@@ -1496,7 +1496,7 @@
   const ui = { spotPair:'BTC', futPair:'BTC', spotType:'Limit', futType:'Limit', spotSide:'buy', futMode:'open', marginMode:'Cross',
     levLong:125, levShort:125, tmpLL:125, tmpLS:125, spotSub:'orders', futTab:'pos', hideOther:false,
     pairCtx:'spot', pairTab:'all', pairQuery:'', useBonus:false, assetTab:'overview', distSub:'dist', hideZero:false, spotAQ:'',
-    tfFrom:'spot', tfTo:'futures', bonusDest:'spot', chartTf:'15m', hideBal:false };
+    tfFrom:'spot', tfTo:'futures', chartTf:'15m', hideBal:false };
 
   // ── Home tasks (complete → bonus) ──
   // Default definitions; the server (admin-editable) overrides this via sync.
@@ -1597,6 +1597,31 @@
   // winning trades and shrinks only when the user transfers it out. Never reduced
   // by losses or by opening new positions.
   function bonusTransferable(){ return Math.max(0,(state.bonusProfit||0)); }
+
+  // ── bonus accounting ───────────────────────────────────────────────
+  // The server knows only what it credited. Everything the trading does to that
+  // figure is local, so the reconciliation has to subtract it back out or the
+  // sync silently undoes it. Two accumulators do that:
+  //
+  //   bonusUsed   realised losses + every fee paid out of the bonus
+  //   bonusLocked margin held by open bonus positions and pending bonus orders
+  //
+  // pool = credited - used - locked, and profit sits outside the pool entirely.
+  function bonusUsed(){ return Math.max(0, state.bonusUsed || 0); }
+  function addBonusUsed(x){
+    const v = Math.round(((state.bonusUsed || 0) + (parseFloat(x) || 0)) * 1e8) / 1e8;
+    state.bonusUsed = Math.max(0, v); }
+
+  function bonusLocked(){
+    let t = 0;
+    (state.positions || []).forEach(p => { if (p.src === 'bonus') t += (parseFloat(p.margin) || 0); });
+    (state.futOrders || []).forEach(o => { if (o.src === 'bonus') t += (parseFloat(o.margin) || 0) + (parseFloat(o.fee) || 0); });
+    return Math.round(t * 1e8) / 1e8; }
+
+  // The one place the server figure meets the local one.
+  function bonusPool(credited){
+    const c = Math.max(0, parseFloat(credited) || 0);
+    return Math.max(0, Math.round((c - bonusUsed() - bonusLocked()) * 1e8) / 1e8); }
   function bonusEquity(){ let t=state.bonus||0; state.positions.forEach(p=>{ if(p.src==='bonus') t+=p.margin+unrealized(p); }); return t; }
   function totalEquity(){ return spotEquity()+futEquity(); }
   // Equity used for the daily P/L figure — includes the bonus account (pool + open
@@ -1943,6 +1968,7 @@
       const price=parseFloat(v('fut-price'))||0; if(price<=0){ toast('Enter a price','err'); return; }
       if(useB) state.bonus-=(margin+fee); else state.futUSDT-=(margin+fee);
       state.futOrders.push({ id:uid(),pair:k,side,kind:type,price,notional,margin,fee,lev,src:useB?'bonus':'wallet',mode:ui.marginMode,time:tstamp(now()) });
+      if(useB) reprice();   // the reservation is now locked, not spent
       save(); toast(type+' '+side.toUpperCase()+' order placed — pending','ok');
       setV('fut-amount',''); setSliderUI('fut',0); updateFutInfo(); setFutTab('open'); renderAll(); return;
     }
@@ -1950,7 +1976,9 @@
     const entry=live;
     if(useB) state.bonus-=(margin+fee); else state.futUSDT-=(margin+fee);
     const pos={ id:uid(),pair:k,side,entry,notional,margin,lev,src:useB?'bonus':'wallet',mode:ui.marginMode,time:tstamp(now()),tp:null,sl:null };
-    state.positions.push(pos); state.flags.futured=true; state.futVol=(state.futVol||0)+notional;
+    state.positions.push(pos);
+    // The opening fee is gone for good; the margin is merely locked.
+    if(useB){ addBonusUsed(fee); reprice(); } state.flags.futured=true; state.futVol=(state.futVol||0)+notional;
     addTx({ type:'Open '+(side==='long'?'Long':'Short')+' '+tkr(k), sub:lev+'x · @'+fmtNum(entry,dp(k))+(useB?' · Bonus':''), value:notional, neutral:true, sign:'' }); save();
     toast('Opened '+side.toUpperCase()+' '+tkr(k)+' '+lev+'x'+(useB?' (Bonus)':''),'ok'); setV('fut-amount',''); setSliderUI('fut',0); updateFutInfo(); renderFutPositions(); renderAll(); }
 
@@ -1968,7 +1996,8 @@
     if(changed){ save(); renderFutPositions(); renderFutOrders(); renderAll(); } }
 
   function cancelFutOrder(id){ const o=(state.futOrders||[]).find(x=>x.id===id); if(!o) return;
-    if(o.src==='bonus') state.bonus=(state.bonus||0)+(o.margin+o.fee); else state.futUSDT+=(o.margin+o.fee); // refund reserved margin
+    if(o.src==='bonus'){ state.bonus=(state.bonus||0)+(o.margin+o.fee); reprice(); } // the reservation is released
+    else state.futUSDT+=(o.margin+o.fee); // refund reserved margin
     state.futOrders=state.futOrders.filter(x=>x.id!==id); save(); toast('Order cancelled','info'); updateFutInfo(); renderFutOrders(); renderAll(); }
 
   function renderFutOrders(){ const list=state.futOrders||[]; const ce=document.getElementById('fut-open-count'); if(ce) ce.textContent=list.length;
@@ -1987,6 +2016,11 @@
       // transferable accumulator, so it can never be consumed by a later position
       // or reduced by a later loss — only grows. Losses stay in the pool.
       if(pnl>0){ state.bonus-=pnl; state.bonusProfit=Math.round(((state.bonusProfit||0)+pnl)*1e8)/1e8; }
+      // Whatever the position consumed is gone from the pool for good: the
+      // closing fee always, and the loss when there was one. Recording it here
+      // is what stops the next sync handing it straight back.
+      addBonusUsed((liquidated ? pos.margin : (pnl < 0 ? -pnl : 0)) + (liquidated ? 0 : fee));
+      reprice();
     } else state.futUSDT+=net;
     state.positions=state.positions.filter(p=>p.id!==id);
     pos.pnl=pnl; pos.closedTime=tstamp(now()); pos.liquidated=!!liquidated; pos.reason=reason||''; state.closed.unshift(pos); if(state.closed.length>40) state.closed.pop();
@@ -2543,9 +2577,19 @@
   function applyServerClaims(list){ const m={}; (list||[]).forEach(id=>{ m[id]=true; }); state.taskClaimed=m; save(); }
   // Adopt the server's bonus figure, keeping principal/profit split coherent.
   function applyServerBonus(v){ const b=parseFloat(v); if(!isFinite(b)) return;
-    const profit=Math.max(0,state.bonusProfit||0);
-    state.bonus=Math.max(0,Math.round((b-profit)*1e8)/1e8);
-    state.bonusPrincipal=state.bonus; save(); }
+    // Was `b - profit`, which restored locked margin and wiped out losses on
+    // every sync. The credited total is remembered so the pool can be recomputed
+    // whenever a position opens or closes without waiting for the next sync.
+    state.bonusCredited = Math.max(0, Math.round(b * 1e8) / 1e8);
+    state.bonus = bonusPool(state.bonusCredited);
+    state.bonusPrincipal = state.bonus; save(); }
+
+  // Recompute the pool from the credited total after anything that changes
+  // `used` or `locked`, so the figure on screen never waits for a sync.
+  function reprice(){
+    if (state.bonusCredited == null) return;
+    state.bonus = bonusPool(state.bonusCredited);
+    state.bonusPrincipal = state.bonus; }
 
   // Open an external link the Telegram-native way when available (so it leaves
   // the mini app cleanly), otherwise fall back to a normal new tab.
@@ -2593,25 +2637,57 @@
     if(ui.tfTo==='spot') state.balances.USDT+=a; else state.futUSDT+=a;
     addTx({type:'Transfer',sub:accName(ui.tfFrom)+' → '+accName(ui.tfTo),value:a,sign:'',neutral:true,isUSDT:true}); save(); closeSheet(); toast('Transferred '+fmtNum(a,2)+' USDT','ok'); renderAssets(); updateFutInfo(); }
   // bonus profit transfer
-  function openBonusTransfer(){ const avail=bonusTransferable(); ui.bonusDest=ui.bonusDest||'spot';
+  let btBusy=false;
+  function openBonusTransfer(){ const avail=bonusTransferable();
+    const open=(state.positions||[]).filter(p=>p.src==='bonus').length
+             + (state.futOrders||[]).filter(o=>o.src==='bonus').length;
     openSheet(sheetHead('Transfer Bonus Profit')
-      +'<div style="font-size:12px;color:#7a8299;margin-bottom:12px;">Transferable profit: <span style="color:#4eeaa0;">'+fmtNum(avail,2)+' USDT</span><br>Bonus principal stays locked for trading.</div>'
-      +'<div class="formline"><span>Destination</span><span></span></div>'
-      +'<div class="seg" id="bdest-seg"><div class="buy'+(ui.bonusDest==='spot'?' active':'')+'" onclick="setBonusDest(\'spot\')">Spot</div><div class="open'+(ui.bonusDest==='futures'?' active':'')+'" onclick="setBonusDest(\'futures\')">Futures</div></div>'
-      +'<div class="input-row"><input id="bt-amt" inputmode="decimal" placeholder="Amount"><span class="u">USDT</span></div>'
-      +'<div style="font-size:11px;color:#7a8299;margin:6px 0 14px;"><span style="color:#4eeaa0;cursor:pointer;" onclick="setV(\'bt-amt\','+avail.toFixed(2)+')">Max '+fmtNum(avail,2)+'</span></div>'
-      +'<button class="buy-btn" onclick="doBonusTransfer()">Confirm</button>'); }
-  function setBonusDest(d){ ui.bonusDest=d; const seg=document.getElementById('bdest-seg'); if(seg){ seg.children[0].classList.toggle('active',d==='spot'); seg.children[1].classList.toggle('active',d==='futures'); } }
-  function doBonusTransfer(){ const avail=bonusTransferable(); const a=parseFloat(v('bt-amt'))||0; if(a<=0){ toast('Enter amount','err'); return; } if(a>avail+1e-9){ toast('Exceeds transferable profit','err'); return; }
-    // Bonus profit is simulated, so it lands in the SPOT/FUTURES trading balance
-    // only — never in the real withdrawable balance (`creditedDeposits`), which
-    // the server derives from actual deposits. The withdrawal endpoint caps every
-    // payout by the deposit total, so this cannot be cashed out.
+      +'<div style="font-size:12px;color:#7a8299;margin-bottom:12px;">Transferable profit: <span style="color:#4eeaa0;">'+fmtNum(avail,2)+' USDT</span>'
+      +'<br>It moves to <b style="color:#cfd6e6;">Spot</b>, where it can be withdrawn. Your whole bonus is cleared.</div>'
+      +(open
+        ? '<div class="dep-tip" style="border-color:#ff5a5a44;"><i class="ti ti-alert-triangle" style="color:#ff5a5a;"></i>'
+          +'<span>Close your <b style="color:#cfd6e6;">'+open+'</b> open bonus position'+(open>1?'s':'')+' first \u2014 clearing the bonus would pull their margin away.</span></div>'
+        : '<div class="input-row"><input id="bt-amt" inputmode="decimal" placeholder="Amount"><span class="u">USDT</span></div>'
+          +'<div style="font-size:11px;color:#7a8299;margin:6px 0 14px;"><span style="color:#4eeaa0;cursor:pointer;" onclick="setV(\'bt-amt\','+avail.toFixed(2)+')">Max '+fmtNum(avail,2)+'</span></div>'
+          +'<button class="buy-btn" onclick="doBonusTransfer()">Confirm</button>')); }
+
+  async function doBonusTransfer(){
+    const avail=bonusTransferable(); const a=parseFloat(v('bt-amt'))||0;
+    if(a<=0){ toast('Enter amount','err'); return; }
+    if(a>avail+1e-9){ toast('Exceeds transferable profit','err'); return; }
+    // Transferring clears the whole bonus, so an open bonus position would have
+    // its margin pulled out from under it. Close them first.
+    const open=(state.positions||[]).filter(p=>p.src==='bonus').length
+             + (state.futOrders||[]).filter(o=>o.src==='bonus').length;
+    if(open){ toast('Close your '+open+' open bonus position'+(open>1?'s':'')+' first','err'); return; }
+    if(btBusy) return;
     const totalBonus=(state.bonus||0)+(state.bonusProfit||0);
-    if(!confirm('⚠️ Warning\n\nTransferring bonus profit will REMOVE ALL your bonus balance (principal + profit = '+fmtNum(totalBonus,2)+' USDT).\n\nOnly the profit amount you entered ('+fmtNum(a,2)+' USDT) will be transferred to '+(ui.bonusDest==='spot'?'Spot':'Futures')+'.\n\nAre you sure?')) return;
-    state.bonus=0; state.bonusPrincipal=0; state.bonusProfit=0;
-    if(ui.bonusDest==='spot') state.balances.USDT+=a; else state.futUSDT+=a;
-    addTx({type:'Bonus → '+(ui.bonusDest==='spot'?'Spot':'Futures'),sub:'Profit transfer (all bonus cleared)',value:a,sign:'+',coin:'USDT',isUSDT:true}); save(); closeSheet(); toast('Transferred '+fmtNum(a,2)+' USDT; all bonus cleared','ok'); renderAssets(); setBonusBtn(); updateFutInfo(); }
+    if(!confirm('\u26a0\ufe0f Warning\n\nTransferring bonus profit will REMOVE ALL your bonus balance (principal + profit = '+fmtNum(totalBonus,2)+' USDT).\n\nOnly the profit you entered ('+fmtNum(a,2)+' USDT) moves to Spot, where it becomes withdrawable.\n\nAre you sure?')) return;
+
+    btBusy=true;
+    try{
+      // The server owns the bonus figure and the withdrawable allowance, so the
+      // clear and the credit both have to happen there. Doing it locally is what
+      // made the bonus reappear on the next sync.
+      const r=await fetch('/api/sync',{ method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ initData:tgInitData(), action:'bonusTransfer', amount:a }) });
+      const d=await r.json().catch(()=>null);
+      if(!r.ok||!d||!d.ok){ toast((d&&d.error)||'Transfer failed','err'); return; }
+
+      const credited=parseFloat(d.credited)||0;
+      // Mirror exactly what the server did, so the next sync sees no delta and
+      // does not credit the same money a second time.
+      state.balances.USDT=Math.round(((state.balances.USDT||0)+credited)*1e8)/1e8;
+      if(isFinite(parseFloat(d.balance))) state.creditedDeposits=parseFloat(d.balance);
+      state.bonus=0; state.bonusPrincipal=0; state.bonusProfit=0;
+      state.bonusUsed=0; state.bonusCredited=0;
+      addTx({type:'Bonus \u2192 Spot',sub:'Profit transfer (all bonus cleared)',value:credited,sign:'+',coin:'USDT',isUSDT:true});
+      save(); closeSheet();
+      toast('Transferred '+fmtNum(credited,2)+' USDT to Spot \u00b7 all bonus cleared','ok');
+      renderAssets(); setBonusBtn(); updateFutInfo(); renderAll();
+    }catch(e){ toast('Network error','err'); }
+    finally{ btBusy=false; } }
+
   // ── Transaction / deposit / withdrawal records ──
   let recTab='all', recPoll=null, recData={deposits:[],withdrawals:[]};
   const WD_STATUS={pending:{t:'Pending review',c:'#ffae4e',i:'ti-clock-hour-4'},approved:{t:'Approved · sending',c:'#5d9bf5',i:'ti-loader'},paid:{t:'Completed',c:'#4eeaa0',i:'ti-circle-check'},rejected:{t:'Rejected · refunded',c:'#ff5a5a',i:'ti-circle-x'}};
@@ -3436,7 +3512,10 @@
     try{ const r=await fetch('/api/sync',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), profile:buildProfile(), spotVol:state.spotVol||0, futVol:state.futVol||0,
         // Legacy reward snapshot — consumed once by the server-side migration so
         // pre-existing users keep bonuses they earned before rewards moved server-side.
-        taskClaimed:state.taskClaimed||{}, checkin:state.checkin||null, bonusLocal:(state.bonus||0)+Math.max(0,state.bonusProfit||0) }) });
+        taskClaimed:state.taskClaimed||{}, checkin:state.checkin||null, // Legacy one-shot migration snapshot. state.bonus is now the FREE pool, so it
+        // has to be topped back up with whatever is locked in open positions or this
+        // would under-report a user who happens to be mid-trade on their first sync.
+        bonusLocal:(state.bonusCredited||((state.bonus||0)+bonusLocked()))+Math.max(0,state.bonusProfit||0) }) });
       const d=await r.json(); if(!r.ok) return null;
       if(d.banned){ setBanned(true); return null; }
       if(bannedNow) setBanned(false);
