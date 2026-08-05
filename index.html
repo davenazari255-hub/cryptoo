@@ -3512,22 +3512,53 @@
       showDepositAddress(coin, data);
     } finally { depBusy=false; } }
 
+  // Prices for deposit coins the trading feed does not carry (TRX, TON). Filled
+  // on demand from Binance's public ticker — the same source the live feed uses.
+  const depPx = {};
+  async function fetchDepPx(sym){
+    if(depPx[sym]!==undefined) return depPx[sym];
+    depPx[sym]=null;
+    try{ const r=await fetch('https://api.binance.com/api/v3/ticker/price?symbol='+encodeURIComponent(sym+'USDT'));
+      const j=await r.json(); const v=parseFloat(j&&j.price);
+      if(isFinite(v)&&v>0) depPx[sym]=v; }catch(e){}
+    return depPx[sym]; }
+
+  // Round UP to two significant figures. Up, always: a minimum displayed even a
+  // hair below the real one means a payment that arrives partially paid.
+  function ceilSig(x, sig){
+    if(!(x>0)) return 0;
+    const m = Math.pow(10, (sig||2) - 1 - Math.floor(Math.log10(x)));
+    return Math.ceil(x * m) / m; }
+
+  function depCoinPrice(sym){
+    const live = (typeof px==='function') ? px(sym) : null;
+    return (live>0) ? live : (depPx[sym]>0 ? depPx[sym] : null); }
+
+  // "12 USDT", "0.0034 ETH", "17 TRX" — the coin's own unit in every case.
+  function depMinLabel(coin, minUsd){
+    if(coin.sym==='USDT') return fmtNum(minUsd,0)+' USDT';
+    const pr = depCoinPrice(coin.sym);
+    if(!pr) return '\u2248 $'+fmtNum(minUsd,0);      // until the price lands
+    const raw = minUsd / pr;
+    // Two significant figures normally, one for the very small amounts, so BTC
+    // reads "0.0001" rather than "0.000097".
+    return trimAmt(ceilSig(raw, raw < 0.001 ? 1 : 2))+' '+coin.sym; }
+
   function showDepositAddress(coin, d){
     const qr='https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=0&data='+encodeURIComponent(d.address);
     const addr=escAttr(d.address); const min=d.minUsd||5;
-    // The server now sends a round policy figure rather than NOWPayments'
-    // pay_amount, which rendered as "17.219728 USDT". A stablecoin reads
-    // naturally in the coin; everything else in dollars, because "0.00013 BTC"
-    // is not a friendlier number than "$10".
-    const minCoin = (d.stable || coin.sym==='USDT') ? (fmtNum(min,0)+' '+coin.sym) : ('$'+fmtNum(min,0));
+    // Every coin states its minimum in its own unit. The server sends a round
+    // USD policy figure; converting it here keeps it live as the price moves,
+    // instead of freezing a number into the stored address record.
+    const minCoin = depMinLabel(coin, min);
     const extra = d.payinExtraId ? '<div class="dep-addr-box" style="margin-top:8px;"><div class="dab-lab"><span>⚠ Memo / Tag (required)</span><i class="ti ti-copy" style="color:#4eeaa0;cursor:pointer;font-size:15px;" onclick="copyText(\''+escAttr(d.payinExtraId)+'\')"></i></div><div class="dab-val" style="color:#ffc24e;">'+escAttr(d.payinExtraId)+'</div></div>' : '';
     openSheet(sheetHeadBack('Deposit '+coin.sym,'openDeposit()')
     +'<div style="text-align:center;margin-bottom:14px;"><div class="dep-qr"><img src="'+qr+'" alt="QR" style="width:190px;height:190px;display:block;"></div></div>'
     +'<div style="text-align:center;margin-bottom:14px;"><span class="dep-net-pill">'+coin.name+' · <b>'+coin.net+'</b> network</span></div>'
-    +'<div class="dep-addr-box"><div class="dab-lab"><span>Deposit address</span><span class="dep-badge">MIN '+minCoin+'</span></div><div class="dab-val">'+addr+'</div></div>'
+    +'<div class="dep-addr-box"><div class="dab-lab"><span>Deposit address</span><span class="dep-badge">MIN <span class="dep-min-lab">'+minCoin+'</span></span></div><div class="dab-val">'+addr+'</div></div>'
     +extra
     +'<button class="dep-copy" onclick="copyText(\''+addr+'\')"><i class="ti ti-copy"></i>Copy Address</button>'
-    +'<div class="dep-tip" style="margin-top:12px;border-color:#ffae4e33;"><i class="ti ti-shield-check" style="color:#ffae4e;"></i><span>Send only <b style="color:#cfd6e6;">'+coin.sym+'</b> over the <b style="color:#cfd6e6;">'+coin.net+'</b> network. Other coins/networks may be lost. Minimum deposit <b style="color:#cfd6e6;">'+minCoin+'</b>.</span></div>'
+    +'<div class="dep-tip" style="margin-top:12px;border-color:#ffae4e33;"><i class="ti ti-shield-check" style="color:#ffae4e;"></i><span>Send only <b style="color:#cfd6e6;">'+coin.sym+'</b> over the <b style="color:#cfd6e6;">'+coin.net+'</b> network. Other coins/networks may be lost. Minimum deposit <b style="color:#cfd6e6;" class="dep-min-lab">'+minCoin+'</b>.</span></div>'
     +'<div style="display:flex;align-items:center;justify-content:space-between;margin:12px 2px 0;"><span style="font-size:11px;color:#7a8299;"><span class="live-dot"></span>Live · checking automatically</span>'
     +'<span class="rec-refresh" id="dep-refresh" onclick="depCheckNow()"><i class="ti ti-refresh"></i>Refresh</span></div>'
     +'<div class="dep-status" id="dep-status" style="margin-top:8px;"><span class="dot"></span><span id="dep-status-txt">'
@@ -3535,7 +3566,13 @@
     // A reused address belongs to a payment that settled long ago, so polling it
     // would report "finished" before this deposit has even landed. The balance
     // sync already credits from the server, so lean on that instead.
-    if(d.reused) stopDepositPoll(); else startDepositPoll(d.paymentId, min); }
+    if(d.reused) stopDepositPoll(); else startDepositPoll(d.paymentId, min);
+    // TRX and TON are not on the trading feed, so their price may not be known
+    // yet. Fetch it and repaint the two places the minimum appears.
+    if(coin.sym!=='USDT' && !depCoinPrice(coin.sym)){
+      fetchDepPx(coin.sym).then((v)=>{ if(!v) return;
+        const lab=depMinLabel(coin, min);
+        document.querySelectorAll('.dep-min-lab').forEach(el=>{ el.textContent=lab; }); }); } }
 
   // Polls payment status for live UI feedback; the actual credit is done
   // server-side by the IPN webhook, then pulled in via syncBalance().
