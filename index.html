@@ -3514,9 +3514,12 @@
 
   function showDepositAddress(coin, d){
     const qr='https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=0&data='+encodeURIComponent(d.address);
-    const addr=escAttr(d.address); const min=d.minUsd||10;
-    // Prefer the coin-denominated minimum (e.g. "10 USDT") over a dollar figure.
-    const minCoin = (d.minCoin && d.minCoin>0) ? trimAmt(d.minCoin)+' '+coin.sym : ('$'+min);
+    const addr=escAttr(d.address); const min=d.minUsd||5;
+    // The server now sends a round policy figure rather than NOWPayments'
+    // pay_amount, which rendered as "17.219728 USDT". A stablecoin reads
+    // naturally in the coin; everything else in dollars, because "0.00013 BTC"
+    // is not a friendlier number than "$10".
+    const minCoin = (d.stable || coin.sym==='USDT') ? (fmtNum(min,0)+' '+coin.sym) : ('$'+fmtNum(min,0));
     const extra = d.payinExtraId ? '<div class="dep-addr-box" style="margin-top:8px;"><div class="dab-lab"><span>⚠ Memo / Tag (required)</span><i class="ti ti-copy" style="color:#4eeaa0;cursor:pointer;font-size:15px;" onclick="copyText(\''+escAttr(d.payinExtraId)+'\')"></i></div><div class="dab-val" style="color:#ffc24e;">'+escAttr(d.payinExtraId)+'</div></div>' : '';
     openSheet(sheetHeadBack('Deposit '+coin.sym,'openDeposit()')
     +'<div style="text-align:center;margin-bottom:14px;"><div class="dep-qr"><img src="'+qr+'" alt="QR" style="width:190px;height:190px;display:block;"></div></div>'

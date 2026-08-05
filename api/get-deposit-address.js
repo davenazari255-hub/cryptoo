@@ -2,12 +2,44 @@
 // Self-contained (no cross-dir imports) for reliable Vercel bundling.
 const crypto = require('crypto');
 
-// The smallest deposit we will ask NOWPayments to create. Their own minimum is
-// per network and often far below this (USDT on BSC is ~$0.06, on Polygon
-// ~$0.13); the discovery below never goes under this floor, so at 10 we were
-// the reason a cheap network still demanded $10. USDT TRC20 sits at ~11 on
-// their side and no floor of ours can move it.
-const MIN_USD = 1;
+// Per-network deposit minimum, in USD, and deliberately a round number: the
+// figure users saw before came straight from NOWPayments' pay_amount and read
+// like "17.219728 USDT". These are ours, chosen just above NOWPayments' own
+// published floor for each network so the ask is always clean.
+//
+//   their floor        ours
+//   TRC20   11.12  ->  12     (theirs is the binding constraint here)
+//   ERC20    0.56  ->   5     (Ethereum gas makes anything smaller pointless)
+//   OP       2.20  ->   5
+//   ARB      0.27  ->   2
+//   POLYGON  0.13  ->   2
+//   BSC      0.055 ->   2
+const MIN_USD_BY_CURRENCY = {
+  usdttrc20: 12,
+  usdterc20: 5,
+  usdtbsc: 2,
+  usdtmatic: 2,
+  usdtarb: 2,
+  btc: 10,
+  eth: 10,
+  bnbbsc: 5,
+  sol: 5,
+  trx: 5,
+  ton: 5,
+};
+const MIN_USD_DEFAULT = 5;
+const minUsdFor = (cur) => MIN_USD_BY_CURRENCY[cur] || MIN_USD_DEFAULT;
+
+// Only ever ask for a round number. If NOWPayments will not take our floor we
+// climb this ladder rather than binary-searching into 17.219728 territory.
+const CLEAN_STEPS = [1, 2, 3, 5, 8, 10, 12, 15, 20, 25, 30, 40, 50, 75, 100, 150, 200, 300, 500];
+const cleanUp = (x) => CLEAN_STEPS.find((v) => v >= x - 1e-9) || Math.ceil(x / 100) * 100;
+
+// A stablecoin's minimum reads naturally in the coin itself; everything else is
+// shown in dollars, because "0.00013 BTC" is not a friendlier number.
+const STABLE = /^usd|^dai|^tusd/;
+
+const MIN_USD = MIN_USD_DEFAULT;   // kept for anything still referring to it
 
 // ── Upstash REST helper (best-effort: returns null on any failure) ──
 async function upstash(args) {
@@ -88,14 +120,17 @@ module.exports = async function handler(req, res) {
     let rec = null;
     try { rec = JSON.parse(saved); } catch {}
     if (rec && rec.address) {
+      // The address is a property of the account; the minimum is policy. Serving
+      // the figure frozen into this record is what kept showing the old number
+      // long after the floor changed, so it is recomputed on every read.
       return res.status(200).json({
         address: rec.address,
         payCurrency: rec.payCurrency || payCurrency.toUpperCase(),
         paymentId: rec.paymentId,
         payinExtraId: rec.payinExtraId || null,
         network: rec.network || null,
-        minUsd: rec.minUsd,
-        minCoin: rec.minCoin,
+        minUsd: minUsdFor(payCurrency),
+        stable: STABLE.test(payCurrency),
         // Tells the client not to poll that original payment: it settled long
         // ago and would report "finished" before this deposit even lands.
         reused: true,
@@ -134,59 +169,43 @@ module.exports = async function handler(req, res) {
       return { ok: false, status, msg, tooSmall: /too small|too low|minim/i.test(msg) };
     };
 
-    const cacheKey = `minprice:${payCurrency}`;
+    // Ask only for round numbers, climbing a ladder from our own floor. The
+    // old code binary-searched and cached whatever it landed on, which is how
+    // "17.219728 USDT" ended up on screen and then stuck: the cache had no
+    // version, so every hit re-cached the same high value and lowering the
+    // floor changed nothing anyone could see.
+    const floorUsd = minUsdFor(payCurrency);
     let data = null, priceUsd = 0, lastErr = 'NOWPayments error', status = 502;
 
-    // Fast path: reuse the previously-discovered working amount (single call).
-    const cached = parseFloat(await upstash(['GET', cacheKey]));
-    if (cached >= MIN_USD) {
-      const r = await tryCreate(cached);
-      if (r.ok) { data = r.data; priceUsd = cached; }
-      else { status = r.status; lastErr = r.msg; } // stale cache → fall through to discovery
-    }
+    // Their published minimum, only ever used to skip candidates we know are
+    // too small — never to raise the ask above what they would accept.
+    let theirMin = 0;
+    const mr = await jget(
+      `https://api.nowpayments.io/v1/min-amount?currency_from=${encodeURIComponent(payCurrency)}&fiat_equivalent=usd`,
+      { headers: { 'x-api-key': apiKey } }
+    );
+    if (mr.ok && mr.json) theirMin = parseFloat(mr.json.fiat_equivalent) || 0;
 
-    if (!data) {
-      // Seed near the coin's USD minimum (best-effort), never below the floor.
-      let seed = MIN_USD;
-      const mr = await jget(
-        `https://api.nowpayments.io/v1/min-amount?currency_from=${encodeURIComponent(payCurrency)}&fiat_equivalent=usd`,
-        { headers: { 'x-api-key': apiKey } }
-      );
-      const minFiat = mr.ok && mr.json ? parseFloat(mr.json.fiat_equivalent) : NaN;
-      if (minFiat > 0) seed = Math.max(MIN_USD, Math.ceil(minFiat));
+    const start = cleanUp(Math.max(floorUsd, theirMin));
+    let ladder = CLEAN_STEPS.filter((v) => v >= start);
+    if (!ladder.length) ladder = [start];
 
-      // Phase 1 — coarse: grow until NOWPayments accepts it (upper bound `hi`).
-      let lo = MIN_USD - 1, hi = null, hiData = null, p = seed;
-      for (let i = 0; i < 5 && hi === null; i++) {
-        const r = await tryCreate(p);
-        if (r.ok) { hi = p; hiData = r.data; break; }
-        status = r.status; lastErr = r.msg;
-        if (r.status === 429) { await sleep(1500); continue; }       // rate limited: retry same price
-        if (r.tooSmall) { lo = p; p = Math.ceil(p * 1.6); await sleep(300); continue; }
-        break;                                                        // other error → give up
-      }
+    // There is deliberately no cached "amount that worked last time". That cache
+    // is what froze 17 in place: any high value it held was tried first and
+    // accepted, so the ask could never come back down. Since an address is now
+    // created once per user per coin and reused after that, this path runs
+    // rarely and the extra call costs nothing worth the risk.
 
-      // Phase 2 — refine: binary-search down to the true minimum (won't go below MIN_USD).
-      let refines = 0;
-      while (hi !== null && hi - lo > 1 && refines < 4) {
-        refines++;
-        const mid = Math.max(MIN_USD, Math.floor((lo + hi) / 2));
-        if (mid <= lo || mid >= hi) break;
-        await sleep(300);
-        const r = await tryCreate(mid);
-        if (r.ok) { hi = mid; hiData = r.data; }
-        else if (r.status === 429) { await sleep(1500); refines--; }  // don't count rate-limit retries
-        else if (r.tooSmall) { lo = mid; }
-        else break;
-      }
-
-      if (hi !== null) { data = hiData; priceUsd = hi; }
+    for (let i = 0; i < ladder.length && i < 6; i++) {
+      const r = await tryCreate(ladder[i]);
+      if (r.ok) { data = r.data; priceUsd = ladder[i]; break; }
+      status = r.status; lastErr = r.msg;
+      if (r.status === 429) { await sleep(1500); i--; continue; }   // rate limited: same rung again
+      if (!r.tooSmall) break;                                        // a real error, not a floor problem
+      await sleep(250);
     }
 
     if (!data) return res.status(status).json({ error: lastErr });
-
-    // Remember the working amount so future deposits for this coin are a single call.
-    await upstash(['SET', cacheKey, String(priceUsd), 'EX', 21600]);
 
     // Record who owns this payment so /api/check-payment can authorise status
     // lookups (NOWPayments ids are sequential — without this, anyone could
@@ -207,8 +226,12 @@ module.exports = async function handler(req, res) {
       paymentId: data.payment_id,
       payinExtraId: data.payin_extra_id || null,
       network: data.network || null,
-      minUsd: priceUsd,
-      minCoin: parseFloat(data.pay_amount) || null,
+      // The round policy figure, not NOWPayments' pay_amount. That is what read
+      // as "17.219728 USDT"; it is the exact coin value of the payment we
+      // happened to create, which is not a minimum anyone needs to see.
+      minUsd: Math.max(minUsdFor(payCurrency), priceUsd),
+      stable: STABLE.test(payCurrency),
+      askedUsd: priceUsd,
     };
     // Keep it for next time. Written last, so a half-finished creation is never
     // cached — a bad cached address would send real funds nowhere.
