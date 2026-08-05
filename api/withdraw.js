@@ -3,7 +3,9 @@
 // approves in /admin.html — never automatically. Self-contained for Vercel.
 const crypto = require('crypto');
 
-const WD_MIN = 10; // minimum withdrawal in USD/USDT
+const WD_MIN = 10; // USDT. Balances are USDT-denominated throughout, and
+                   // dep:real is written in the same unit by api/ipn.js, so
+                   // this compares like with like.
 const escHtml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 // ── shared withdrawal fee table ───────────────────────────────────────────────
@@ -177,7 +179,7 @@ module.exports = async function handler(req, res) {
 
     const amt = Math.round(reqCoinAmt * price * 100) / 100;  // USD actually held/debited
     const coinAmount = String(reqCoinAmt);                    // gross: what the user asked for
-    if (!(amt >= WD_MIN)) return res.status(400).json({ error: `Minimum withdrawal is $${WD_MIN}` });
+    if (!(amt >= WD_MIN)) return res.status(400).json({ error: `Minimum withdrawal is ${WD_MIN} USDT` });
 
     // The network fee comes out of the amount requested, as every exchange does
     // it: ask for 100 USDT on TRC20, get debited 100, receive 99. The admin pays
@@ -197,7 +199,7 @@ module.exports = async function handler(req, res) {
     const realDeposit = await realDepositTotal(userId);
     if (realDeposit < WD_MIN) {
       return res.status(400).json({
-        error: `You must deposit at least $${WD_MIN} before your first withdrawal`,
+        error: `You must deposit at least ${WD_MIN} USDT before your first withdrawal`,
       });
     }
 

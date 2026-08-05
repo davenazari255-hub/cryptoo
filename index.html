@@ -437,9 +437,9 @@
     .subtab { font-size:13px; color:var(--text-2); cursor:pointer; padding-bottom:4px; }
     .subtab.active { color:var(--text-1); font-weight:500; border-bottom:2px solid var(--green); }
     /* toast */
-    .toast-wrap { position:fixed; top:14px; left:0; right:0; display:flex; flex-direction:column; align-items:center; gap:8px; z-index:200; pointer-events:none; padding:0 16px; }
-    .toast { background:#1c1f2b; border:0.5px solid var(--border); color:var(--text-1); padding:11px 16px; border-radius:11px; font-size:13px; max-width:340px; width:100%; box-shadow:0 6px 24px rgba(0,0,0,0.4); display:flex; gap:9px; align-items:center; animation:slideDown 0.25s ease; }
-    .toast.ok { border-color:rgba(78,234,160,0.5); } .toast.err { border-color:rgba(255,90,90,0.5); }
+    .toast-wrap { position:fixed; top:14px; left:0; right:0; display:flex; flex-direction:column; align-items:center; gap:8px; z-index:9000; pointer-events:none; padding:0 16px; }
+    .toast { background:#262b3a; border:0.5px solid var(--border); color:var(--text-1); padding:11px 16px; border-radius:11px; font-size:13px; max-width:340px; width:100%; box-shadow:0 10px 34px rgba(0,0,0,0.62); display:flex; gap:9px; align-items:center; animation:slideDown 0.25s ease; }
+    .toast.ok { border-color:rgba(78,234,160,0.5); } .toast.err { border-color:rgba(255,90,90,0.65); background:#2e2028; }
     .toast.ok i { color:var(--green); } .toast.err i { color:var(--red); } .toast.info i { color:var(--text-2); }
     @keyframes slideDown { from { transform:translateY(-16px); opacity:0; } to { transform:translateY(0); opacity:1; } }
     /* sheet */
