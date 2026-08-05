@@ -291,6 +291,65 @@ function cleanBanners(list) {
   })).filter((b) => b.img || b.title);
 }
 
+    // ── Coupon management ──
+    // Coupons live as a JSON array at coupons:<user>. `coupon:used:<user>` is the
+    // one-shot activation guard, so removing a coupon has to clear its entry
+    // there too or the id could never be reissued.
+    const COUPON_TTL_DAYS = 7;
+    if (body.action === 'getCoupons') {
+      const id = String(body.id || '');
+      if (!id) return res.status(400).json({ error: 'id required' });
+      const list = parseJSON(await upstash(['GET', `coupons:${id}`]));
+      const used = (await upstash(['SMEMBERS', `coupon:used:${id}`])) || [];
+      const bonus = parseFloat(await upstash(['GET', `bonus:${id}`])) || 0;
+      return res.status(200).json({
+        coupons: Array.isArray(list) ? list : [], used, bonus, now: Date.now(),
+      });
+    }
+    if (body.action === 'sendCoupon') {
+      const id = String(body.id || '');
+      const amount = Math.round((parseFloat(body.amount) || 0) * 100) / 100;
+      const title = String(body.title || 'Bonus coupon').slice(0, 60).trim() || 'Bonus coupon';
+      const days = Math.max(1, Math.min(90, parseInt(body.days, 10) || COUPON_TTL_DAYS));
+      if (!id) return res.status(400).json({ error: 'id required' });
+      // Same ceiling the activation path enforces, so the panel can never mint a
+      // coupon larger than the client is allowed to redeem.
+      if (!(amount > 0) || amount > 1000) return res.status(400).json({ error: 'Amount must be between 0 and 1000' });
+      const now = Date.now();
+      const c = {
+        id: 'c_admin_' + now.toString(36) + Math.floor(Math.random() * 1e4).toString(36),
+        src: 'admin', srcId: 'admin', title, amount,
+        at: now, exp: now + days * 86400000, status: 'new',
+      };
+      const list = parseJSON(await upstash(['GET', `coupons:${id}`]));
+      const next = [c].concat(Array.isArray(list) ? list : []).slice(0, 60);
+      await upstash(['SET', `coupons:${id}`, JSON.stringify(next)]);
+      await upstash(['LPUSH', `cmd:${id}`, JSON.stringify({ type: 'message', kind: 'bonus',
+        title: 'Coupon received \u{1F39F}',
+        text: `${title} \u00b7 ${amount} USDT. Open the Coupon Center to activate it \u2014 it expires in ${days} day${days > 1 ? 's' : ''}.` })]);
+      await upstash(['LTRIM', `cmd:${id}`, 0, 99]);
+      await tgSend(id, `\u{1F39F} <b>You received a coupon</b>\n\n<b>${amount} USDT</b> \u00b7 ${escHtml(title)}\nActivate it in the Coupon Center within ${days} day${days > 1 ? 's' : ''}.`);
+      return res.status(200).json({ ok: true, coupon: c, coupons: next });
+    }
+    if (body.action === 'deleteCoupon') {
+      const id = String(body.id || '');
+      const couponId = String(body.couponId || '');
+      if (!id || !couponId) return res.status(400).json({ error: 'id and couponId required' });
+      const list = parseJSON(await upstash(['GET', `coupons:${id}`]));
+      const arr = Array.isArray(list) ? list : [];
+      const gone = arr.find((c) => c && c.id === couponId) || null;
+      // An activated coupon has already paid into the bonus balance. Removing it
+      // here would not claw that back, so refuse rather than leave the two
+      // disagreeing — deduct the bonus by hand instead.
+      if (gone && gone.status === 'active') {
+        return res.status(400).json({ error: 'That coupon is already activated. Adjust the bonus balance instead.' });
+      }
+      const next = arr.filter((c) => c && c.id !== couponId);
+      await upstash(['SET', `coupons:${id}`, JSON.stringify(next)]);
+      await upstash(['SREM', `coupon:used:${id}`, couponId]);
+      return res.status(200).json({ ok: true, removed: !!gone, coupons: next });
+    }
+
     // ── Banner management (config:banners) ──
     if (body.action === 'getBanners') {
       const raw = await upstash(['GET', 'config:banners']);

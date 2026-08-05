@@ -1586,6 +1586,25 @@
   }
 
   // ── futures position math ──
+  // Adding to a position merges it rather than opening a second one beside it.
+  // Keyed by funding source too: a bonus long and a wallet long on the same pair
+  // are different money and are accounted for separately, so they stay apart.
+  //
+  // The merged entry is the notional-weighted average, which is what makes the
+  // combined unrealized PnL and liquidation price come out right — both are
+  // derived from entry, notional and margin.
+  function addOrMergePosition(np){
+    const cur=(state.positions||[]).find(p=>p.pair===np.pair && p.side===np.side && p.src===np.src);
+    if(!cur){ state.positions.push(np); return np; }
+    const n1=cur.notional||0, n2=np.notional||0, tot=n1+n2;
+    if(tot>0) cur.entry=Math.round(((cur.entry*n1+np.entry*n2)/tot)*1e8)/1e8;
+    cur.notional=Math.round(tot*1e8)/1e8;
+    cur.margin=Math.round(((cur.margin||0)+(np.margin||0))*1e8)/1e8;
+    // Effective leverage of the combined position, not of whichever leg was last.
+    cur.lev=cur.margin>0?Math.round((cur.notional/cur.margin)*100)/100:cur.lev;
+    cur.time=np.time;
+    return cur; }
+
   function liqPrice(p){ const r=p.margin/p.notional; return p.side==='long'?p.entry*(1-r):p.entry*(1+r); }
   function unrealized(p){ const m=px(p.pair); if(!m) return 0; const dir=p.side==='long'?1:-1; return (m-p.entry)/p.entry*p.notional*dir; }
   function posRisk(p){ const m=px(p.pair); if(!m) return 0; const liq=liqPrice(p);
@@ -1596,7 +1615,16 @@
   // Realised, transferable bonus profit — a pure accumulator that only grows from
   // winning trades and shrinks only when the user transfers it out. Never reduced
   // by losses or by opening new positions.
-  function bonusTransferable(){ return Math.max(0,(state.bonusProfit||0)); }
+  // What will actually land, to the cent. Floored, never rounded up: the Max
+  // link used to write profit.toFixed(2), which rounds up, so Max could exceed
+  // the real figure and get rejected — which is why "a little less" worked.
+  //
+  // Capped at the bonus actually granted, because that is what the server will
+  // credit; showing more than it will pay is how a transfer appears to shave.
+  function bonusTransferable(){
+    const profit=Math.max(0,state.bonusProfit||0);
+    const granted=Math.max(0,state.bonusCredited||0);
+    return Math.floor(Math.min(profit,granted)*100)/100; }
 
   // ── bonus accounting ───────────────────────────────────────────────
   // The server knows only what it credited. Everything the trading does to that
@@ -1975,12 +2003,12 @@
     // Market → open the position immediately at the live price.
     const entry=live;
     if(useB) state.bonus-=(margin+fee); else state.futUSDT-=(margin+fee);
-    const pos={ id:uid(),pair:k,side,entry,notional,margin,lev,src:useB?'bonus':'wallet',mode:ui.marginMode,time:tstamp(now()),tp:null,sl:null };
-    state.positions.push(pos);
+    const merged=addOrMergePosition({ id:uid(),pair:k,side,entry,notional,margin,lev,src:useB?'bonus':'wallet',mode:ui.marginMode,time:tstamp(now()),tp:null,sl:null });
+    const added=merged.notional!==notional;   // merged into an existing position
     // The opening fee is gone for good; the margin is merely locked.
     if(useB){ addBonusUsed(fee); reprice(); } state.flags.futured=true; state.futVol=(state.futVol||0)+notional;
     addTx({ type:'Open '+(side==='long'?'Long':'Short')+' '+tkr(k), sub:lev+'x · @'+fmtNum(entry,dp(k))+(useB?' · Bonus':''), value:notional, neutral:true, sign:'' }); save();
-    toast('Opened '+side.toUpperCase()+' '+tkr(k)+' '+lev+'x'+(useB?' (Bonus)':''),'ok'); setV('fut-amount',''); setSliderUI('fut',0); updateFutInfo(); renderFutPositions(); renderAll(); }
+    toast((added?'Added to ':'Opened ')+side.toUpperCase()+' '+tkr(k)+' '+lev+'x'+(useB?' (Bonus)':''),'ok'); setV('fut-amount',''); setSliderUI('fut',0); updateFutInfo(); renderFutPositions(); renderAll(); }
 
   // Fill pending futures orders when the market reaches their limit/trigger price.
   // Margin was already reserved at placement, so activation just opens the position.
@@ -1989,8 +2017,8 @@
       if(o.kind==='Limit') hit=o.side==='long'?last<=o.price:last>=o.price;
       else if(o.kind==='Trigger'){ hit=o.side==='long'?last>=o.price:last<=o.price; entry=last; } // trigger fills at market
       if(!hit) return true;
-      const pos={ id:uid(),pair:k,side:o.side,entry,notional:o.notional,margin:o.margin,lev:o.lev,src:o.src,mode:o.mode||'Cross',time:tstamp(now()),tp:null,sl:null };
-      state.positions.push(pos); state.flags.futured=true; state.futVol=(state.futVol||0)+o.notional;
+      addOrMergePosition({ id:uid(),pair:k,side:o.side,entry,notional:o.notional,margin:o.margin,lev:o.lev,src:o.src,mode:o.mode||'Cross',time:tstamp(now()),tp:null,sl:null });
+      state.flags.futured=true; state.futVol=(state.futVol||0)+o.notional;
       addTx({ type:'Open '+(o.side==='long'?'Long':'Short')+' '+tkr(k), sub:o.lev+'x · @'+fmtNum(entry,dp(k))+(o.src==='bonus'?' · Bonus':''), value:o.notional, neutral:true, sign:'' });
       toast(o.kind+' '+o.side.toUpperCase()+' '+tkr(k)+' filled @ '+fmtNum(entry,dp(k)),'ok'); changed=true; return false; });
     if(changed){ save(); renderFutPositions(); renderFutOrders(); renderAll(); } }
@@ -3555,6 +3583,7 @@
       if(isFinite(parseFloat(d.refPotThreshold))) refPotThreshold=parseFloat(d.refPotThreshold);
       if(Array.isArray(d.banners)) applyBanners(d.banners);
       if(d.invitedBy !== undefined) applyInvitedBy(d.invitedBy);
+      if(isFinite(parseFloat(d.payoutEarned))) state.payoutEarned=parseFloat(d.payoutEarned);
       if(Array.isArray(d.depositLadder)) depLadder=d.depositLadder;
       if(Array.isArray(d.depTiers)){ const sig=d.depTiers.slice().sort().join(',');
         if(sig!==depSig){ depSig=sig; depTiers=d.depTiers; renderTasks(); } }
@@ -3830,8 +3859,12 @@
     if(addr.length<16){ toast('Enter a valid destination address','err'); return; }
     const feeC=wdFee(a.sym, wdNet);
     if(coinAmt-feeC<=0){ toast('The '+wdNet+' network fee is '+trimAmt(feeC)+' '+a.sym+' — withdraw more than that','err'); return; }
-    // Final gate: a deposit of at least WD_MIN USDT is required before the first withdrawal.
-    if((state.depositTotal||0)<WD_MIN){ toast('You must deposit at least '+WD_MIN+' USDT before withdrawing','err'); return; }
+    // Final gate, matching api/withdraw.js exactly: a payout must be backed by
+    // real money — deposits, or cash genuinely earned (partner commission and
+    // transferred bonus profit). Checking deposits alone here blocked partners
+    // the server would have paid.
+    const backing=Math.round(((state.depositTotal||0)+Math.max(0,state.payoutEarned||0))*100)/100;
+    if(backing<WD_MIN){ toast('You must deposit at least '+WD_MIN+' USDT before withdrawing','err'); return; }
     wdBusy=true; const btn=document.getElementById('wd-submit'); if(btn){ btn.disabled=true; btn.innerHTML='<i class="ti ti-loader-2" style="display:inline-block;animation:depSpin 1s linear infinite;"></i>Submitting…'; }
     try{
       const r=await fetch('/api/withdraw',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), coin:a.sym, network:wdNet, address:addr, amount:usd, coinAmount:trimAmt(coinAmt) }) });

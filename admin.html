@@ -290,6 +290,13 @@
         +   '<button class="btn amber" onclick="doBonus(\'' + esc(id) + '\',1)"><i class="ti ti-plus"></i> Add bonus</button>'
         +   '<button class="btn red" onclick="doBonus(\'' + esc(id) + '\',-1)"><i class="ti ti-minus"></i> Deduct bonus</button>'
         + '</div>'
+        + '<div class="row" style="margin-top:14px;"><span class="k">Coupons</span></div>'
+        + '<div class="adj"><input id="cp-amt" inputmode="decimal" placeholder="amount, e.g. 25"><input id="cp-title" placeholder="title (optional)" style="flex:1.4;"><input id="cp-days" inputmode="numeric" placeholder="days" style="flex:.5;" value="7"></div>'
+        + '<div class="acts" style="margin-top:6px;">'
+        +   '<button class="btn amber" onclick="sendCoupon(\'' + esc(id) + '\')"><i class="ti ti-ticket"></i> Send coupon</button>'
+        +   '<button class="btn sec" onclick="loadCoupons(\'' + esc(id) + '\')"><i class="ti ti-refresh"></i> Show coupons</button>'
+        + '</div>'
+        + '<div id="cp-list" class="mini" style="margin-top:8px;">Tap “Show coupons” to load.</div>'
         + '<div class="acts" style="margin-top:12px;">'
         + (d.banned ? '<button class="btn" onclick="doBan(\'' + esc(id) + '\',\'unban\')">Unban user</button>' : '<button class="btn red" onclick="doBan(\'' + esc(id) + '\',\'ban\')">Ban user</button>')
         + '<button class="btn sec" onclick="cmdMessage(\'' + esc(id) + '\')">Send message</button></div>'
@@ -413,6 +420,59 @@
       try { const d = await api({ action: 'resetTasksConfig' }); TASKS_CACHE = d.tasks || []; renderTasksEditor(); } catch (e) { alert(e.message); }
     }
 
+
+    /* ── Coupons for one user ── */
+    // Coupon state is: new (activatable), active (already paid into the bonus
+    // balance) or expired. Only the first can be removed — see api/admin.js.
+    function cpState(c, now) {
+      if (!c) return 'expired';
+      if (c.status === 'active') return 'active';
+      return (Number(c.exp) || 0) > now ? 'new' : 'expired';
+    }
+    async function loadCoupons(id) {
+      const box = $('cp-list'); if (box) box.textContent = 'Loading\u2026';
+      try {
+        const d = await api({ action: 'getCoupons', id });
+        renderCoupons(id, d.coupons || [], d.now || Date.now(), d.bonus || 0);
+      } catch (e) { if (box) box.innerHTML = '<span style="color:#ff7a7a;">' + esc(e.message) + '</span>'; }
+    }
+    function renderCoupons(id, list, now, bonus) {
+      const box = $('cp-list'); if (!box) return;
+      if (!list.length) { box.textContent = 'No coupons.'; return; }
+      const COL = { new: '#4eeaa0', active: '#f0b90b', expired: '#6b7280' };
+      box.innerHTML = '<div style="margin-bottom:6px;">Bonus balance: <b style="color:#f0b90b;">$' + fmt(bonus) + '</b></div>'
+        + list.map((c) => {
+          const st = cpState(c, now);
+          const canDel = st !== 'active';
+          return '<div class="row" style="align-items:center;border-top:0.5px solid #232838;padding:7px 0;">'
+            + '<span class="val" style="flex:1;min-width:0;">'
+            +   '<b style="color:' + COL[st] + ';">$' + fmt(c.amount) + '</b> \u00b7 ' + esc(c.title || '')
+            +   '<br><span class="k">' + st + ' \u00b7 ' + when(c.at) + (st === 'new' ? ' \u00b7 expires ' + when(c.exp) : '') + '</span>'
+            + '</span>'
+            + (canDel
+                ? '<button class="btn red" style="padding:4px 9px;font-size:12px;" onclick="deleteCoupon(\'' + esc(id) + '\',\'' + esc(c.id) + '\')">Remove</button>'
+                : '<span class="k">activated</span>')
+            + '</div>';
+        }).join('');
+    }
+    async function sendCoupon(id) {
+      const amount = parseFloat($('cp-amt').value);
+      const title = ($('cp-title').value || '').trim();
+      const days = parseInt($('cp-days').value, 10) || 7;
+      if (!amount || !isFinite(amount) || amount <= 0) return alert('Enter a positive amount, e.g. 25');
+      if (!confirm('Send a ' + amount + ' USDT coupon?\n\nIt expires in ' + days + ' day(s) and the user is notified. It only reaches their bonus balance once they activate it.')) return;
+      try {
+        const d = await api({ action: 'sendCoupon', id, amount, title, days });
+        $('cp-amt').value = ''; $('cp-title').value = '';
+        renderCoupons(id, d.coupons || [], Date.now(), 0);
+        loadCoupons(id);
+      } catch (e) { alert(e.message); }
+    }
+    async function deleteCoupon(id, couponId) {
+      if (!confirm('Remove this coupon? It disappears from the user\'s Coupon Center.')) return;
+      try { const d = await api({ action: 'deleteCoupon', id, couponId }); renderCoupons(id, d.coupons || [], Date.now(), 0); loadCoupons(id); }
+      catch (e) { alert(e.message); }
+    }
 
     /* ── Entry banners ── */
     // Slides shown in the carousel when a user opens the app. Ordering here is
