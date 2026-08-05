@@ -47,7 +47,10 @@ const COUPON_TTL_MS = 7 * 24 * 60 * 60 * 1000;   // coupons expire after 7 days
 // of minting a coupon each time — a 0.10 ticket per check-in would bury the
 // Coupon Center. Once the pot reaches the threshold the WHOLE pot becomes one
 // coupon and the pot resets, so nothing is left stranded as dust.
-const POT_THRESHOLD = 5;
+// Rewards pool until they reach this, then mint as one activatable coupon.
+// Raised from 5 to 10 USDT: at 5 a referral or two already tipped it over, which
+// made the coupon feel like small change rather than something worth waiting for.
+const POT_THRESHOLD = 10;
 
 // Net deposit ladder. Each rung pays once; reaching a higher rung does not
 // void the lower ones.
@@ -712,4 +715,5 @@ module.exports.computeCheckin = computeCheckin;
 module.exports.couponState = couponState;
 module.exports.bucketCoupons = bucketCoupons;
 module.exports.potAdd = potAdd;
+module.exports.POT_THRESHOLD = POT_THRESHOLD;
 module.exports.depositLadder = depositLadder;

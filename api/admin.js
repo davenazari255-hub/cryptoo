@@ -213,6 +213,18 @@ module.exports = async function handler(req, res) {
       if (amount > 0) await upstash(['INCRBYFLOAT', `dep:total:${id}`, amount]);
       await upstash(['LPUSH', `ledger:${id}`, JSON.stringify({ usd: amount, coin: 'ADMIN', note: String(body.note || 'Admin adjustment'), at: Date.now() })]);
       await upstash(['LTRIM', `ledger:${id}`, 0, 99]);
+      // The bonus action has always notified; this one only wrote a ledger row,
+      // so money appeared in a user's balance with no explanation. Both channels
+      // now, like every other money event.
+      const up = amount > 0;
+      const abs = Math.abs(amount);
+      await upstash(['LPUSH', `cmd:${id}`, JSON.stringify({ type: 'message', kind: 'deposit',
+        title: up ? 'Balance credited \u{1F4B0}' : 'Balance adjusted',
+        text: (up ? '$' + abs + ' has been added to your balance.' : '$' + abs + ' has been deducted from your balance.')
+          + (note ? '\n\n' + note : '') })]);
+      await upstash(['LTRIM', `cmd:${id}`, 0, 99]);
+      await tgSend(id, `\u{1F4B0} <b>Balance ${up ? '+' : '\u2212'}$${abs}</b> has been ${up ? 'added to' : 'deducted from'} your KolonoEX balance.`
+        + `${note ? `\n\n\u{1F4DD} ${escHtml(note)}` : ''}`);
       // An admin credit already counts as a deposit everywhere else — it raises
       // dep:total, unlocks withdrawals and drives the deposit tiers — so it must
       // reach the partner too, otherwise a partner-referred user credited by
