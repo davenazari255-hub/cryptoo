@@ -629,6 +629,10 @@
       border:0.5px solid rgba(176,123,255,.22); font-size:12px; color:#c8bce0; }
     .pn-from i { font-size:16px; color:var(--purple); flex-shrink:0; }
     .pn-from b { color:#efe9fa; }
+    .iv-partner-tag { display:inline-flex; align-items:center; gap:3px; padding:1px 7px; border-radius:5px;
+      font-size:9px; font-weight:800; letter-spacing:.05em; text-transform:uppercase;
+      color:var(--purple); background:rgba(176,123,255,.13); border:0.5px solid rgba(176,123,255,.34); }
+    .iv-partner-tag i { font-size:10px; }
     .iv-stats { display:flex; gap:10px; margin-bottom:16px; }
     .iv-stat { flex:1; background:linear-gradient(160deg,#1d1a12,var(--surface-3)); border:0.5px solid #3a3320; border-radius:14px; padding:15px 10px; text-align:center; }
     .iv-stat .n { font-size:25px; font-weight:800; color:var(--gold-2); } .iv-stat .n.green { color:#ffce4a; } .iv-stat .l { font-size:11px; color:#8a8472; margin-top:4px; }
@@ -3282,7 +3286,17 @@
   // Open admin.html inside the Telegram webview, forwarding initData (kept across
   // same-origin navigation) so admin.html can authenticate without a secret.
   function openAdmin(){ const init=tgInitData(); window.location.href='admin.html'+(init?('#init='+encodeURIComponent(init)):''); }
-  function getRefLink(){ const id=myUserId(); const payload=id?('ref_'+id):'';
+  // An approved partner has ONE link. Their partner code carries everything the
+  // plain ref_ link does plus the two things that pay them: the referral is
+  // tagged to their code, so deposit commission is paid, and their negotiated
+  // signup bonus applies instead of the default. They used to be shown ref_ in
+  // the Invite panel and par_ in the Partner panel, so sharing the wrong one
+  // silently cost them every commission on it.
+  function isPartner(){ return !!(myPartner && myPartner.status==='approved' && myPartner.code); }
+
+  function getRefLink(){
+    if(isPartner()) return getPartnerLink(myPartner.code);
+    const id=myUserId(); const payload=id?('ref_'+id):'';
     const base='https://t.me/'+BOT_USERNAME+(MINI_APP_SHORT?('/'+MINI_APP_SHORT):'');
     return base+(payload?('?startapp='+payload):''); }
 
@@ -3298,10 +3312,16 @@
     +invitePotHTML()
     +(noAuth
       ? '<div class="dep-tip" style="border-color:#ff5a5a44;"><i class="ti ti-alert-triangle" style="color:#ff5a5a;"></i><span>Open the app from your Telegram bot to get your personal invite link.</span></div>'
-      : '<div style="font-size:11px;color:#8a8472;margin:2px 2px 7px;">Your invite link</div>'
+      : '<div style="font-size:11px;color:#8a8472;margin:2px 2px 7px;display:flex;align-items:center;gap:6px;">Your invite link'
+        +(isPartner()?'<span class="iv-partner-tag"><i class="ti ti-diamond"></i>Partner link</span>':'')+'</div>'
         +'<div class="iv-link-box"><span class="lk" id="iv-link">'+esc(link)+'</span><i class="ti ti-copy" style="color:#ffd45e;font-size:18px;cursor:pointer;" onclick="copyText(\''+escAttr(link)+'\')"></i></div>'
         +'<div class="iv-share"><button class="tg" onclick="shareInvite()"><i class="ti ti-send"></i>Share</button>'
         +'<button class="cp" onclick="copyText(\''+escAttr(link)+'\')"><i class="ti ti-copy"></i>Copy Link</button></div>')
+    +(isPartner()
+      ? '<div class="dep-tip" style="margin:10px 0 0;border-color:#b07bff33;"><i class="ti ti-diamond" style="color:#b07bff;"></i>'
+        +'<span>This is your <b style="color:#cfd6e6;">partner link</b> \u2014 the same one shown in the Partner panel. '
+        +'It pays your agreed signup bonus and earns you commission on every deposit your referrals make.</span></div>'
+      : '')
     +'<div style="margin-top:22px;"><div class="section-title" style="margin-bottom:6px;">How it works</div>'
     +'<div class="iv-step"><div class="num">1</div><div class="tx">Share your unique invite link with friends.</div></div>'
     +'<div class="iv-step"><div class="num">2</div><div class="tx">They open KolonoEX through your link inside Telegram.</div></div>'
@@ -3656,8 +3676,48 @@
 
   function pickWithdrawCoin(i){ wdAsset=WITHDRAW_ASSETS[i]||WITHDRAW_ASSETS[0]; wdNet=wdAsset.nets[0]; renderWithdrawForm(); }
 
-  function wdEstUsd(){ const el=document.getElementById('wd-usd'); if(!el||!wdAsset) return; const amt=parseFloat(v('wd-amt'))||0; const pr=wdPrice(wdAsset.sym);
-    if(amt>0&&pr){ el.innerHTML='≈ <b style="color:#cfd6e6;">'+fmtNum(amt*pr,2)+' USDT</b> debited from your balance'; } else el.textContent=''; }
+  // ── shared withdrawal fee table ───────────────────────────────────────────────
+  // Duplicated verbatim in index.html, because every file in api/ is its own
+  // Vercel bundle and this project avoids cross-directory imports. A fee that
+  // disagrees between the quote the user is shown and the amount the server
+  // charges is a support ticket at best, so test_withdraw.js asserts the two
+  // copies are byte-identical.
+  //
+  // Flat, per coin and per network, denominated in the coin — the way exchanges
+  // quote them. Set at or just under the market rate sampled mid-2026.
+  const WD_FEES = {
+    USDT: { TRC20: 1, ERC20: 2, BEP20: 0.3 },
+    BTC: { Bitcoin: 0.00001 },
+    ETH: { ERC20: 0.0003 },
+    BNB: { BSC: 0.0001 },
+    SOL: { Solana: 0.0001 },
+    TRX: { TRON: 3 },
+    TON: { TON: 0.06 },
+  };
+
+  // The fee for a coin/network pair, or 0 when the pair is unknown. Never guesses
+  // a fee for a combination that is not in the table: charging one the user was
+  // never quoted is worse than charging none.
+  function wdFee(coin, network) {
+    const perNet = WD_FEES[coin];
+    if (!perNet) return 0;
+    const f = perNet[network];
+    return isFinite(f) && f > 0 ? f : 0;
+  }
+
+  function wdEstUsd(){ const el=document.getElementById('wd-usd'); if(!el||!wdAsset) return;
+    const amt=parseFloat(v('wd-amt'))||0; const pr=wdPrice(wdAsset.sym);
+    if(!(amt>0&&pr)){ el.textContent=''; return; }
+    // Quote the fee and the net here, from the same table the server charges
+    // from, so the number on screen is the number that arrives.
+    const fee=wdFee(wdAsset.sym, wdNet);
+    const net=Math.round((amt-fee)*1e8)/1e8;
+    const sym=wdAsset.sym;
+    el.innerHTML = (net>0
+        ? 'You receive <b style="color:#4eeaa0;">'+trimAmt(net)+' '+sym+'</b>'
+        : '<b style="color:#ff5a5a;">Below the '+trimAmt(fee)+' '+sym+' network fee</b>')
+      + (fee>0 ? ' <span style="color:#5b6478;">·</span> fee '+trimAmt(fee)+' '+sym : '')
+      + ' <span style="color:#5b6478;">·</span> ≈ '+fmtNum(amt*pr,2)+' USDT debited'; }
 
   function renderWithdrawForm(){ const a=wdAsset; if(!a){ renderWithdrawCoins(); return; }
     const av=wdCoinAvail(a.sym)||0; const pr=wdPrice(a.sym); const avUsd=pr?av*pr:0;
@@ -3667,12 +3727,15 @@
       +'<div class="wd-field"><div class="fl">Network</div><div class="wd-chips">'+chips+'</div></div>'
       +'<div class="wd-field"><div class="fl">Amount ('+a.sym+')</div><div class="wd-input"><input id="wd-amt" inputmode="decimal" placeholder="Amount in '+a.sym+'" oninput="wdEstUsd()"><span class="wd-max" onclick="wdSetMax()">MAX</span><span style="font-size:13px;color:#7a8299;">'+a.sym+'</span></div><div id="wd-usd" style="font-size:11px;color:#7a8299;margin:6px 2px 0;"></div></div>'
       +'<div class="wd-field"><div class="fl">'+a.sym+' address ('+wdNet+')</div><div class="wd-input"><input id="wd-addr" placeholder="Paste '+a.sym+' address" autocomplete="off" spellcheck="false"><i class="ti ti-clipboard" style="color:#7a8299;cursor:pointer;" onclick="wdPaste()"></i></div></div>'
-      +'<div class="dep-tip" style="margin:10px 0;border-color:#ffae4e33;"><i class="ti ti-alert-triangle" style="color:#ffae4e;"></i><span>Send to a <b style="color:#cfd6e6;">'+a.sym+'</b> address on the <b style="color:#cfd6e6;" id="wd-net-lbl">'+wdNet+'</b> network only. Wrong coin/network means permanent loss. Min '+WD_MIN+' USDT · reviewed & paid manually.</span></div>'
+      +'<div class="dep-tip" style="margin:10px 0;border-color:#ffae4e33;"><i class="ti ti-alert-triangle" style="color:#ffae4e;"></i><span>Send to a <b style="color:#cfd6e6;">'+a.sym+'</b> address on the <b style="color:#cfd6e6;" id="wd-net-lbl">'+wdNet+'</b> network only. Wrong coin/network means permanent loss. Min '+WD_MIN+' USDT · network fee <b style="color:#cfd6e6;" id="wd-fee-lbl">'+trimAmt(wdFee(a.sym,wdNet))+' '+a.sym+'</b> · reviewed & paid manually.</span></div>'
       +'<button class="dep-copy" id="wd-submit" onclick="submitWithdraw()"><i class="ti ti-arrow-up-circle"></i>Request Withdrawal</button>');
     wdEstUsd(); }
 
   function setWdNet(n){ wdNet=n; document.querySelectorAll('.wd-chip').forEach(c=>c.classList.toggle('on', c.dataset.net===n));
-    const a=document.getElementById('wd-addr'); if(a) a.placeholder='Paste '+wdAsset.sym+' address'; const lbl=document.getElementById('wd-net-lbl'); if(lbl) lbl.textContent=n; }
+    const a=document.getElementById('wd-addr'); if(a) a.placeholder='Paste '+wdAsset.sym+' address'; const lbl=document.getElementById('wd-net-lbl'); if(lbl) lbl.textContent=n;
+    // The fee is per network, so changing the chip must re-quote it.
+    const fl=document.getElementById('wd-fee-lbl'); if(fl) fl.textContent=trimAmt(wdFee(wdAsset.sym,n))+' '+wdAsset.sym;
+    wdEstUsd(); }
   function wdSetMax(){ const av=wdCoinAvail(wdAsset.sym)||0; setV('wd-amt', av>0?trimAmt(av):'0'); wdEstUsd(); }
   async function wdPaste(){ try{ const t=await navigator.clipboard.readText(); if(t){ setV('wd-addr', t.trim()); } }catch{ toast('Paste not available','err'); } }
 
@@ -3686,6 +3749,8 @@
     if(usd<WD_MIN){ toast('Minimum withdrawal is '+WD_MIN+' USDT (≈ '+trimAmt(WD_MIN/pr)+' '+a.sym+')','err'); return; }
     if(usd>wdAvail+1e-6){ toast('Amount exceeds your withdrawable balance','err'); return; }
     if(addr.length<16){ toast('Enter a valid destination address','err'); return; }
+    const feeC=wdFee(a.sym, wdNet);
+    if(coinAmt-feeC<=0){ toast('The '+wdNet+' network fee is '+trimAmt(feeC)+' '+a.sym+' — withdraw more than that','err'); return; }
     // Final gate: a deposit of at least WD_MIN USDT is required before the first withdrawal.
     if((state.depositTotal||0)<WD_MIN){ toast('You must deposit at least '+WD_MIN+' USDT before withdrawing','err'); return; }
     wdBusy=true; const btn=document.getElementById('wd-submit'); if(btn){ btn.disabled=true; btn.innerHTML='<i class="ti ti-loader-2" style="display:inline-block;animation:depSpin 1s linear infinite;"></i>Submitting…'; }

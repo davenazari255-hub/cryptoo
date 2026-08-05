@@ -6,6 +6,35 @@ const crypto = require('crypto');
 const WD_MIN = 10; // minimum withdrawal in USD/USDT
 const escHtml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+// ── shared withdrawal fee table ───────────────────────────────────────────────
+// Duplicated verbatim in index.html, because every file in api/ is its own
+// Vercel bundle and this project avoids cross-directory imports. A fee that
+// disagrees between the quote the user is shown and the amount the server
+// charges is a support ticket at best, so test_withdraw.js asserts the two
+// copies are byte-identical.
+//
+// Flat, per coin and per network, denominated in the coin — the way exchanges
+// quote them. Set at or just under the market rate sampled mid-2026.
+const WD_FEES = {
+  USDT: { TRC20: 1, ERC20: 2, BEP20: 0.3 },
+  BTC: { Bitcoin: 0.00001 },
+  ETH: { ERC20: 0.0003 },
+  BNB: { BSC: 0.0001 },
+  SOL: { Solana: 0.0001 },
+  TRX: { TRON: 3 },
+  TON: { TON: 0.06 },
+};
+
+// The fee for a coin/network pair, or 0 when the pair is unknown. Never guesses
+// a fee for a combination that is not in the table: charging one the user was
+// never quoted is worse than charging none.
+function wdFee(coin, network) {
+  const perNet = WD_FEES[coin];
+  if (!perNet) return 0;
+  const f = perNet[network];
+  return isFinite(f) && f > 0 ? f : 0;
+}
+
 // Coins the user may withdraw, and the Binance symbol used to price them.
 // USDT is the settlement unit and is always worth exactly 1 USD here.
 const WD_COINS = { USDT: null, BTC: 'BTCUSDT', ETH: 'ETHUSDT', BNB: 'BNBUSDT', SOL: 'SOLUSDT', TRX: 'TRXUSDT', TON: 'TONUSDT' };
@@ -122,8 +151,20 @@ module.exports = async function handler(req, res) {
     if (!price) return res.status(503).json({ error: 'Price feed unavailable, please try again' });
 
     const amt = Math.round(reqCoinAmt * price * 100) / 100;  // USD actually held/debited
-    const coinAmount = String(reqCoinAmt);                    // what the admin will pay out
+    const coinAmount = String(reqCoinAmt);                    // gross: what the user asked for
     if (!(amt >= WD_MIN)) return res.status(400).json({ error: `Minimum withdrawal is $${WD_MIN}` });
+
+    // The network fee comes out of the amount requested, as every exchange does
+    // it: ask for 100 USDT on TRC20, get debited 100, receive 99. The admin pays
+    // out the NET, so it is computed here rather than left to them to work out.
+    const feeCoin = wdFee(coin, network);
+    const netCoinNum = Math.round((reqCoinAmt - feeCoin) * 1e8) / 1e8;
+    if (!(netCoinNum > 0)) {
+      return res.status(400).json({
+        error: `The ${network} network fee is ${feeCoin} ${coin} — withdraw more than that`,
+      });
+    }
+    const netCoin = String(netCoinNum);
 
     // Gate: a payout must be backed by real money. Two sources qualify —
     // what the user deposited, and what they genuinely earned in cash
@@ -157,6 +198,9 @@ module.exports = async function handler(req, res) {
       const rec = {
         id, userId, username: user.username || null, name: user.first_name || null,
         coin, coinAmount, network, address, memo, amount: amt,
+        // coinAmount is the gross the user asked for and was debited for.
+        // netCoin is what must actually be sent on-chain.
+        feeCoin: String(feeCoin), netCoin,
         priceUsd: price, // server-side rate used to derive `amount` (audit trail)
         status: 'pending', createdAt: Date.now(),
       };
@@ -167,9 +211,13 @@ module.exports = async function handler(req, res) {
 
       // Notify the user: in-app (next sync) + bot push.
       const amtLabel = (coin !== 'USDT' && coinAmount) ? (coinAmount + ' ' + coin) : (amt + ' USDT');
-      await upstash(['LPUSH', `cmd:${userId}`, JSON.stringify({ type: 'message', kind: 'withdraw', title: 'Withdrawal requested', text: amtLabel + ' on ' + network + ' — pending review.' })]);
+      const feeLine = feeCoin > 0 ? ` \u00b7 fee ${feeCoin} ${coin}` : '';
+      await upstash(['LPUSH', `cmd:${userId}`, JSON.stringify({ type: 'message', kind: 'withdraw', title: 'Withdrawal requested',
+        text: `${netCoin} ${coin} on ${network}${feeLine} \u2014 pending review.` })]);
       await upstash(['LTRIM', `cmd:${userId}`, 0, 99]);
-      await tgSend(userId, `📤 <b>Withdrawal requested</b>\n\n<b>${escHtml(amtLabel)}</b> via ${escHtml(network)}\nDebited: $${amt} USDT\n\nYour request is pending review. You'll be notified once it's processed.`);
+      await tgSend(userId, `\u{1F4E4} <b>Withdrawal requested</b>\n\nYou will receive <b>${escHtml(netCoin)} ${escHtml(coin)}</b> via ${escHtml(network)}`
+        + (feeCoin > 0 ? `\nNetwork fee: ${feeCoin} ${escHtml(coin)}` : '')
+        + `\nDebited: ${escHtml(amtLabel)} ($${amt} USDT)\n\nYour request is pending review. You'll be notified once it's processed.`);
 
       return res.status(200).json({ ok: true, balance: newBal, withdrawal: rec });
     } catch (e) {

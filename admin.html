@@ -173,8 +173,25 @@
           + (w.status === 'pending' ? '<button class="btn" onclick="decide(\'' + w.id + '\',\'approve\')">Approve</button>' : '')
           + '<button class="btn amber" onclick="decide(\'' + w.id + '\',\'paid\')">Mark Paid</button>'
           + '<button class="btn red" onclick="decide(\'' + w.id + '\',\'reject\')">Reject</button></div>' : '';
+      // What to actually send. The card used to show only the USD value, which
+      // for a BTC payout left the admin working out the coin amount by hand —
+      // and now that a network fee is deducted, the gross is the wrong number
+      // to send. The net leads, in the coin, and is copyable.
+      const net = w.netCoin != null ? w.netCoin : w.coinAmount;
+      const feeC = parseFloat(w.feeCoin) || 0;
+      const sendLine = net != null
+        ? '<div class="row" style="align-items:center;background:#0f1a14;border-radius:9px;padding:8px 10px;margin:6px 0;">'
+          + '<span class="k" style="color:#4eeaa0;font-weight:700;">SEND</span>'
+          + '<span class="val" style="color:#4eeaa0;font-size:15px;font-weight:800;">' + esc(String(net)) + ' ' + esc(w.coin || '')
+          + ' <i class="ti ti-copy copy" onclick="copy(\'' + esc(String(net)) + '\')"></i></span></div>'
+        : '';
+      const feeRow = (w.coinAmount != null)
+        ? '<div class="row"><span class="k">Requested \u00b7 fee</span><span class="val">' + esc(String(w.coinAmount)) + ' ' + esc(w.coin || '')
+          + (feeC > 0 ? ' \u2212 ' + esc(String(w.feeCoin)) + ' fee' : ' \u00b7 no fee') + '</span></div>'
+        : '';
       return '<div class="card"><div class="row" style="align-items:center;"><span class="amt">' + fmt(w.amount) + ' USDT</span>'
         + '<span style="display:flex;gap:8px;align-items:center;"><span class="net">' + esc(w.network) + '</span><span class="st ' + esc(w.status) + '">' + esc(w.status) + '</span></span></div>'
+        + sendLine + feeRow
         + '<div class="row"><span class="k">Address</span><span class="val">' + esc(w.address) + ' <i class="ti ti-copy copy" onclick="copy(\'' + esc(w.address) + '\')"></i></span></div>'
         + (w.memo ? '<div class="row"><span class="k">Memo</span><span class="val">' + esc(w.memo) + '</span></div>' : '')
         + '<div class="row"><span class="k">User</span><span class="val">' + esc(w.username ? '@' + w.username : (w.name || '')) + ' (' + esc(w.userId) + ')</span></div>'
