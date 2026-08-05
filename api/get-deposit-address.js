@@ -2,7 +2,12 @@
 // Self-contained (no cross-dir imports) for reliable Vercel bundling.
 const crypto = require('crypto');
 
-const MIN_USD = 10;
+// The smallest deposit we will ask NOWPayments to create. Their own minimum is
+// per network and often far below this (USDT on BSC is ~$0.06, on Polygon
+// ~$0.13); the discovery below never goes under this floor, so at 10 we were
+// the reason a cheap network still demanded $10. USDT TRC20 sits at ~11 on
+// their side and no floor of ours can move it.
+const MIN_USD = 1;
 
 // ── Upstash REST helper (best-effort: returns null on any failure) ──
 async function upstash(args) {
@@ -71,6 +76,32 @@ module.exports = async function handler(req, res) {
   const host = req.headers['x-forwarded-host'] || req.headers.host;
   const proto = req.headers['x-forwarded-proto'] || 'https';
   const ipnUrl = process.env.IPN_CALLBACK_URL || (host ? `${proto}://${host}/api/ipn` : undefined);
+
+  // One fixed address per user per coin. NOWPayments supports this with the
+  // Payments API we already use: create the payment once, keep the address, and
+  // later sends to it are recognised as repeat deposits (they raise a new
+  // payment carrying parent_payment_id, which api/ipn.js resolves). Previously
+  // a fresh payment — and so a fresh address — was created on every visit.
+  const addrKey = `depaddr:${userId}:${payCurrency}`;
+  const saved = await upstash(['GET', addrKey]);
+  if (saved) {
+    let rec = null;
+    try { rec = JSON.parse(saved); } catch {}
+    if (rec && rec.address) {
+      return res.status(200).json({
+        address: rec.address,
+        payCurrency: rec.payCurrency || payCurrency.toUpperCase(),
+        paymentId: rec.paymentId,
+        payinExtraId: rec.payinExtraId || null,
+        network: rec.network || null,
+        minUsd: rec.minUsd,
+        minCoin: rec.minCoin,
+        // Tells the client not to poll that original payment: it settled long
+        // ago and would report "finished" before this deposit even lands.
+        reused: true,
+      });
+    }
+  }
 
   try {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -159,12 +190,18 @@ module.exports = async function handler(req, res) {
 
     // Record who owns this payment so /api/check-payment can authorise status
     // lookups (NOWPayments ids are sequential — without this, anyone could
-    // enumerate every user's deposit). 7-day TTL covers the payment window.
+    // enumerate every user's deposit). No TTL any more: the address is now
+    // permanent, so a repeat deposit months later must still resolve its owner
+    // through parent_payment_id.
     if (data.payment_id != null) {
-      await upstash(['SET', `pay:owner:${data.payment_id}`, userId, 'EX', 604800]);
+      await upstash(['SET', `pay:owner:${data.payment_id}`, userId]);
+    }
+    // And by address, as the last-resort resolution path in api/ipn.js.
+    if (data.pay_address) {
+      await upstash(['SET', `payaddr:${String(data.pay_address).toLowerCase()}`, userId]);
     }
 
-    return res.status(200).json({
+    const out = {
       address: data.pay_address,
       payCurrency: (data.pay_currency || payCurrency).toUpperCase(),
       paymentId: data.payment_id,
@@ -172,7 +209,14 @@ module.exports = async function handler(req, res) {
       network: data.network || null,
       minUsd: priceUsd,
       minCoin: parseFloat(data.pay_amount) || null,
-    });
+    };
+    // Keep it for next time. Written last, so a half-finished creation is never
+    // cached — a bad cached address would send real funds nowhere.
+    if (out.address) {
+      await upstash(['SET', addrKey, JSON.stringify(Object.assign({ at: Date.now() }, out))]);
+    }
+
+    return res.status(200).json(out);
   } catch (err) {
     return res.status(500).json({ error: 'Server error: ' + ((err && err.message) || 'unknown') });
   }

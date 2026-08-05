@@ -5,7 +5,10 @@
 // Required env: NOWPAYMENTS_IPN_SECRET, UPSTASH_REDIS_REST_URL/TOKEN.
 const crypto = require('crypto');
 
-const MIN_USD = 10;
+// The floor for *crediting* what actually arrived, which is deliberately far
+// below the floor we ask for. Refusing to credit a payment the user really made
+// loses their money; crediting a small one costs nothing but a dust balance.
+const MIN_USD = 0.01;
 const escHtml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 async function upstash(args) {
@@ -158,8 +161,19 @@ module.exports = async function handler(req, res) {
     return res.status(401).json({ error: 'bad signature' });
   }
 
+  // Who does this money belong to? Three paths, tried in order. The first is
+  // how it has always worked. The other two exist because a repeat deposit to a
+  // stored address raises a *new* payment, and its callback may not carry the
+  // order_id we set on the original — without them that money would arrive and
+  // never be credited. Additive: this can only ever resolve more, never fewer.
   const orderId = String(payload.order_id || '');
-  const userId = orderId.startsWith('user_') ? orderId.slice(5) : null;
+  let userId = orderId.startsWith('user_') ? orderId.slice(5) : null;
+  if (!userId && payload.parent_payment_id != null) {
+    userId = (await upstash(['GET', `pay:owner:${payload.parent_payment_id}`])) || null;
+  }
+  if (!userId && payload.pay_address) {
+    userId = (await upstash(['GET', `payaddr:${String(payload.pay_address).toLowerCase()}`])) || null;
+  }
 
   if (payload.payment_status === 'finished' && userId) {
     const paid = parseFloat(payload.actually_paid) || 0;

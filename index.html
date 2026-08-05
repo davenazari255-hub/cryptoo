@@ -3321,6 +3321,10 @@
     {t:'usdttrc20', sym:'USDT', name:'Tether',  net:'TRC20',   color:'#26a17b'},
     {t:'usdterc20', sym:'USDT', name:'Tether',  net:'ERC20',   color:'#26a17b'},
     {t:'usdtbsc',   sym:'USDT', name:'Tether',  net:'BEP20',   color:'#26a17b'},
+    // The two cheapest USDT routes end to end. NOWPayments' own minimum is
+    // ~0.13 on Polygon and ~0.27 on Arbitrum, against ~11 on TRC20.
+    {t:'usdtmatic', sym:'USDT', name:'Tether',  net:'Polygon', color:'#26a17b'},
+    {t:'usdtarb',   sym:'USDT', name:'Tether',  net:'Arbitrum',color:'#26a17b'},
     {t:'bnbbsc',    sym:'BNB',  name:'BNB',     net:'BSC',     color:'#f3ba2f'},
     {t:'sol',       sym:'SOL',  name:'Solana',  net:'Solana',  color:'#14f195'},
     {t:'trx',       sym:'TRX',  name:'TRON',    net:'TRON',    color:'#eb0029'},
@@ -3523,13 +3527,32 @@
     +'<div class="dep-tip" style="margin-top:12px;border-color:#ffae4e33;"><i class="ti ti-shield-check" style="color:#ffae4e;"></i><span>Send only <b style="color:#cfd6e6;">'+coin.sym+'</b> over the <b style="color:#cfd6e6;">'+coin.net+'</b> network. Other coins/networks may be lost. Minimum deposit <b style="color:#cfd6e6;">'+minCoin+'</b>.</span></div>'
     +'<div style="display:flex;align-items:center;justify-content:space-between;margin:12px 2px 0;"><span style="font-size:11px;color:#7a8299;"><span class="live-dot"></span>Live · checking automatically</span>'
     +'<span class="rec-refresh" id="dep-refresh" onclick="depCheckNow()"><i class="ti ti-refresh"></i>Refresh</span></div>'
-    +'<div class="dep-status" id="dep-status" style="margin-top:8px;"><span class="dot"></span><span id="dep-status-txt">Waiting for payment…</span></div>');
-    startDepositPoll(d.paymentId, min); }
+    +'<div class="dep-status" id="dep-status" style="margin-top:8px;"><span class="dot"></span><span id="dep-status-txt">'
+    + (d.reused ? 'This address is yours \u00b7 send any time' : 'Waiting for payment\u2026') + '</span></div>');
+    // A reused address belongs to a payment that settled long ago, so polling it
+    // would report "finished" before this deposit has even landed. The balance
+    // sync already credits from the server, so lean on that instead.
+    if(d.reused) stopDepositPoll(); else startDepositPoll(d.paymentId, min); }
 
   // Polls payment status for live UI feedback; the actual credit is done
   // server-side by the IPN webhook, then pulled in via syncBalance().
   let depCheckFn=null;
-  function depCheckNow(){ const btn=document.getElementById('dep-refresh'); if(btn) btn.classList.add('spin'); if(depCheckFn) depCheckFn(); if(btn) setTimeout(()=>btn.classList.remove('spin'),500); }
+  function depCheckNow(){ const btn=document.getElementById('dep-refresh'); if(btn) btn.classList.add('spin');
+    if(depCheckFn) depCheckFn(); else syncBalance();
+    if(btn) setTimeout(()=>btn.classList.remove('spin'),500); }
+
+  // Used for a reused address: no payment worth polling, so the sheet just
+  // reconciles against the server balance.
+  function stopDepositPoll(){
+    if(depPoll){ clearInterval(depPoll); depPoll=null; }
+    depCheckFn=null;
+    const tick=async()=>{ const t=document.getElementById('dep-status-txt'); if(!t) return;
+      const before=state.balances&&state.balances.USDT;
+      await syncBalance();
+      if(state.balances&&state.balances.USDT!==before){
+        t.textContent='\u2713 Credited to your balance';
+        const box=document.getElementById('dep-status'); if(box) box.className='dep-status done'; } };
+    depPoll=setInterval(()=>{ if(!document.getElementById('dep-status')){ clearInterval(depPoll); depPoll=null; return; } tick(); }, 15000); }
   function startDepositPoll(paymentId, minUsd){ if(depPoll){ clearInterval(depPoll); depPoll=null; }
     const MAP={ waiting:'Waiting for payment…', confirming:'Confirming on-chain…', confirmed:'Confirmed, processing…', sending:'Crediting…', partially_paid:'Amount below $'+minUsd+' — not credited', finished:'Payment received — crediting…', failed:'Payment failed', refunded:'Refunded', expired:'Payment expired' };
     const setStat=(txt,cls)=>{ const box=document.getElementById('dep-status'), t=document.getElementById('dep-status-txt'); if(t) t.textContent=txt; if(box){ box.className='dep-status'+(cls?' '+cls:''); } };
