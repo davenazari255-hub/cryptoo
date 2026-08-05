@@ -206,6 +206,10 @@ module.exports = async function handler(req, res) {
     if (body.action === 'adjust') {
       const id = String(body.id || '');
       const amount = Math.round((parseFloat(body.amount) || 0) * 100) / 100;
+      // Was missing: the notification below reads `note`, and without this the
+      // handler threw ReferenceError *after* the balance had already moved —
+      // money applied, error shown, nobody notified.
+      const note = String(body.note || '').trim();
       if (!id || !amount) return res.status(400).json({ error: 'id and non-zero amount required' });
       const newBal = parseFloat(await upstash(['INCRBYFLOAT', `bal:${id}`, amount]));
       if (newBal < 0) { await upstash(['INCRBYFLOAT', `bal:${id}`, -amount]); return res.status(400).json({ error: 'Would make balance negative' }); }
@@ -357,7 +361,7 @@ function cleanBanners(list) {
         await upstash(['DEL', `bal:${id}`, `dep:total:${id}`, `ledger:${id}`, `seen:${id}`,
           `task:claimed:${id}`, `checkin:${id}`, `bonus:${id}`, `vol:spot:${id}`, `vol:fut:${id}`,
           // reward state introduced with the Coupon Center
-          `coupons:${id}`, `coupon:used:${id}`, `pot:${id}`, `dep:tiers:${id}`,
+          `coupons:${id}`, `coupon:used:${id}`, `pot:${id}`, `rpot:${id}`, `dep:tiers:${id}`,
           // withdrawal allowance earned as partner commission — it tracks bal:,
           // so a full wipe that zeroes the balance must zero this too
           `payout:earned:${id}`]);
@@ -374,7 +378,7 @@ function cleanBanners(list) {
         // coupons and the collecting pot, so nothing can be claimed twice.
         await upstash(['DEL', `task:claimed:${id}`, `checkin:${id}`,
           `vol:spot:${id}`, `vol:fut:${id}`, `task:tgchannel:${id}`,
-          `coupons:${id}`, `coupon:used:${id}`, `pot:${id}`, `dep:tiers:${id}`]);
+          `coupons:${id}`, `coupon:used:${id}`, `pot:${id}`, `rpot:${id}`, `dep:tiers:${id}`]);
         await upstash(['LPUSH', `cmd:${id}`, JSON.stringify({ type: 'resetTasks' })]);
       }
       await upstash(['LTRIM', `cmd:${id}`, 0, 99]);

@@ -257,12 +257,22 @@
       // Controls
       h += '<div class="sec-title">Controls</div><div class="card">'
         + '<div class="row"><span class="k">Adjust real balance (USDT)</span></div>'
-        + '<div class="adj"><input id="adj-amt" inputmode="decimal" placeholder="+50 or -20"><input id="adj-note" placeholder="note (optional)" style="flex:1.4;"><button class="btn" onclick="doAdjust(\'' + esc(id) + '\')">Apply</button></div>'
+        // A phone number pad has no minus key, so the sign is a button rather
+        // than something the admin has to type.
+        + '<div class="adj"><input id="adj-amt" inputmode="decimal" placeholder="amount, e.g. 50"><input id="adj-note" placeholder="note (optional)" style="flex:1.4;"></div>'
+        + '<div class="acts" style="margin-top:6px;">'
+        +   '<button class="btn" onclick="doAdjust(\'' + esc(id) + '\',1)"><i class="ti ti-plus"></i> Add</button>'
+        +   '<button class="btn red" onclick="doAdjust(\'' + esc(id) + '\',-1)"><i class="ti ti-minus"></i> Deduct</button>'
+        + '</div>'
         + '<label class="mini" style="display:flex;align-items:center;gap:7px;margin-top:6px;cursor:pointer;">'
         +   '<input type="checkbox" id="adj-comm" checked style="width:auto;"> Treat as a real deposit &mdash; pays partner commission and shows in their referral list'
         + '</label>'
         + '<div class="row" style="margin-top:12px;"><span class="k">Adjust bonus (USDT) — notifies user</span></div>'
-        + '<div class="adj"><input id="bon-amt" inputmode="decimal" placeholder="+10 or -5"><input id="bon-note" placeholder="note to user (optional)" style="flex:1.4;"><button class="btn amber" onclick="doBonus(\'' + esc(id) + '\')">Send</button></div>'
+        + '<div class="adj"><input id="bon-amt" inputmode="decimal" placeholder="amount, e.g. 10"><input id="bon-note" placeholder="note to user (optional)" style="flex:1.4;"></div>'
+        + '<div class="acts" style="margin-top:6px;">'
+        +   '<button class="btn amber" onclick="doBonus(\'' + esc(id) + '\',1)"><i class="ti ti-plus"></i> Add bonus</button>'
+        +   '<button class="btn red" onclick="doBonus(\'' + esc(id) + '\',-1)"><i class="ti ti-minus"></i> Deduct bonus</button>'
+        + '</div>'
         + '<div class="acts" style="margin-top:12px;">'
         + (d.banned ? '<button class="btn" onclick="doBan(\'' + esc(id) + '\',\'unban\')">Unban user</button>' : '<button class="btn red" onclick="doBan(\'' + esc(id) + '\',\'ban\')">Ban user</button>')
         + '<button class="btn sec" onclick="cmdMessage(\'' + esc(id) + '\')">Send message</button></div>'
@@ -281,12 +291,16 @@
       $('view').innerHTML = h;
     }
 
-    async function doAdjust(id) {
-      const amount = parseFloat($('adj-amt').value); const note = $('adj-note').value.trim();
+    // `sign` comes from the Add / Deduct button. A typed leading minus is still
+    // honoured, but the buttons mean it is never required.
+    async function doAdjust(id, sign) {
+      const raw = parseFloat($('adj-amt').value);
+      const amount = Math.abs(raw) * (sign < 0 ? -1 : 1) * (raw < 0 ? -1 : 1);
+      const note = $('adj-note').value.trim();
       const box = $('adj-comm');
       // Only meaningful for a credit; a deduction never pays commission.
       const payCommission = amount > 0 && (!box || box.checked);
-      if (!amount) return alert('Enter a non-zero amount (e.g. 50 or -20)');
+      if (!amount || !isFinite(amount)) return alert('Enter a non-zero amount, e.g. 50');
       const extra = payCommission
         ? '\n\nIf this user came through a partner link, their partner will be paid commission and notified.'
         : '';
@@ -297,9 +311,11 @@
         openUser(id);
       } catch (e) { alert(e.message); }
     }
-    async function doBonus(id) {
-      const amount = parseFloat($('bon-amt').value); const note = $('bon-note').value.trim();
-      if (!amount) return alert('Enter a non-zero bonus amount (e.g. 10 or -5)');
+    async function doBonus(id, sign) {
+      const raw = parseFloat($('bon-amt').value);
+      const amount = Math.abs(raw) * (sign < 0 ? -1 : 1) * (raw < 0 ? -1 : 1);
+      const note = $('bon-note').value.trim();
+      if (!amount || !isFinite(amount)) return alert('Enter a non-zero bonus amount, e.g. 10');
       if (!confirm((amount > 0 ? 'Add ' : 'Deduct ') + Math.abs(amount) + ' USDT bonus? The user will be notified.')) return;
       try { await api({ action: 'bonus', id, amount, note }); alert('Bonus queued — applies on the user\'s next sync; a bot message was sent now.'); openUser(id); } catch (e) { alert(e.message); }
     }

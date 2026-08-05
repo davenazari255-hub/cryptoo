@@ -2159,31 +2159,41 @@
   // ── Reward pot ─────────────────────────────────────────────────────
   // Check-in and referral rewards are too small to justify a coupon each; they
   // collect here and the whole pot becomes one coupon at the threshold.
-  let pot = 0, potThreshold = 10;
+  // Two independent pots, mirroring the server: check-in mints at 5, referral at
+  // 10. They used to share one value and one threshold, which is why each
+  // section ended up describing the other's rules.
+  let pot = 0, potThreshold = 5;
+  let refPot = 0, refPotThreshold = 10;
   // When the pot was last set from an authoritative response. A syncBalance()
   // already in flight when the user taps Check in lands afterwards carrying the
   // pre-claim pot; without this it overwrote the fresh value and the collecting
   // bar appeared frozen until the next tick or a manual refresh.
-  let potStamp = 0;
+  let potStamp = 0, refPotStamp = 0;
 
-  // Rendered inside the check-in card and the invite banner. One shared pot
-  // feeds both, so the copy names both sources wherever it appears.
-  // Referral shares the pot with check-in, but shows it differently: a gold
-  // ticket line inside the invite panel rather than the blue collecting bar,
-  // so the two sections do not look like duplicates of each other.
+  // Two separate indicators for two separate pots: the blue collecting bar in
+  // the check-in card, and a gold ticket line in the invite panel. Each states
+  // only its own rule.
   function invitePotHTML(){
-    const p = Math.max(0, pot), t = Math.max(0.01, potThreshold);
+    const p = Math.max(0, refPot), t = Math.max(0.01, refPotThreshold);
     const left = Math.max(0, Math.round((t - p) * 100) / 100);
     const filled = Math.max(0, Math.min(5, Math.round(p / t * 5)));
     let dots = ''; for(let i = 0; i < 5; i++) dots += '<i class="' + (i < filled ? 'on' : '') + '"></i>';
     return '<div class="iv-next"><div class="ic"><i class="ti ti-ticket"></i></div>'
-      + '<div class="tx"><div class="t">' + (left > 0 ? fmtNum(left,2) + ' USDT to your next coupon' : 'Your next coupon is ready') + '</div>'
-      + '<div class="s">Invite bonuses build up with your daily check-ins. Every <b>'
-      + fmtNum(t,2) + ' USDT</b> becomes one coupon you can activate.</div>'
+      + '<div class="tx"><div class="t">' + (left > 0 ? fmtNum(left,2) + ' USDT to your next referral coupon' : 'Your referral coupon is ready') + '</div>'
+      + '<div class="s">Your invite bonuses pool here. Every <b>'
+      + fmtNum(t,2) + ' USDT</b> of referral rewards becomes one coupon you can activate.</div>'
       + '<div class="iv-dots">' + dots + '</div></div></div>'; }
 
   function renderInvitePot(){ /* the invite panel renders it inline on open */ }
 
+  // The invite panel is a sheet, so re-opening it to refresh would reset the
+  // scroll and replay the entrance. Patch the one element in place instead.
+  function repaintInvitePot(){
+    const el = document.querySelector('#sheetBody .iv-next');
+    if (el) el.outerHTML = invitePotHTML(); }
+
+  // The check-in pot only. Referral has its own pot, its own threshold and its
+  // own copy in the invite panel — mentioning both here was what mixed them up.
   function potHTML(){
     const p = Math.max(0, pot), t = Math.max(0.01, potThreshold);
     const pct = Math.min(100, Math.round(p / t * 100));
@@ -2192,10 +2202,10 @@
       ? '<b>' + fmtNum(left,2) + ' USDT</b> to go before it becomes a coupon.'
       : 'At <b>' + fmtNum(t,2) + ' USDT</b> it becomes one activatable coupon.';
     return '<div class="pot-box">'
-      + '<div class="pot-top"><div class="pot-lab"><i class="ti ti-coins"></i>Collecting rewards</div>'
+      + '<div class="pot-top"><div class="pot-lab"><i class="ti ti-coins"></i>Collecting check-in rewards</div>'
       + '<div class="pot-num">' + fmtNum(p,2) + ' <s>/ ' + fmtNum(t,2) + ' USDT</s></div></div>'
       + '<div class="pot-bar"><i style="width:' + pct + '%"></i></div>'
-      + '<div class="pot-hint">Check-in and referral rewards pool together. ' + hint + '</div></div>'; }
+      + '<div class="pot-hint">Your daily check-in rewards pool here. ' + hint + '</div></div>'; }
 
   // ── Net deposit ladder ─────────────────────────────────────────────
   // One card instead of three task rows, so the task list stays short.
@@ -3376,7 +3386,8 @@
       else if(c.type==='resetTasks'){ state.taskClaimed={}; state.social={}; state.checkin={last:'',streak:0}; state.spotVol=0; state.futVol=0; claimSig=null; state.flags={deposited:!!state.flags.deposited,traded:false,futured:false};
         // the reward state the Coupon Center added — cleared alongside the rest,
         // while the bonus balance itself is left untouched
-        coupons=[]; couponsSig=null; pot=0; depTiers=[]; depLadder=null; depSig=null;
+        coupons=[]; couponsSig=null; pot=0; refPot=0; potStamp=now(); refPotStamp=now();
+        depTiers=[]; depLadder=null; depSig=null;
         renderCoupons(); renderDeposit();
         pushNotification({title:'Tasks reset',text:'Your tasks and daily check-in were reset by an admin.',kind:'message'}); toast('Your tasks were reset','info'); changed=true; }
       // Admin: full account reset — wipe the local app to a brand-new state. The
@@ -3434,8 +3445,11 @@
       // Admin-editable task list (with any partner reward boosts).
       applyCoupons(d.coupons, d.now);
       if(isFinite(parseFloat(d.pot)) && reqAt >= potStamp){ const np=parseFloat(d.pot);
-        if(np!==pot){ pot=np; potStamp=reqAt; renderCheckin(); renderInvitePot(); } }
+        if(np!==pot){ pot=np; potStamp=reqAt; renderCheckin(); } }
       if(isFinite(parseFloat(d.potThreshold))) potThreshold=parseFloat(d.potThreshold);
+      if(isFinite(parseFloat(d.refPot)) && reqAt >= refPotStamp){ const rp=parseFloat(d.refPot);
+        if(rp!==refPot){ refPot=rp; refPotStamp=reqAt; repaintInvitePot(); } }
+      if(isFinite(parseFloat(d.refPotThreshold))) refPotThreshold=parseFloat(d.refPotThreshold);
       if(Array.isArray(d.banners)) applyBanners(d.banners);
       if(d.invitedBy !== undefined) applyInvitedBy(d.invitedBy);
       if(Array.isArray(d.depositLadder)) depLadder=d.depositLadder;

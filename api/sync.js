@@ -47,10 +47,22 @@ const COUPON_TTL_MS = 7 * 24 * 60 * 60 * 1000;   // coupons expire after 7 days
 // of minting a coupon each time — a 0.10 ticket per check-in would bury the
 // Coupon Center. Once the pot reaches the threshold the WHOLE pot becomes one
 // coupon and the pot resets, so nothing is left stranded as dust.
-// Rewards pool until they reach this, then mint as one activatable coupon.
-// Raised from 5 to 10 USDT: at 5 a referral or two already tipped it over, which
-// made the coupon feel like small change rather than something worth waiting for.
-const POT_THRESHOLD = 10;
+// Two independent pots. They were one shared pot with one threshold, which made
+// the two rewards indistinguishable: raising the referral bar to 10 also raised
+// the check-in bar, and each surface described the other's rules.
+//
+//   check-in  -> pot:<user>   mints at 5   (small, daily, should land often)
+//   referral  -> rpot:<user>  mints at 10  (a couple of invites should not tip it)
+//
+// Existing users keep their pot: balance as the check-in pot; rpot: starts empty,
+// so nothing already banked is lost.
+const POT_THRESHOLD = 5;
+const REF_POT_THRESHOLD = 10;
+
+const POTS = {
+  checkin:  { key: 'pot',  threshold: POT_THRESHOLD,     label: 'Check-in rewards' },
+  referral: { key: 'rpot', threshold: REF_POT_THRESHOLD, label: 'Referral rewards' },
+};
 
 // Net deposit ladder. Each rung pays once; reaching a higher rung does not
 // void the lower ones.
@@ -60,13 +72,17 @@ const DEPOSIT_TIERS = [
   { id: 'd1000', at: 1000, reward: 150 },
 ];
 
-// Pure: add to the pot and decide whether it tips over into a coupon.
-// Returns the amount to mint (0 = nothing yet) and the pot to store.
-function potAdd(pot, amount) {
+// Pure: add to a pot and decide whether it tips over into a coupon.
+// Returns the amount to mint (0 = nothing yet) and the pot to store. The
+// threshold is a parameter because check-in and referral pots differ; it
+// defaults to the check-in one so existing callers and tests are unaffected.
+function potAdd(pot, amount, threshold) {
+  const t = parseFloat(threshold);
+  const lim = isFinite(t) && t > 0 ? t : POT_THRESHOLD;
   const cur = Math.max(0, parseFloat(pot) || 0);
   const add = Math.max(0, parseFloat(amount) || 0);
   const next = Math.round((cur + add) * 100) / 100;
-  if (next >= POT_THRESHOLD) return { mint: next, pot: 0 };
+  if (next >= lim) return { mint: next, pot: 0 };
   return { mint: 0, pot: next };
 }
 
@@ -103,13 +119,18 @@ async function mintCoupon(upstashFn, userId, { src, srcId, title, amount }) {
 }
 
 // Adds a small reward to the pot, minting a coupon if it tips the threshold.
-async function creditPot(upstashFn, userId, amount, label) {
-  const cur = parseFloat(await upstashFn(['GET', `pot:${userId}`])) || 0;
-  const { mint, pot } = potAdd(cur, amount);
-  await upstashFn(['SET', `pot:${userId}`, String(pot)]);
+// `kind` selects which pot this reward belongs to — 'checkin' or 'referral'.
+// They are separate keys with separate thresholds, so a referral can never
+// advance the check-in bar or vice versa.
+async function creditPot(upstashFn, userId, amount, label, kind) {
+  const spec = POTS[kind] || POTS.checkin;
+  const redisKey = `${spec.key}:${userId}`;
+  const cur = parseFloat(await upstashFn(['GET', redisKey])) || 0;
+  const { mint, pot } = potAdd(cur, amount, spec.threshold);
+  await upstashFn(['SET', redisKey, String(pot)]);
   if (!mint) return { pot, coupon: null };
   const coupon = await mintCoupon(upstashFn, userId, {
-    src: 'pot', srcId: 'pot', title: label || 'Rewards bundle', amount: mint,
+    src: 'pot', srcId: spec.key, title: label || spec.label, amount: mint,
   });
   return { pot, coupon };
 }
@@ -386,14 +407,14 @@ async function recordReferral(upstashFn, userId, startParam, newUserName) {
   // Referral rewards go through the same pot as check-ins: they collect until
   // POT_THRESHOLD, then become one activatable coupon.
   if (bonus > 0) {
-    await creditPot(upstashFn, referrer, bonus, 'Referral rewards');
+    await creditPot(upstashFn, referrer, bonus, 'Referral rewards', 'referral');
     await upstashFn(['LPUSH', `ledger:${referrer}`, JSON.stringify({ usd: bonus, coin: 'POT', note: 'Referral bonus', at: Date.now() })]);
     await upstashFn(['LTRIM', `ledger:${referrer}`, 0, 99]);
   }
 
   // Notify the referrer: in-bot push + in-app notification (delivered on next sync).
   const who = escHtml(newUserName || 'A new user');
-  const text = `🎉 <b>${who}</b> just joined KolonoEX using your invite link!\n\n💰 You earned <b>$${bonus}</b> — it is collecting in your Coupon Center and becomes an activatable coupon once your rewards reach $${POT_THRESHOLD}.`;
+  const text = `🎉 <b>${who}</b> just joined KolonoEX using your invite link!\n\n💰 You earned <b>$${bonus}</b> — it is collecting in your Coupon Center and becomes an activatable coupon once your referral rewards reach $${REF_POT_THRESHOLD}.`;
   await tgSend(referrer.slice(3), text);
   await upstashFn(['LPUSH', `cmd:${referrer}`, JSON.stringify({ type: 'message', kind: 'referral', title: 'New referral 🎉', text: `${newUserName || 'A friend'} joined with your link. You earned $${bonus} bonus!` })]);
   await upstashFn(['LTRIM', `cmd:${referrer}`, 0, 99]);
@@ -594,7 +615,7 @@ module.exports = async function handler(req, res) {
       if (credit > 0) {
         const note = 'Daily check-in day ' + day + ' (' + streak + '-day streak' +
           (milestone > 0 ? ', ' + streak + '-day badge' : '') + (usedFreeze ? ', freeze used' : '') + ')';
-        potOut = await creditPot(upstash, userId, credit, 'Check-in rewards');
+        potOut = await creditPot(upstash, userId, credit, 'Check-in rewards', 'checkin');
         await upstash(['LPUSH', `ledger:${userId}`, JSON.stringify({ usd: credit, coin: 'POT', note, at: Date.now() })]);
         await upstash(['LTRIM', `ledger:${userId}`, 0, 99]);
       }
@@ -642,6 +663,7 @@ module.exports = async function handler(req, res) {
     // localStorage, so wiping storage no longer re-opens claimed rewards.
     const couponsRaw = await upstash(['GET', `coupons:${userId}`]);
     const potVal = parseFloat(await upstash(['GET', `pot:${userId}`])) || 0;
+    const refPotVal = parseFloat(await upstash(['GET', `rpot:${userId}`])) || 0;
     const depTiers = (await upstash(['SMEMBERS', `dep:tiers:${userId}`])) || [];
     const [claimedRaw, checkinRaw, bonusRaw] = await Promise.all([
       upstash(['SMEMBERS', `task:claimed:${userId}`]),
@@ -700,6 +722,7 @@ module.exports = async function handler(req, res) {
       banners, invitedBy: invited,
       coupons: parseJSON(couponsRaw) || [], now: Date.now(),
       pot: potVal, potThreshold: POT_THRESHOLD,
+      refPot: refPotVal, refPotThreshold: REF_POT_THRESHOLD,
       depTiers, depositLadder: depositLadder(depositTotal, depTiers, (Array.isArray(taskClaimed) ? taskClaimed : []).indexOf('deposit') >= 0),
       today: dayKey(), yesterday: dayKey(Date.now() - 86400000) });
   } catch (err) {
@@ -716,4 +739,6 @@ module.exports.couponState = couponState;
 module.exports.bucketCoupons = bucketCoupons;
 module.exports.potAdd = potAdd;
 module.exports.POT_THRESHOLD = POT_THRESHOLD;
+module.exports.REF_POT_THRESHOLD = REF_POT_THRESHOLD;
+module.exports.POTS = POTS;
 module.exports.depositLadder = depositLadder;
