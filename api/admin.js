@@ -417,7 +417,7 @@ function cleanBanners(list) {
         // Wipe server-side balances/state so the client reconciles to zero.
         // Reward state is server-owned now, so it must be cleared here too or
         // the client would immediately re-adopt the old claims on next sync.
-        await upstash(['DEL', `bal:${id}`, `dep:total:${id}`, `ledger:${id}`, `seen:${id}`,
+        await upstash(['DEL', `bal:${id}`, `dep:total:${id}`, `dep:real:${id}`, `ledger:${id}`, `seen:${id}`,
           `task:claimed:${id}`, `checkin:${id}`, `bonus:${id}`, `vol:spot:${id}`, `vol:fut:${id}`,
           // reward state introduced with the Coupon Center
           `coupons:${id}`, `coupon:used:${id}`, `pot:${id}`, `rpot:${id}`, `dep:tiers:${id}`,

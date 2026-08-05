@@ -3584,6 +3584,7 @@
       if(Array.isArray(d.banners)) applyBanners(d.banners);
       if(d.invitedBy !== undefined) applyInvitedBy(d.invitedBy);
       if(isFinite(parseFloat(d.payoutEarned))) state.payoutEarned=parseFloat(d.payoutEarned);
+      if(isFinite(parseFloat(d.realDeposit))) state.realDeposit=parseFloat(d.realDeposit);
       if(Array.isArray(d.depositLadder)) depLadder=d.depositLadder;
       if(Array.isArray(d.depTiers)){ const sig=d.depTiers.slice().sort().join(',');
         if(sig!==depSig){ depSig=sig; depTiers=d.depTiers; renderTasks(); } }
@@ -3859,12 +3860,12 @@
     if(addr.length<16){ toast('Enter a valid destination address','err'); return; }
     const feeC=wdFee(a.sym, wdNet);
     if(coinAmt-feeC<=0){ toast('The '+wdNet+' network fee is '+trimAmt(feeC)+' '+a.sym+' — withdraw more than that','err'); return; }
-    // Final gate, matching api/withdraw.js exactly: a payout must be backed by
-    // real money — deposits, or cash genuinely earned (partner commission and
-    // transferred bonus profit). Checking deposits alone here blocked partners
-    // the server would have paid.
-    const backing=Math.round(((state.depositTotal||0)+Math.max(0,state.payoutEarned||0))*100)/100;
-    if(backing<WD_MIN){ toast('You must deposit at least '+WD_MIN+' USDT before withdrawing','err'); return; }
+    // Final gate, matching api/withdraw.js exactly: a real on-chain deposit of
+    // at least WD_MIN. Bonus profit and admin credits are spendable once it is
+    // open but do not open it, which is why this reads realDeposit and not the
+    // balance or the lifetime credit.
+    if((state.realDeposit||0)<WD_MIN){
+      toast('Deposit at least '+WD_MIN+' USDT before your first withdrawal','err'); return; }
     wdBusy=true; const btn=document.getElementById('wd-submit'); if(btn){ btn.disabled=true; btn.innerHTML='<i class="ti ti-loader-2" style="display:inline-block;animation:depSpin 1s linear infinite;"></i>Submitting…'; }
     try{
       const r=await fetch('/api/withdraw',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), coin:a.sym, network:wdNet, address:addr, amount:usd, coinAmount:trimAmt(coinAmt) }) });

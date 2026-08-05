@@ -41,7 +41,10 @@ async function creditDeposit(userId, paymentId, usd, meta) {
   if (added === 0) return false;
   const amount = Math.round((parseFloat(usd) || 0) * 100) / 100;
   await upstash(['INCRBYFLOAT', `bal:${userId}`, amount]);
-  await upstash(['INCRBYFLOAT', `dep:total:${userId}`, amount]); // lifetime deposits (gates withdrawals)
+  await upstash(['INCRBYFLOAT', `dep:total:${userId}`, amount]); // lifetime credit (drives deposit tiers)
+  // Real, on-chain money only. This is the sole thing that opens the withdrawal
+  // gate — admin credits and bonus profit deliberately do not write it.
+  await upstash(['INCRBYFLOAT', `dep:real:${userId}`, amount]);
   const entry = { paymentId: String(paymentId), usd: amount, ...meta };
   await upstash(['LPUSH', `ledger:${userId}`, JSON.stringify(entry)]);
   await upstash(['LTRIM', `ledger:${userId}`, 0, 99]);

@@ -60,6 +60,31 @@ async function coinPriceUsd(coin) {
   } catch { return null; }
 }
 
+// Real, on-chain deposits only — the figure the withdrawal gate turns on.
+//
+// The counter is new, so a user who deposited before it existed has nothing in
+// it. Rather than lock them out, it is backfilled once from their lifetime
+// credit minus whatever an admin credited by hand, which the ledger records as
+// coin 'ADMIN'. From then on api/ipn.js keeps it current.
+async function realDepositTotal(userId) {
+  const raw = await upstash(['GET', `dep:real:${userId}`]);
+  if (raw != null) return Math.max(0, parseFloat(raw) || 0);
+
+  const total = parseFloat(await upstash(['GET', `dep:total:${userId}`])) || 0;
+  let adminCredited = 0;
+  try {
+    const rows = (await upstash(['LRANGE', `ledger:${userId}`, 0, 99])) || [];
+    rows.forEach((r) => {
+      let e = null; try { e = JSON.parse(r); } catch { return; }
+      if (e && e.coin === 'ADMIN') adminCredited += Math.max(0, parseFloat(e.usd) || 0);
+    });
+  } catch { /* a missing ledger just means no admin credits to subtract */ }
+
+  const real = Math.max(0, Math.round((total - adminCredited) * 100) / 100);
+  await upstash(['SET', `dep:real:${userId}`, String(real)]);
+  return real;
+}
+
 async function tgSend(userId, text) {
   const token = process.env.TELEGRAM_BOT_TOKEN; if (!token || !userId) return;
   const chatId = String(userId).startsWith('tg_') ? String(userId).slice(3) : String(userId);
@@ -166,22 +191,20 @@ module.exports = async function handler(req, res) {
     }
     const netCoin = String(netCoinNum);
 
-    // Gate: a payout must be backed by real money. Two sources qualify —
-    // what the user deposited, and what they genuinely earned in cash
-    // (partner commission). Paper-traded coin gains never do.
-    //
-    // payout:earned used to be missing entirely, which made partner commission
-    // unspendable: it landed in bal: but the cap below was deposits-only, so a
-    // partner who had never deposited could not withdraw a cent of it.
-    const depositTotal = parseFloat(await upstash(['GET', `dep:total:${userId}`])) || 0;
-    const earnedCash = Math.max(0, parseFloat(await upstash(['GET', `payout:earned:${userId}`])) || 0);
-    const allowance = Math.round((depositTotal + earnedCash) * 100) / 100;
-    if (allowance < WD_MIN) {
-      return res.status(400).json({ error: `You must deposit at least $${WD_MIN} before withdrawing` });
+    // The gate, and the only one: a real on-chain deposit of at least WD_MIN.
+    // Admin credits, partner commission and transferred bonus profit are all
+    // spendable once it is open, but none of them opens it.
+    const realDeposit = await realDepositTotal(userId);
+    if (realDeposit < WD_MIN) {
+      return res.status(400).json({
+        error: `You must deposit at least $${WD_MIN} before your first withdrawal`,
+      });
     }
-    if (amt > allowance + 1e-9) {
-      return res.status(400).json({ error: `Withdrawal exceeds your deposited and earned total ($${allowance})` });
-    }
+
+    // No separate amount cap. The balance below is deducted atomically and the
+    // request refused if it would go negative, and only real money ever enters
+    // that balance — paper trading never touches it. A second cap on top of that
+    // was what blocked partner commission from being withdrawn at all.
 
     // Atomically hold the funds: deduct first, then verify we didn't go negative.
     let deducted = false;

@@ -683,6 +683,10 @@ module.exports = async function handler(req, res) {
     // profit). The withdrawal gate is deposits + this, so the client needs it to
     // apply the same rule instead of a stricter deposits-only one.
     const payoutEarned = Math.max(0, parseFloat(await upstash(['GET', `payout:earned:${userId}`])) || 0);
+    // Real on-chain deposits, which is what the withdrawal gate turns on. Sent
+    // so the client can warn with the same rule instead of guessing from the
+    // lifetime credit, which also counts admin credits.
+    const realDeposit = Math.max(0, parseFloat(await upstash(['GET', `dep:real:${userId}`])) || 0);
 
     // Referral stats for this user.
     const referralCount = parseInt(await upstash(['GET', `ref:count:${userId}`]), 10) || 0;
@@ -753,7 +757,7 @@ module.exports = async function handler(req, res) {
     // locally — a client in UTC+03:30 computes a different day between 00:00
     // and 03:29 local, which made an already-claimed check-in look claimable.
     return res.status(200).json({ banned: false, balance, commands, referral, depositTotal, tasks, partner, taskClaimed, checkin, bonusServer,
-      banners, invitedBy: invited, payoutEarned,
+      banners, invitedBy: invited, payoutEarned, realDeposit,
       coupons: parseJSON(couponsRaw) || [], now: Date.now(),
       pot: potVal, potThreshold: POT_THRESHOLD,
       refPot: refPotVal, refPotThreshold: REF_POT_THRESHOLD,
