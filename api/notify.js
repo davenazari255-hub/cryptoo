@@ -176,16 +176,22 @@ async function runCheckinReminder(res, slotRaw, schedule) {
     if (start >= mine.length) start = 0;
     const slice = mine.slice(start, start + REMIND_PER_RUN);
 
-    for (const chatId of slice) {
-      try {
-        const uid = appId(chatId);
-        const [optOut, raw] = await Promise.all([
-          upstash(['SISMEMBER', 'noremind', chatId]),
-          upstash(['GET', `checkin:${uid}`]),
-        ]);
-        if (optOut === 1) { optedOut++; continue; }
+    // These two used to be a SISMEMBER and a GET *per user*, so a run over 220
+    // users cost 440 commands before a single message was sent — three times a
+    // day, against a metered quota. Both are now one command for the whole
+    // slice: the opt-out list as a single set read, and every check-in record
+    // in a single MGET.
+    const optOutSet = new Set(((await upstash(['SMEMBERS', 'noremind'])) || []).map(String));
+    const checkinRaw = slice.length
+      ? ((await upstash(['MGET', ...slice.map((c) => `checkin:${appId(c)}`)])) || [])
+      : [];
 
-        const st = parseJSON(raw) || { last: '', streak: 0 };
+    for (let i = 0; i < slice.length; i++) {
+      const chatId = slice[i];
+      try {
+        if (optOutSet.has(String(chatId))) { optedOut++; continue; }
+
+        const st = parseJSON(checkinRaw[i]) || { last: '', streak: 0 };
         if (st.last === today) { alreadyIn++; continue; }   // already checked in today
 
         // Atomic claim before sending: SADD returns 0 if some other invocation

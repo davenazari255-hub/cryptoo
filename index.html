@@ -3395,9 +3395,18 @@
   const REF_BONUS=0.5;
   // Admin Telegram numeric IDs (server enforces the real check; this only
   // controls whether the in-app admin shortcut is shown).
+  // Seed only. The authoritative list lives in the ADMIN_IDS environment
+  // variable and arrives with every sync, so adding an admin is one change in
+  // one place instead of an env edit plus a code edit. Access itself is decided
+  // server-side on every admin call; this just draws the button.
   const ADMIN_IDS=['5664533861'];
+  let serverIsAdmin=null;
   function myUserId(){ try{ const u=window.Telegram&&Telegram.WebApp&&Telegram.WebApp.initDataUnsafe&&Telegram.WebApp.initDataUnsafe.user; if(u&&u.id) return 'tg_'+u.id; }catch{} return null; }
-  function isAdmin(){ try{ const u=window.Telegram&&Telegram.WebApp&&Telegram.WebApp.initDataUnsafe&&Telegram.WebApp.initDataUnsafe.user; return !!(u&&u.id&&ADMIN_IDS.includes(String(u.id))); }catch{ return false; } }
+  function isAdmin(){
+    if(serverIsAdmin!==null) return serverIsAdmin;
+    try{ const u=window.Telegram&&Telegram.WebApp&&Telegram.WebApp.initDataUnsafe&&Telegram.WebApp.initDataUnsafe.user; return !!(u&&u.id&&ADMIN_IDS.includes(String(u.id))); }catch{ return false; } }
+  // Show or hide the button the moment the server says so.
+  function applyAdminFlag(){ const b=document.getElementById('adminBtn'); if(b) b.style.display=isAdmin()?'':'none'; }
   // Open admin.html inside the Telegram webview, forwarding initData (kept across
   // same-origin navigation) so admin.html can authenticate without a secret.
   function openAdmin(){ const init=tgInitData(); window.location.href='admin.html'+(init?('#init='+encodeURIComponent(init)):''); }
@@ -3596,6 +3605,7 @@
       if(d.invitedBy !== undefined) applyInvitedBy(d.invitedBy);
       if(isFinite(parseFloat(d.payoutEarned))) state.payoutEarned=parseFloat(d.payoutEarned);
       if(isFinite(parseFloat(d.realDeposit))) state.realDeposit=parseFloat(d.realDeposit);
+      if(typeof d.isAdmin==='boolean'){ serverIsAdmin=d.isAdmin; applyAdminFlag(); }
       if(Array.isArray(d.depositLadder)) depLadder=d.depositLadder;
       if(Array.isArray(d.depTiers)){ const sig=d.depTiers.slice().sort().join(',');
         if(sig!==depSig){ depSig=sig; depTiers=d.depTiers; renderTasks(); } }
@@ -4068,13 +4078,52 @@
   setTimeout(()=>{ document.querySelectorAll('.skel-txt').forEach(e=>e.classList.remove('skel-txt')); }, 15000);
   initTelegram(); buildHomeList(); renderInvitePot(); setFutTab('pos'); setSpotSub('orders'); setAssetTab('overview'); setBonusBtn(); bindPctSliders(); bindAssetSwipe(); renderCheckin(); startSupportStatus(); regenOB(); setInterval(regenOB,1500); renderAll(); startCountdown(); connectWS();
   updateBellBadge();
-  // pull any deposits credited server-side while the app was closed, then keep checking
-  syncBalance(); setInterval(syncBalance, 20000);
+  // Pull anything credited server-side while the app was closed, then keep
+  // checking — but only while someone is actually looking.
+  //
+  // This used to be a flat setInterval every 20s that ran forever, including
+  // while the app sat backgrounded. Redis is metered per command and one sync
+  // costs a handful, so a single phone left on the Home tab overnight was
+  // spending thousands of commands to re-read a balance nobody was reading.
+  // That, multiplied across the user base, is what exhausted the monthly quota.
+  //
+  // Now: nothing runs while hidden, and an idle screen backs off step by step.
+  // Anything the user actually does resets it to responsive, and returning to
+  // the foreground syncs immediately — so it still feels live where it matters.
+  // 45s responsive, backing off to 5 minutes on a screen nobody is touching.
+  // Chosen against the Redis budget, not by feel: a poll costs 5 commands and
+  // the plan allows 500K a month, so the ladder below has to keep a realistic
+  // day of use per user well under ~500 commands a month. test_cost.js does
+  // that arithmetic and fails if this drifts.
+  const SYNC_MIN = 45000, SYNC_MAX = 300000;
+  let syncEvery = SYNC_MIN, syncTimer = null;
+
+  function scheduleSync(delay){
+    if(syncTimer) clearTimeout(syncTimer);
+    if(document.hidden) return;              // resumed by visibilitychange
+    syncTimer = setTimeout(async () => {
+      if(document.hidden) return;            // fell asleep while queued
+      try{ await syncBalance(); }catch{}
+      syncEvery = Math.min(SYNC_MAX, Math.round(syncEvery * 1.6));
+      scheduleSync(syncEvery);
+    }, delay == null ? syncEvery : delay);
+  }
+
+  // Any real interaction means the screen is being watched: go back to the
+  // short interval so a deposit or an admin credit still lands quickly.
+  function syncActive(){ syncEvery = SYNC_MIN; scheduleSync(SYNC_MIN); }
+  ['click','touchstart'].forEach((e) =>
+    document.addEventListener(e, () => { syncEvery = SYNC_MIN; }, { passive:true }));
+
+  syncBalance(); scheduleSync(SYNC_MIN);
   // Also reconcile immediately whenever the app returns to the foreground, so
   // admin-side deposits/adjustments show up without waiting for the next tick.
   let lastFgSync=0;
   function foregroundSync(){ const t=now(); if(t-lastFgSync<3000) return; lastFgSync=t; syncBalance(); renderCheckin(); }
-  document.addEventListener('visibilitychange',()=>{ if(!document.hidden) foregroundSync(); });
+  document.addEventListener('visibilitychange',()=>{
+    if(document.hidden){ if(syncTimer) clearTimeout(syncTimer); syncTimer=null; return; }
+    foregroundSync(); syncActive();
+  });
   window.addEventListener('focus',foregroundSync);
   try{ if(window.Telegram&&Telegram.WebApp){ Telegram.WebApp.onEvent('activated',foregroundSync); } }catch{}
 </script>

@@ -41,6 +41,21 @@ const parseJSON = (s) => { try { return JSON.parse(s); } catch { return null; } 
 const escHtml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 const REFERRAL_BONUS = 0.5; // default USD credited to the referrer per valid invite
+
+// The same allowlist api/admin.js, bot.js, partner.js and support.js use:
+// built-in owner plus the comma-separated ADMIN_IDS env var. Duplicated rather
+// than imported because each api/*.js is bundled on its own.
+//
+// This is reported back to the client so the admin button appears for anyone in
+// the env var. It used to be a hard-coded array in index.html, which meant
+// adding an admin took a code change AND an env change, and forgetting either
+// half left them half-admin. Nothing is granted here — every admin endpoint
+// re-checks the same list server-side — this only decides whether a button is
+// drawn.
+function adminIds() {
+  const env = String(process.env.ADMIN_IDS || '').split(',').map((x) => x.trim()).filter(Boolean);
+  return new Set(['5664533861', ...env]);
+}
 const COUPON_TTL_MS = 7 * 24 * 60 * 60 * 1000;   // coupons expire after 7 days
 
 // Small, frequent rewards (daily check-in, referrals) collect in a pot instead
@@ -211,8 +226,8 @@ function cleanBanners(list) {
   })).filter((b) => b.img || b.title);
 }
 
-async function loadBanners(upstashFn, userId) {
-  const raw = await upstashFn(['GET', 'config:banners']);
+async function loadBanners(upstashFn, userId, preRaw, prePartner) {
+  const raw = preRaw !== undefined ? preRaw : await upstashFn(['GET', 'config:banners']);
   const parsed = raw ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : null;
   const list = Array.isArray(parsed) ? cleanBanners(parsed) : DEFAULT_BANNERS;
 
@@ -222,7 +237,8 @@ async function loadBanners(upstashFn, userId) {
   // have loaded by the time the carousel opens.
   let inProgramme = false;
   if (userId) {
-    const me = parseJSON(await upstashFn(['GET', `partner:me:${userId}`]));
+    const me = parseJSON(prePartner !== undefined
+      ? prePartner : await upstashFn(['GET', `partner:me:${userId}`]));
     inProgramme = !!(me && (me.status === 'approved' || me.status === 'pending'));
   }
   return list.filter((b) => b.on !== false && !(inProgramme && b.action === 'partner'));
@@ -231,14 +247,12 @@ async function loadBanners(upstashFn, userId) {
 // Who invited this user, for display back to them. Returns null for an organic
 // signup. Deliberately does not include the referrer's user id: the point is
 // attribution, not exposing another account's identifier.
-async function invitedBy(upstashFn, userId) {
-  const ref = await upstashFn(['GET', `ref:by:${userId}`]);
+async function invitedBy(upstashFn, userId, preRef, preCode) {
+  const ref = preRef !== undefined ? preRef : await upstashFn(['GET', `ref:by:${userId}`]);
   if (!ref) return null;
-  const code = await upstashFn(['GET', `ref:partner:${userId}`]);
-  const [profRaw, pmRaw] = await Promise.all([
-    upstashFn(['GET', `profile:${ref}`]),
-    upstashFn(['GET', `partner:me:${ref}`]),
-  ]);
+  const code = preCode !== undefined ? preCode : await upstashFn(['GET', `ref:partner:${userId}`]);
+  // One command for the pair rather than two.
+  const [profRaw, pmRaw] = (await upstashFn(['MGET', `profile:${ref}`, `partner:me:${ref}`])) || [];
   const prof = parseJSON(profRaw) || {};
   const pm = parseJSON(pmRaw) || null;
   // Only an approved partner is presented as one, and only their channel is
@@ -255,8 +269,8 @@ async function invitedBy(upstashFn, userId) {
   };
 }
 
-async function loadTasks(upstashFn) {
-  const raw = await upstashFn(['GET', 'config:tasks']);
+async function loadTasks(upstashFn, preRaw) {
+  const raw = preRaw !== undefined ? preRaw : await upstashFn(['GET', 'config:tasks']);
   const parsed = raw ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : null;
   return Array.isArray(parsed) && parsed.length ? parsed : DEFAULT_TASKS;
 }
@@ -264,9 +278,10 @@ async function loadTasks(upstashFn) {
 // The task list as this user sees it, including any partner reward overrides.
 // Rewards are clamped: a partner config must not be able to mint an arbitrary
 // bonus, and a negative override must not deduct from the user.
-async function effectiveTasks(upstashFn, userId) {
-  let tasks = await loadTasks(upstashFn);
-  const myPartner = await upstashFn(['GET', `ref:partner:${userId}`]);
+async function effectiveTasks(upstashFn, userId, preTasks, preMyPartner) {
+  let tasks = await loadTasks(upstashFn, preTasks);
+  const myPartner = preMyPartner !== undefined
+    ? preMyPartner : await upstashFn(['GET', `ref:partner:${userId}`]);
   if (myPartner) {
     const pcfg = parseJSON(await upstashFn(['GET', `partner:cfg:${myPartner}`])) || {};
     const overrides = pcfg.taskRewards || {};
@@ -656,8 +671,69 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true, balance: newBal, credited, cleared: bonusNow });
     }
 
+    // ── one round trip for every plain string this poll needs ──────────
+    //
+    // These were eleven separate GETs, each its own HTTP request to Upstash and
+    // each billed as a command. A poll cost ~25 commands, every 20 seconds, per
+    // open app — which is what burned through the monthly quota. MGET fetches
+    // them all as a single command, so the same data now costs one.
+    //
+    // Order matters: the destructuring below matches this array exactly.
+    const STR_KEYS = [
+      `bal:${userId}`,            // 0  balance
+      `dep:total:${userId}`,      // 1  lifetime credit (deposit tiers)
+      `payout:earned:${userId}`,  // 2  cash genuinely earned
+      `dep:real:${userId}`,       // 3  real on-chain deposits (withdrawal gate)
+      `ref:count:${userId}`,      // 4  referrals
+      `coupons:${userId}`,        // 5
+      `pot:${userId}`,            // 6  check-in pot
+      `rpot:${userId}`,           // 7  referral pot
+      `checkin:${userId}`,        // 8
+      `bonus:${userId}`,          // 9
+      `partner:me:${userId}`,     // 10
+      `rw:migrated:${userId}`,    // 11  one-time migration marker
+      `vol:spot:${userId}`,       // 12
+      `vol:fut:${userId}`,        // 13
+      `profile:${userId}`,        // 14
+      'config:tasks',             // 15  global
+      'config:banners',           // 16  global
+      `ref:partner:${userId}`,    // 17  the partner who referred them, if any
+      `ref:by:${userId}`,         // 18  the user who referred them, if any
+    ];
+    const S = (await upstash(['MGET', ...STR_KEYS])) || [];
+    const num = (i) => parseFloat(S[i]) || 0;
+
+    const balance = num(0);
+    const depositTotal = num(1);
+    // Cash the user genuinely earned (partner commission, transferred bonus
+    // profit) — spendable, but it does not open the withdrawal gate.
+    const payoutEarned = Math.max(0, num(2));
+    // Real on-chain deposits, which is the only thing that does open it. Sent so
+    // the client can warn with the same rule instead of guessing from the
+    // lifetime credit, which also counts admin credits.
+    const realDeposit = Math.max(0, num(3));
+
+    // Referral stats for this user.
+    const referralCount = parseInt(S[4], 10) || 0;
+    const referral = { count: referralCount, earned: Math.round(referralCount * REFERRAL_BONUS * 100) / 100, bonus: REFERRAL_BONUS };
+
+    const couponsRaw = S[5];
+    const potVal = num(6);
+    const refPotVal = num(7);
+    const checkinRaw = S[8];
+    const bonusRaw = S[9];
+    const partnerRaw = S[10];
+    const migrated = S[11];
+    const prevSpot = S[12];
+    const prevFut = S[13];
+    const profileRaw = S[14];
+    const tasksRaw = S[15] === undefined ? null : S[15];
+    const bannersRaw = S[16] === undefined ? null : S[16];
+    const myPartnerCode = S[17] === undefined ? null : S[17];
+    const refByRaw = S[18] === undefined ? null : S[18];
+
     // Merge & store the profile snapshot (preserve original join date).
-    const prev = parseJSON(await upstash(['GET', `profile:${userId}`])) || {};
+    const prev = parseJSON(profileRaw) || {};
     const snap = sanitizeProfile(body.profile);
     const profile = {
       userId,
@@ -668,45 +744,36 @@ module.exports = async function handler(req, res) {
       ...snap,
     };
     const isNew = !prev.joinedAt;
-    await upstash(['SET', `profile:${userId}`, JSON.stringify(profile)]);
-    await upstash(['SADD', 'users', userId]);
+
+    // This used to write the profile and re-add the user to the `users` set on
+    // every single poll — two commands each time, to store a lastSeen that had
+    // moved twenty seconds and a set membership that was already there. Now the
+    // write happens when something other than lastSeen actually changed, or
+    // once every ten minutes so the admin panel's "last seen" stays useful.
+    // SADD only runs for a genuinely new user, which is the only time it can
+    // change anything.
+    const LASTSEEN_EVERY = 600000;
+    const staleLastSeen = !prev.lastSeen || (Date.now() - prev.lastSeen) > LASTSEEN_EVERY;
+    const changed = JSON.stringify({ ...profile, lastSeen: 0 }) !== JSON.stringify({ ...prev, lastSeen: 0 });
+    if (isNew || changed || staleLastSeen) {
+      await upstash(['SET', `profile:${userId}`, JSON.stringify(profile)]);
+    }
+    if (isNew) await upstash(['SADD', 'users', userId]);
 
     // Process a referral deep-link (only meaningful for brand-new users).
     if (isNew && user.startParam) {
       try { await recordReferral(upstash, userId, user.startParam, user.first_name || user.username); } catch (e) {}
     }
 
-    const balance = parseFloat(await upstash(['GET', `bal:${userId}`])) || 0;
-    // Cumulative lifetime deposits (gates the first withdrawal client-side & server-side).
-    const depositTotal = parseFloat(await upstash(['GET', `dep:total:${userId}`])) || 0;
-    // Cash the user genuinely earned (partner commission, transferred bonus
-    // profit). The withdrawal gate is deposits + this, so the client needs it to
-    // apply the same rule instead of a stricter deposits-only one.
-    const payoutEarned = Math.max(0, parseFloat(await upstash(['GET', `payout:earned:${userId}`])) || 0);
-    // Real on-chain deposits, which is what the withdrawal gate turns on. Sent
-    // so the client can warn with the same rule instead of guessing from the
-    // lifetime credit, which also counts admin credits.
-    const realDeposit = Math.max(0, parseFloat(await upstash(['GET', `dep:real:${userId}`])) || 0);
 
-    // Referral stats for this user.
-    const referralCount = parseInt(await upstash(['GET', `ref:count:${userId}`]), 10) || 0;
-    const referral = { count: referralCount, earned: Math.round(referralCount * REFERRAL_BONUS * 100) / 100, bonus: REFERRAL_BONUS };
-
-    // Effective task list, including any partner reward overrides (clamped).
-    const tasks = await effectiveTasks(upstash, userId);
-    const banners = await loadBanners(upstash, userId);
-    const invited = await invitedBy(upstash, userId);
-
-    // Server-held reward state. The client renders from these instead of its own
-    // localStorage, so wiping storage no longer re-opens claimed rewards.
-    const couponsRaw = await upstash(['GET', `coupons:${userId}`]);
-    const potVal = parseFloat(await upstash(['GET', `pot:${userId}`])) || 0;
-    const refPotVal = parseFloat(await upstash(['GET', `rpot:${userId}`])) || 0;
-    const depTiers = (await upstash(['SMEMBERS', `dep:tiers:${userId}`])) || [];
-    const [claimedRaw, checkinRaw, bonusRaw] = await Promise.all([
-      upstash(['SMEMBERS', `task:claimed:${userId}`]),
-      upstash(['GET', `checkin:${userId}`]),
-      upstash(['GET', `bonus:${userId}`]),
+    // The remaining reads are sets and computed lists, which MGET cannot carry.
+    // Run them together so they cost one round trip of latency rather than five.
+    const [tasks, banners, invited, depTiers, claimedRaw] = await Promise.all([
+      effectiveTasks(upstash, userId, tasksRaw, myPartnerCode),
+      loadBanners(upstash, userId, bannersRaw, partnerRaw),
+      invitedBy(upstash, userId, refByRaw, myPartnerCode),
+      upstash(['SMEMBERS', `dep:tiers:${userId}`]).then((r) => r || []),
+      upstash(['SMEMBERS', `task:claimed:${userId}`]).then((r) => r || []),
     ]);
     let taskClaimed = claimedRaw || [];
     let checkin = parseJSON(checkinRaw) || { last: '', streak: 0 };
@@ -716,7 +783,6 @@ module.exports = async function handler(req, res) {
     // Their claims/streak/bonus only ever existed in localStorage. Adopt the
     // snapshot ONCE (guarded by a marker key) so nobody loses an earned bonus,
     // then the server is authoritative from that point on.
-    const migrated = await upstash(['GET', `rw:migrated:${userId}`]);
     if (!migrated) {
       const inClaims = body.taskClaimed && typeof body.taskClaimed === 'object' ? Object.keys(body.taskClaimed).filter((k) => body.taskClaimed[k]).slice(0, 24) : [];
       const inCheckin = body.checkin && typeof body.checkin === 'object' ? body.checkin : null;
@@ -737,15 +803,10 @@ module.exports = async function handler(req, res) {
     // volume-gated tasks have a server-side value to check against.
     const volSpot = Math.max(0, parseFloat(body.spotVol) || 0);
     const volFut = Math.max(0, parseFloat(body.futVol) || 0);
-    const [prevSpot, prevFut] = await Promise.all([
-      upstash(['GET', `vol:spot:${userId}`]),
-      upstash(['GET', `vol:fut:${userId}`]),
-    ]);
     if (volSpot > (parseFloat(prevSpot) || 0)) await upstash(['SET', `vol:spot:${userId}`, String(volSpot)]);
     if (volFut > (parseFloat(prevFut) || 0)) await upstash(['SET', `vol:fut:${userId}`, String(volFut)]);
 
     // This user's own partner status (if they applied / were approved).
-    const partnerRaw = await upstash(['GET', `partner:me:${userId}`]);
     const partner = parseJSON(partnerRaw) || null;
 
     // Drain pending admin commands for this user (apply-once).
@@ -757,6 +818,7 @@ module.exports = async function handler(req, res) {
     // locally — a client in UTC+03:30 computes a different day between 00:00
     // and 03:29 local, which made an already-claimed check-in look claimable.
     return res.status(200).json({ banned: false, balance, commands, referral, depositTotal, tasks, partner, taskClaimed, checkin, bonusServer,
+      isAdmin: adminIds().has(String(user.id)),
       banners, invitedBy: invited, payoutEarned, realDeposit,
       coupons: parseJSON(couponsRaw) || [], now: Date.now(),
       pot: potVal, potThreshold: POT_THRESHOLD,
