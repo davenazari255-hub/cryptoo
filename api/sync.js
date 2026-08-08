@@ -52,6 +52,18 @@ const REFERRAL_BONUS = 0.5; // default USD credited to the referrer per valid in
 // half left them half-admin. Nothing is granted here — every admin endpoint
 // re-checks the same list server-side — this only decides whether a button is
 // drawn.
+const SUP_ONLINE_TTL = 75000;        // matches api/support.js
+let supOnlineCache = { at: 0, value: false };
+async function anySupportAdminOnline(upstashFn) {
+  const now = Date.now();
+  if (now - supOnlineCache.at < 15000) return supOnlineCache.value;
+  try {
+    const rows = (await upstashFn(['ZRANGEBYSCORE', 'support:online', now - SUP_ONLINE_TTL, '+inf', 'LIMIT', 0, 1])) || [];
+    supOnlineCache = { at: now, value: rows.length > 0 };
+    return supOnlineCache.value;
+  } catch { return false; }
+}
+
 function adminIds() {
   const env = String(process.env.ADMIN_IDS || '').split(',').map((x) => x.trim()).filter(Boolean);
   return new Set(['5664533861', ...env]);
@@ -699,6 +711,7 @@ module.exports = async function handler(req, res) {
       'config:banners',           // 16  global
       `ref:partner:${userId}`,    // 17  the partner who referred them, if any
       `ref:by:${userId}`,         // 18  the user who referred them, if any
+      `support:meta:${userId}`,   // 19  unread support replies, for the badge
     ];
     const S = (await upstash(['MGET', ...STR_KEYS])) || [];
     const num = (i) => parseFloat(S[i]) || 0;
@@ -731,6 +744,7 @@ module.exports = async function handler(req, res) {
     const bannersRaw = S[16] === undefined ? null : S[16];
     const myPartnerCode = S[17] === undefined ? null : S[17];
     const refByRaw = S[18] === undefined ? null : S[18];
+    const supportMeta = parseJSON(S[19]) || {};
 
     // Merge & store the profile snapshot (preserve original join date).
     const prev = parseJSON(profileRaw) || {};
@@ -819,6 +833,13 @@ module.exports = async function handler(req, res) {
     // and 03:29 local, which made an already-claimed check-in look claimable.
     return res.status(200).json({ banned: false, balance, commands, referral, depositTotal, tasks, partner, taskClaimed, checkin, bonusServer,
       isAdmin: adminIds().has(String(user.id)),
+      // The headphones badge. This used to be its own /api/support poll every
+      // 30s from every open app — three commands each, forever, for users who
+      // had never opened support. It rides along here for nothing: the meta
+      // blob is already in the MGET above, and the online flag is one memoised
+      // global read shared by every request the instance serves.
+      supportOnline: await anySupportAdminOnline(upstash),
+      supportUnread: parseInt(supportMeta.unreadUser, 10) || 0,
       banners, invitedBy: invited, payoutEarned, realDeposit,
       coupons: parseJSON(couponsRaw) || [], now: Date.now(),
       pot: potVal, potThreshold: POT_THRESHOLD,

@@ -57,12 +57,26 @@ const HISTORY_CAP = 120;       // messages kept per conversation
 const MSG_MAX = 1000;          // max chars per message
 
 // Is any admin currently online? Prunes stale entries first.
+// "Is any admin online" is a single global fact, not a per-user one, yet it was
+// recomputed — two commands — on every request from every user. On a warm
+// instance the answer cannot meaningfully change from one second to the next,
+// so it is memoised briefly. This is per-instance and deliberately short: the
+// worst case is a badge that is a few seconds stale.
+let onlineCache = { at: 0, value: false };
+const ONLINE_CACHE_MS = 15000;
+
 async function anyAdminOnline() {
   const now = Date.now();
+  if (now - onlineCache.at < ONLINE_CACHE_MS) return onlineCache.value;
   try {
-    await upstash(['ZREMRANGEBYSCORE', 'support:online', 0, now - ONLINE_TTL]);
-    const n = await upstash(['ZCARD', 'support:online']);
-    return (parseInt(n, 10) || 0) > 0;
+    // The stale-entry sweep used to run on every read. It is housekeeping, not
+    // a read, and ZCARD over a handful of admins with expired scores is
+    // harmless — so it moved to the write path, where an admin actually
+    // announces themselves.
+    const rows = (await upstash(['ZRANGEBYSCORE', 'support:online', now - ONLINE_TTL, '+inf', 'LIMIT', 0, 1])) || [];
+    const value = rows.length > 0;
+    onlineCache = { at: now, value };
+    return value;
   } catch { return false; }
 }
 
@@ -94,12 +108,17 @@ module.exports = async function handler(req, res) {
       if (!isAdmin) return res.status(401).json({ error: 'Unauthorized' });
       const who = tgUser ? String(tgUser.id) : 'secret';
       await upstash(['ZADD', 'support:online', Date.now(), who]);
+      // Sweep here instead of on every user's read: this fires a few times a
+      // minute from one admin, not once per user per poll.
+      await upstash(['ZREMRANGEBYSCORE', 'support:online', 0, Date.now() - ONLINE_TTL]);
+      onlineCache = { at: 0, value: false };   // let the next read see it at once
       return res.status(200).json({ ok: true });
     }
     if (action === 'offline') {
       if (!isAdmin) return res.status(401).json({ error: 'Unauthorized' });
       const who = tgUser ? String(tgUser.id) : 'secret';
       await upstash(['ZREM', 'support:online', who]);
+      onlineCache = { at: 0, value: false };
       return res.status(200).json({ ok: true });
     }
     if (action === 'conversations') {

@@ -2791,7 +2791,7 @@
     }catch(e){}
     if(btn) setTimeout(()=>btn.classList.remove('spin'),500);
     // Live refresh while the records sheet is open.
-    if(!recPoll){ recPoll=setInterval(()=>{ if(!document.getElementById('rec-body')){ clearInterval(recPoll); recPoll=null; return; } loadRecords(); }, 12000); } }
+    if(!recPoll){ recPoll=setInterval(()=>{ if(!document.getElementById('rec-body')){ clearInterval(recPoll); recPoll=null; return; } if(document.hidden) return; loadRecords(); }, 12000); } }
 
   // ── SHEETS ──
   // ── Entry poster carousel ─────────────────────────────────
@@ -3217,15 +3217,20 @@
   function clearNotifications(){ state.notifications=[]; save(); updateBellBadge(); openNotifications(); }
 
   // ── Support chat / tickets ──
-  let supMsgs=[], supOnline=false, supPoll=null, supStatusPoll=null, supOpen=false, supLastId=null;
+  let supMsgs=[], supOnline=false, supPoll=null, supOpen=false, supLastId=null;
   async function supApi(payload){ if(!hasTgAuth()) return null;
     try{ const r=await fetch('/api/support',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), ...payload }) });
       const d=await r.json(); if(!r.ok) return null; return d; }catch(e){ return null; } }
   function supBadge(n){ const b=document.getElementById('supportBadge'); if(!b) return; if(n>0){ b.textContent=n>99?'99+':n; b.style.display='flex'; } else b.style.display='none'; }
   // Lightweight background poll for the headphones badge (online + unread).
-  async function pollSupportStatus(){ const d=await supApi({action:'status'}); if(!d) return; supOnline=!!d.online; supBadge(d.unread||0);
+  // The headphones badge used to have its own /api/support poll every 30s from
+  // every open app — three Redis commands each, forever, including for the vast
+  // majority of users who never open support. It now rides along with the sync
+  // response, which was already being fetched, for no extra cost at all.
+  function applySupportStatus(online, unread){
+    supOnline=!!online; supBadge(unread||0);
     const sb=document.getElementById('supportBtn'); if(sb) sb.style.color=supOnline?'#4eeaa0':''; }
-  function startSupportStatus(){ if(supStatusPoll) return; pollSupportStatus(); supStatusPoll=setInterval(pollSupportStatus, 30000); }
+  function startSupportStatus(){ /* folded into syncBalance */ }
 
   function supTime(at){ const d=new Date(at); const p=x=>String(x).padStart(2,'0'); return p(d.getHours())+':'+p(d.getMinutes()); }
   function supDay(at){ const d=new Date(at), n=new Date(); const same=d.toDateString()===n.toDateString();
@@ -3251,8 +3256,8 @@
     const d=await supApi({action:'history'}); if(d){ supMsgs=d.messages||[]; supOnline=!!d.online; supLastId=supMsgs.length?supMsgs[supMsgs.length-1].id:null; }
     renderSupport(); supBadge(0);
     if(supPoll) clearInterval(supPoll); supPoll=setInterval(pollSupportThread, 5000); }
-  function closeSupport(){ supOpen=false; document.getElementById('supportOverlay').classList.remove('open'); if(supPoll){ clearInterval(supPoll); supPoll=null; } pollSupportStatus(); }
-  async function pollSupportThread(){ if(!supOpen) return; const d=await supApi({action:'history'}); if(!d) return;
+  function closeSupport(){ supOpen=false; document.getElementById('supportOverlay').classList.remove('open'); if(supPoll){ clearInterval(supPoll); supPoll=null; } supBadge(0); }
+  async function pollSupportThread(){ if(!supOpen || document.hidden) return; const d=await supApi({action:'history'}); if(!d) return;
     const newMsgs=d.messages||[]; const newLast=newMsgs.length?newMsgs[newMsgs.length-1].id:null; const changed=(newLast!==supLastId)||(newMsgs.length!==supMsgs.length)||(!!d.online!==supOnline);
     supMsgs=newMsgs; supOnline=!!d.online; supLastId=newLast; if(changed) renderSupport(); }
 
@@ -3606,6 +3611,9 @@
       if(isFinite(parseFloat(d.payoutEarned))) state.payoutEarned=parseFloat(d.payoutEarned);
       if(isFinite(parseFloat(d.realDeposit))) state.realDeposit=parseFloat(d.realDeposit);
       if(typeof d.isAdmin==='boolean'){ serverIsAdmin=d.isAdmin; applyAdminFlag(); }
+      // Only while the support panel is closed — with it open, pollSupportThread
+      // owns the badge and would fight this for it.
+      if(!supOpen && typeof d.supportOnline==='boolean') applySupportStatus(d.supportOnline, d.supportUnread);
       if(Array.isArray(d.depositLadder)) depLadder=d.depositLadder;
       if(Array.isArray(d.depTiers)){ const sig=d.depTiers.slice().sort().join(',');
         if(sig!==depSig){ depSig=sig; depTiers=d.depTiers; renderTasks(); } }
@@ -3742,7 +3750,7 @@
       if(state.balances&&state.balances.USDT!==before){
         t.textContent='\u2713 Credited to your balance';
         const box=document.getElementById('dep-status'); if(box) box.className='dep-status done'; } };
-    depPoll=setInterval(()=>{ if(!document.getElementById('dep-status')){ clearInterval(depPoll); depPoll=null; return; } tick(); }, 15000); }
+    depPoll=setInterval(()=>{ if(!document.getElementById('dep-status')){ clearInterval(depPoll); depPoll=null; return; } if(document.hidden) return; tick(); }, 15000); }
   function startDepositPoll(paymentId, minUsd){ if(depPoll){ clearInterval(depPoll); depPoll=null; }
     const MAP={ waiting:'Waiting for payment…', confirming:'Confirming on-chain…', confirmed:'Confirmed, processing…', sending:'Crediting…', partially_paid:'Amount below $'+minUsd+' — not credited', finished:'Payment received — crediting…', failed:'Payment failed', refunded:'Refunded', expired:'Payment expired' };
     const setStat=(txt,cls)=>{ const box=document.getElementById('dep-status'), t=document.getElementById('dep-status-txt'); if(t) t.textContent=txt; if(box){ box.className='dep-status'+(cls?' '+cls:''); } };
@@ -3920,7 +3928,7 @@
     +'<span class="rec-refresh" id="wdd-refresh" onclick="refreshWithdrawStatus(\''+w.id+'\',true)"><i class="ti ti-refresh"></i>Refresh</span></div>'
     +'<div class="dep-tip" style="margin-top:12px;" id="wdd-tip"><i class="ti ti-info-circle"></i><span>Your request is queued for review. Funds are sent manually after approval.</span></div>'
     +'<button class="dep-copy ghost" style="margin-top:12px;" onclick="openWithdraw()">Back</button>');
-    wdPoll=setInterval(()=>{ if(!document.getElementById('wdd-badge')){ clearInterval(wdPoll); wdPoll=null; return; } refreshWithdrawStatus(w.id); }, 10000); }
+    wdPoll=setInterval(()=>{ if(!document.getElementById('wdd-badge')){ clearInterval(wdPoll); wdPoll=null; return; } if(document.hidden) return; refreshWithdrawStatus(w.id); }, 10000); }
 
   async function refreshWithdrawStatus(id,manual){ if(!hasTgAuth()) return;
     const btn=document.getElementById('wdd-refresh'); if(manual&&btn) btn.classList.add('spin');
