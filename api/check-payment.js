@@ -120,7 +120,10 @@ module.exports = async function handler(req, res) {
 
     const ids = (await scanAll('pay:owner:*')).map((k) => k.slice('pay:owner:'.length));
     const addrs = await scanAll('payaddr:*');
-    const allKeys = await scanAll('*');
+    // A full-keyspace scan is the most expensive thing here and was only ever a
+    // diagnostic, so it is opt-in. Requests are the metered resource on Upstash
+    // and an ops tool must not be what exhausts them.
+    const allKeys = body.deep ? await scanAll('*') : [];
     const dbsize = await raw(['DBSIZE']);
 
     const one = async (id) => {
