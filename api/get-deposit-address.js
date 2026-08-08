@@ -42,18 +42,29 @@ const STABLE = /^usd|^dai|^tusd/;
 const MIN_USD = MIN_USD_DEFAULT;   // kept for anything still referring to it
 
 // ── Upstash REST helper (best-effort: returns null on any failure) ──
+// This file is the one that hands out an address a stranger will send real
+// money to, and it was the only money path that swallowed storage errors. With
+// the database refusing commands it would still mint a fresh NOWPayments
+// address, fail silently to record who owns it, and return it — so the deposit
+// arrived somewhere nobody could attribute, and the IPN could not credit it
+// either. Refusing to issue an address is the only safe answer.
+//
+// A missing key is still a normal null; only a real failure throws.
+class StorageDown extends Error {}
 async function upstash(args) {
   const URL = process.env.UPSTASH_REDIS_REST_URL, TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!URL || !TOKEN) return null;
+  if (!URL || !TOKEN) throw new StorageDown('storage not configured');
+  let res, data;
   try {
-    const res = await fetch(URL, {
+    res = await fetch(URL, {
       method: 'POST',
       headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(args),
     });
-    const data = await res.json();
-    return data && !data.error ? data.result : null;
-  } catch { return null; }
+    data = await res.json();
+  } catch (e) { throw new StorageDown('storage unreachable'); }
+  if (!res.ok || (data && data.error)) throw new StorageDown(String((data && data.error) || res.status));
+  return data ? data.result : null;
 }
 
 // ── Telegram initData verification (inlined) ──
@@ -82,7 +93,24 @@ function verifyTelegram(initData) {
   } catch { return null; }
 }
 
+// One guard around the whole handler. Two of the storage reads happen before
+// the inner try block, so catching StorageDown only there let the throw escape
+// as an unhandled 500 — which is exactly the vague failure this change existed
+// to replace.
 module.exports = async function handler(req, res) {
+  try {
+    return await deposit(req, res);
+  } catch (err) {
+    if (err instanceof StorageDown) {
+      return res.status(503).json({
+        error: 'Deposits are paused for maintenance. Please try again later — your funds and balance are safe.',
+      });
+    }
+    throw err;
+  }
+};
+
+async function deposit(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -241,6 +269,13 @@ module.exports = async function handler(req, res) {
 
     return res.status(200).json(out);
   } catch (err) {
+    if (err instanceof StorageDown) {
+      // Deliberately not a 500: nothing is wrong with the request, we simply
+      // cannot record the deposit right now and must not take money blind.
+      return res.status(503).json({
+        error: 'Deposits are paused for maintenance. Please try again later — your funds and balance are safe.',
+      });
+    }
     return res.status(500).json({ error: 'Server error: ' + ((err && err.message) || 'unknown') });
   }
 };
