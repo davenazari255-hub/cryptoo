@@ -61,6 +61,87 @@ module.exports = async function handler(req, res) {
   if (!apiKey) return res.status(500).json({ error: 'Payment provider not configured' });
 
   const body = req.body || {};
+
+  // ── Reconciliation ────────────────────────────────────────────────────
+  // Answers one question: is there money that reached NOWPayments but never
+  // reached a user's balance? It re-runs the exact owner resolution the IPN
+  // handler uses, then asks Redis whether that payment was actually credited,
+  // so a mismatch here is a real gap and not a difference of method.
+  //
+  // Strictly read-only — it credits nothing and writes nothing. Gated by its
+  // own secret so it can be turned off by deleting one environment variable.
+  if (body.action === 'audit') {
+    const want = process.env.AUDIT_SECRET;
+    const got = String(body.secret || '');
+    if (!want || got.length !== want.length ||
+        !crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want))) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const limit = Math.min(500, Math.max(1, parseInt(body.limit, 10) || 200));
+    let payments = [];
+    try {
+      const r = await fetch(
+        `https://api.nowpayments.io/v1/payment/?limit=${limit}&page=0&sortBy=created_at&orderBy=desc`,
+        { headers: { 'x-api-key': apiKey } }
+      );
+      const j = await r.json();
+      if (!r.ok) return res.status(502).json({ error: 'provider', detail: j });
+      payments = j.data || j.result || [];
+    } catch (e) {
+      return res.status(502).json({ error: 'provider unreachable' });
+    }
+
+    const rows = [];
+    for (const p of payments) {
+      // Same three paths as api/ipn.js, in the same order.
+      const orderId = String(p.order_id || '');
+      let owner = orderId.startsWith('user_') ? orderId.slice(5) : null;
+      if (!owner && p.parent_payment_id != null) {
+        owner = await upstash(['GET', `pay:owner:${p.parent_payment_id}`]);
+      }
+      if (!owner && p.pay_address) {
+        owner = await upstash(['GET', `payaddr:${String(p.pay_address).toLowerCase()}`]);
+      }
+      if (!owner) owner = await upstash(['GET', `pay:owner:${p.payment_id}`]);
+
+      // creditDeposit() guards with SADD seen:<user> <paymentId>, so membership
+      // is the definitive record that this payment was credited exactly once.
+      let credited = null;
+      if (owner) credited = (await upstash(['SISMEMBER', `seen:${owner}`, String(p.payment_id)])) === 1;
+
+      const paid = parseFloat(p.actually_paid) || 0;
+      const expect = parseFloat(p.pay_amount) || 0;
+      const price = parseFloat(p.price_amount) || 0;
+      rows.push({
+        id: p.payment_id,
+        status: p.payment_status,
+        created: p.created_at,
+        updated: p.updated_at,
+        coin: p.pay_currency,
+        network: p.network || null,
+        payAmount: p.pay_amount,
+        actuallyPaid: p.actually_paid,
+        usd: expect > 0 ? Math.round((paid / expect) * price * 100) / 100 : price,
+        orderId: p.order_id || null,
+        parent: p.parent_payment_id || null,
+        address: p.pay_address || null,
+        owner: owner || null,
+        credited,
+      });
+    }
+
+    const finished = rows.filter((r) => r.payment_status === 'finished' || r.status === 'finished');
+    return res.status(200).json({
+      total: rows.length,
+      finished: finished.length,
+      // The only rows that mean money is missing.
+      missing: finished.filter((r) => r.credited !== true),
+      byStatus: rows.reduce((a, r) => { a[r.status] = (a[r.status] || 0) + 1; return a; }, {}),
+      rows,
+    });
+  }
+
   const user = verifyTelegram(body.initData);
   if (!user) return res.status(401).json({ error: 'Telegram authentication failed' });
   const userId = `tg_${user.id}`;
