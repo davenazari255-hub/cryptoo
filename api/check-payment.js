@@ -88,12 +88,30 @@ module.exports = async function handler(req, res) {
     // An empty result must be distinguishable from a failed query, or "no
     // deposits" and "the scan is broken" look identical.
     const scanErrors = [];
+    // The shared helper swallows the reason, which is exactly what is needed
+    // here. This one keeps it.
+    async function raw(args) {
+      const URL = process.env.UPSTASH_REDIS_REST_URL, TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+      if (!URL || !TOKEN) return { error: 'no upstash config' };
+      try {
+        const r = await fetch(URL, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(args),
+        });
+        const t = await r.text();
+        let j = null; try { j = JSON.parse(t); } catch { return { error: `HTTP ${r.status}: ${t.slice(0, 200)}` }; }
+        if (j && j.error) return { error: `HTTP ${r.status}: ${String(j.error).slice(0, 200)}` };
+        return { result: j ? j.result : null };
+      } catch (e) { return { error: 'fetch: ' + (e && e.message) }; }
+    }
+
     async function scanAll(pattern) {
       const out = [];
       let cursor = '0', guard = 0;
       do {
-        const page = await upstash(['SCAN', cursor, 'MATCH', pattern, 'COUNT', 500]);
-        if (!page) { scanErrors.push(pattern); break; }
+        const { result: page, error } = await raw(['SCAN', cursor, 'MATCH', pattern, 'COUNT', 500]);
+        if (error || !page) { scanErrors.push(pattern + ' → ' + (error || 'null')); break; }
         cursor = String(page[0]);
         (page[1] || []).forEach((k) => out.push(String(k)));
       } while (cursor !== '0' && out.length < limit && ++guard < 200);
@@ -103,7 +121,7 @@ module.exports = async function handler(req, res) {
     const ids = (await scanAll('pay:owner:*')).map((k) => k.slice('pay:owner:'.length));
     const addrs = await scanAll('payaddr:*');
     const allKeys = await scanAll('*');
-    const dbsize = await upstash(['DBSIZE']);
+    const dbsize = await raw(['DBSIZE']);
 
     const one = async (id) => {
       try {
