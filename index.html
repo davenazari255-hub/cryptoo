@@ -1683,6 +1683,22 @@
   // UTC+03:30 between 00:00 and 03:29), which left an already-claimed check-in
   // looking claimable. Local values are only a pre-first-sync fallback.
   let srvToday=null, srvYest=null;
+  // How the app behaves when the backend cannot answer. It still holds a
+  // balance, positions and history locally, so it should keep working and say
+  // so plainly rather than showing a spinner that never resolves.
+  let syncDown=false, syncFails=0;
+  function syncOk(){ syncFails=0; if(syncDown){ syncDown=false; renderOffline(); renderCheckin(); } }
+  function syncFailed(){ syncFails++; if(syncFails>=2 && !syncDown){ syncDown=true; renderOffline(); renderCheckin(); } }
+  function lastSync(){ try{ return JSON.parse(localStorage.getItem('kx_lastsync')||'null'); }catch{ return null; } }
+  function renderOffline(){
+    let el=document.getElementById('offlineBar');
+    if(!syncDown){ if(el) el.remove(); return; }
+    if(!el){ el=document.createElement('div'); el.id='offlineBar';
+      el.style.cssText='position:fixed;left:0;right:0;top:calc(var(--kx-top));z-index:8000;'
+        +'background:#3a2a12;color:#ffd08a;font:600 11.5px system-ui;text-align:center;'
+        +'padding:6px 12px;border-bottom:0.5px solid #6b4d1c;';
+      el.textContent='Reconnecting — showing your last known balance';
+      document.body.appendChild(el); } }
   function ciFromServer(o,fallbackStreak){
     o=o||{}; return { last:String(o.last||''), streak:parseInt(o.streak,10)||fallbackStreak||0,
                       freeze:Math.max(0,parseInt(o.freeze,10)||0), best:Math.max(0,parseInt(o.best,10)||0) }; }
@@ -1750,10 +1766,19 @@
     // local date runs a day ahead of UTC every evening, which is exactly what
     // made the wrong day light up and then correct itself a second later.
     if(!srvToday){
+      // Last resort before giving up: the day from the last successful sync.
+      // Stale by at most a day, and a day-old calendar is far better than a
+      // permanent spinner. Claiming is still decided by the server.
+      const ls=lastSync();
+      if(ls && ls.today){ srvToday=ls.today; srvYest=ls.yesterday||srvYest; }
+    }
+    if(!srvToday){
+      const stuck=syncDown;
       el.innerHTML='<div class="fold ci-fold"><div class="fold-head">'
         +'<div class="ic"><i class="ti ti-calendar-heart"></i></div>'
-        +'<div class="tx"><div class="t">Daily Check-in</div><div class="s">syncing\u2026</div></div>'
-        +'<i class="ti ti-loader-2 ci-spin fold-chev"></i></div></div>';
+        +'<div class="tx"><div class="t">Daily Check-in</div><div class="s">'
+        +(stuck?'Unavailable — reconnecting':'syncing\u2026')+'</div></div>'
+        +'<i class="ti '+(stuck?'ti-plug-connected-x':'ti-loader-2 ci-spin')+' fold-chev"></i></div></div>';
       return; }
 
     const info=checkinInfo();
@@ -3569,7 +3594,15 @@
         // has to be topped back up with whatever is locked in open positions or this
         // would under-report a user who happens to be mid-trade on their first sync.
         bonusLocal:(state.bonusCredited||((state.bonus||0)+bonusLocked()))+Math.max(0,state.bonusProfit||0) }) });
-      const d=await r.json(); if(!r.ok) return null;
+      const d=await r.json();
+      if(!r.ok){ syncFailed(); return null; }
+      syncOk();
+      // Keep the last good payload. The parts of the screen the server owns —
+      // the check-in calendar, the server's calendar day — had nothing to fall
+      // back on, so a backend outage left them spinning "syncing…" forever even
+      // though the balance, positions and history are all held locally.
+      try{ localStorage.setItem('kx_lastsync', JSON.stringify({ at: now(),
+        today: d.today, yesterday: d.yesterday })); }catch{}
       if(d.banned){ setBanned(true); return null; }
       if(bannedNow) setBanned(false);
       // Apply admin commands FIRST — a refund may adjust creditedDeposits to keep
@@ -4111,17 +4144,23 @@
     if(document.hidden) return;              // resumed by visibilitychange
     syncTimer = setTimeout(async () => {
       if(document.hidden) return;            // fell asleep while queued
-      try{ await syncBalance(); }catch{}
-      syncEvery = Math.min(SYNC_MAX, Math.round(syncEvery * 1.6));
+      try{ await syncBalance(); }catch{ syncFailed(); }
+      // A failing backend gets backed off hard and fast. Retrying a database
+      // that is refusing requests spends the very quota it is refusing over.
+      const step = syncDown ? 2.5 : 1.6;
+      syncEvery = Math.min(SYNC_MAX, Math.round(syncEvery * step));
       scheduleSync(syncEvery);
     }, delay == null ? syncEvery : delay);
   }
 
   // Any real interaction means the screen is being watched: go back to the
   // short interval so a deposit or an admin credit still lands quickly.
-  function syncActive(){ syncEvery = SYNC_MIN; scheduleSync(SYNC_MIN); }
+  // Tapping around means the screen is being watched — unless the backend is
+  // down, in which case resetting to the floor on every tap would turn an
+  // outage into a stampede.
+  function syncActive(){ if(syncDown) return; syncEvery = SYNC_MIN; scheduleSync(SYNC_MIN); }
   ['click','touchstart'].forEach((e) =>
-    document.addEventListener(e, () => { syncEvery = SYNC_MIN; }, { passive:true }));
+    document.addEventListener(e, () => { if(!syncDown) syncEvery = SYNC_MIN; }, { passive:true }));
 
   syncBalance(); scheduleSync(SYNC_MIN);
   // Also reconcile immediately whenever the app returns to the foreground, so
