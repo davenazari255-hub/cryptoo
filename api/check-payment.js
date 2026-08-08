@@ -78,67 +78,84 @@ module.exports = async function handler(req, res) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const limit = Math.min(500, Math.max(1, parseInt(body.limit, 10) || 200));
-    let payments = [];
-    try {
-      const r = await fetch(
-        `https://api.nowpayments.io/v1/payment/?limit=${limit}&page=0&sortBy=created_at&orderBy=desc`,
-        { headers: { 'x-api-key': apiKey } }
-      );
-      const j = await r.json();
-      if (!r.ok) return res.status(502).json({ error: 'provider', detail: j });
-      payments = j.data || j.result || [];
-    } catch (e) {
-      return res.status(502).json({ error: 'provider unreachable' });
+    // NOWPayments' list endpoint needs a full account login (JWT), not the API
+    // key, so the provider cannot be enumerated from here. Approach it from the
+    // other side instead: every deposit address this app hands out is recorded
+    // as pay:owner:<paymentId>, so Redis knows every payment we ever created.
+    // Ask the provider about each one and compare.
+    const limit = Math.min(3000, Math.max(1, parseInt(body.limit, 10) || 1500));
+
+    // ── every payment the app created ──
+    const ids = [];
+    let cursor = '0';
+    do {
+      const page = await upstash(['SCAN', cursor, 'MATCH', 'pay:owner:*', 'COUNT', '500']);
+      if (!page) break;
+      cursor = String(page[0]);
+      (page[1] || []).forEach((k) => ids.push(String(k).slice('pay:owner:'.length)));
+    } while (cursor !== '0' && ids.length < limit);
+
+    // ── and every stored address, which is where repeat deposits land ──
+    const addrs = [];
+    cursor = '0';
+    do {
+      const page = await upstash(['SCAN', cursor, 'MATCH', 'payaddr:*', 'COUNT', '500']);
+      if (!page) break;
+      cursor = String(page[0]);
+      (page[1] || []).forEach((k) => addrs.push(String(k).slice('payaddr:'.length)));
+    } while (cursor !== '0' && addrs.length < limit);
+
+    const one = async (id) => {
+      try {
+        const r = await fetch(`https://api.nowpayments.io/v1/payment/${encodeURIComponent(id)}`,
+                              { headers: { 'x-api-key': apiKey } });
+        if (!r.ok) return { id, error: r.status };
+        return { id, p: await r.json() };
+      } catch { return { id, error: 'unreachable' }; }
+    };
+
+    // A little concurrency, but not enough to get rate-limited.
+    const results = [];
+    for (let i = 0; i < ids.length; i += 6) {
+      results.push(...await Promise.all(ids.slice(i, i + 6).map(one)));
     }
 
     const rows = [];
-    for (const p of payments) {
-      // Same three paths as api/ipn.js, in the same order.
-      const orderId = String(p.order_id || '');
-      let owner = orderId.startsWith('user_') ? orderId.slice(5) : null;
-      if (!owner && p.parent_payment_id != null) {
-        owner = await upstash(['GET', `pay:owner:${p.parent_payment_id}`]);
-      }
-      if (!owner && p.pay_address) {
-        owner = await upstash(['GET', `payaddr:${String(p.pay_address).toLowerCase()}`]);
-      }
-      if (!owner) owner = await upstash(['GET', `pay:owner:${p.payment_id}`]);
-
+    for (const r of results) {
+      if (r.error) { rows.push({ id: r.id, error: r.error }); continue; }
+      const p = r.p;
+      const owner = await upstash(['GET', `pay:owner:${r.id}`]);
       // creditDeposit() guards with SADD seen:<user> <paymentId>, so membership
       // is the definitive record that this payment was credited exactly once.
-      let credited = null;
-      if (owner) credited = (await upstash(['SISMEMBER', `seen:${owner}`, String(p.payment_id)])) === 1;
-
+      const credited = owner
+        ? (await upstash(['SISMEMBER', `seen:${owner}`, String(p.payment_id)])) === 1
+        : null;
       const paid = parseFloat(p.actually_paid) || 0;
       const expect = parseFloat(p.pay_amount) || 0;
       const price = parseFloat(p.price_amount) || 0;
       rows.push({
-        id: p.payment_id,
-        status: p.payment_status,
-        created: p.created_at,
-        updated: p.updated_at,
-        coin: p.pay_currency,
-        network: p.network || null,
-        payAmount: p.pay_amount,
-        actuallyPaid: p.actually_paid,
+        id: p.payment_id, status: p.payment_status,
+        created: p.created_at, updated: p.updated_at,
+        coin: p.pay_currency, network: p.network || null,
+        payAmount: p.pay_amount, actuallyPaid: p.actually_paid,
         usd: expect > 0 ? Math.round((paid / expect) * price * 100) / 100 : price,
-        orderId: p.order_id || null,
-        parent: p.parent_payment_id || null,
-        address: p.pay_address || null,
-        owner: owner || null,
-        credited,
+        orderId: p.order_id || null, address: p.pay_address || null,
+        owner: owner || null, credited,
       });
     }
 
-    const finished = rows.filter((r) => r.payment_status === 'finished' || r.status === 'finished');
+    const paidRows = rows.filter((r) => ['finished', 'partially_paid', 'confirmed', 'sending']
+      .includes(r.status));
     return res.status(200).json({
-      total: rows.length,
-      finished: finished.length,
-      // The only rows that mean money is missing.
-      missing: finished.filter((r) => r.credited !== true),
-      byStatus: rows.reduce((a, r) => { a[r.status] = (a[r.status] || 0) + 1; return a; }, {}),
-      rows,
+      knownPayments: ids.length,
+      storedAddresses: addrs.length,
+      byStatus: rows.reduce((a, r) => { const k = r.status || ('error ' + r.error);
+        a[k] = (a[k] || 0) + 1; return a; }, {}),
+      // The only rows that mean money moved but a balance did not.
+      missing: paidRows.filter((r) => r.credited !== true),
+      paid: paidRows,
+      creditedTotalUsd: Math.round(rows.filter((r) => r.credited === true)
+        .reduce((t, r) => t + (r.usd || 0), 0) * 100) / 100,
     });
   }
 
