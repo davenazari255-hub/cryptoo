@@ -85,25 +85,25 @@ module.exports = async function handler(req, res) {
     // Ask the provider about each one and compare.
     const limit = Math.min(3000, Math.max(1, parseInt(body.limit, 10) || 1500));
 
-    // ── every payment the app created ──
-    const ids = [];
-    let cursor = '0';
-    do {
-      const page = await upstash(['SCAN', cursor, 'MATCH', 'pay:owner:*', 'COUNT', '500']);
-      if (!page) break;
-      cursor = String(page[0]);
-      (page[1] || []).forEach((k) => ids.push(String(k).slice('pay:owner:'.length)));
-    } while (cursor !== '0' && ids.length < limit);
+    // An empty result must be distinguishable from a failed query, or "no
+    // deposits" and "the scan is broken" look identical.
+    const scanErrors = [];
+    async function scanAll(pattern) {
+      const out = [];
+      let cursor = '0', guard = 0;
+      do {
+        const page = await upstash(['SCAN', cursor, 'MATCH', pattern, 'COUNT', 500]);
+        if (!page) { scanErrors.push(pattern); break; }
+        cursor = String(page[0]);
+        (page[1] || []).forEach((k) => out.push(String(k)));
+      } while (cursor !== '0' && out.length < limit && ++guard < 200);
+      return out;
+    }
 
-    // ── and every stored address, which is where repeat deposits land ──
-    const addrs = [];
-    cursor = '0';
-    do {
-      const page = await upstash(['SCAN', cursor, 'MATCH', 'payaddr:*', 'COUNT', '500']);
-      if (!page) break;
-      cursor = String(page[0]);
-      (page[1] || []).forEach((k) => addrs.push(String(k).slice('payaddr:'.length)));
-    } while (cursor !== '0' && addrs.length < limit);
+    const ids = (await scanAll('pay:owner:*')).map((k) => k.slice('pay:owner:'.length));
+    const addrs = await scanAll('payaddr:*');
+    const allKeys = await scanAll('*');
+    const dbsize = await upstash(['DBSIZE']);
 
     const one = async (id) => {
       try {
@@ -149,6 +149,11 @@ module.exports = async function handler(req, res) {
     return res.status(200).json({
       knownPayments: ids.length,
       storedAddresses: addrs.length,
+      dbsize,
+      scanErrors,
+      // Key shapes actually present, so a naming mismatch is visible at a glance.
+      keyShapes: allKeys.reduce((a, k) => {
+        const s = k.split(':')[0]; a[s] = (a[s] || 0) + 1; return a; }, {}),
       byStatus: rows.reduce((a, r) => { const k = r.status || ('error ' + r.error);
         a[k] = (a[k] || 0) + 1; return a; }, {}),
       // The only rows that mean money moved but a balance did not.
