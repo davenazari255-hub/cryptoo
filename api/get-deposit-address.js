@@ -28,11 +28,33 @@ const MIN_USD_BY_CURRENCY = {
   ton: 5,
 };
 const MIN_USD_DEFAULT = 5;
+// Our own policy floor. It is only ever a floor: whenever NOWPayments needs
+// more than this, theirs wins. It is not a substitute for asking them.
 const minUsdFor = (cur) => MIN_USD_BY_CURRENCY[cur] || MIN_USD_DEFAULT;
+
+// Headroom over NOWPayments' published minimum.
+//
+// Their figure is what they will accept *at this instant*; it moves with
+// network fees between the moment we quote a number and the moment the user's
+// transfer actually lands, which can be many minutes later. Quoting exactly
+// their floor means a user who sends exactly what we asked for gets rejected —
+// which is what happened on BEP20, where we showed 12 and they wanted 12.3.
+//
+// The margin is applied before rounding, so the clean step above it adds more
+// on top. 12.3 becomes 15, not 12.
+const MIN_MARGIN = 1.15;
 
 // Only ever ask for a round number. If NOWPayments will not take our floor we
 // climb this ladder rather than binary-searching into 17.219728 territory.
-const CLEAN_STEPS = [1, 2, 3, 5, 8, 10, 12, 15, 20, 25, 30, 40, 50, 75, 100, 150, 200, 300, 500];
+//
+// Whole dollars up to 20, and coarser above. The rungs used to jump 12 → 15,
+// which meant 15% headroom over an 11.13 floor overshot to 15 — more than "a
+// bit more" and past the under-15 ceiling asked for on USDT. Every integer is
+// round; the ladder only exists to keep the figure legible.
+const CLEAN_STEPS = [
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+  25, 30, 40, 50, 75, 100, 150, 200, 300, 500,
+];
 const cleanUp = (x) => CLEAN_STEPS.find((v) => v >= x - 1e-9) || Math.ceil(x / 100) * 100;
 
 // A stablecoin's minimum reads naturally in the coin itself; everything else is
@@ -51,6 +73,44 @@ const MIN_USD = MIN_USD_DEFAULT;   // kept for anything still referring to it
 //
 // A missing key is still a normal null; only a real failure throws.
 class StorageDown extends Error {}
+
+// The minimum we will quote for a coin: NOWPayments' current floor plus
+// headroom, rounded up to a clean figure, never below our own policy floor.
+//
+// Both paths through this file must use it. They did not: a returning user with
+// a stored address was served the static table value, which for BEP20 said 2
+// while NOWPayments wanted 12.3. Only the first-time path ever consulted them.
+//
+// Cached for an hour so the deposit screen does not call NOWPayments every
+// time. The key is versioned and the value is recomputed from scratch on every
+// miss, so it can fall as well as rise — the previous cache had neither
+// property, which is how "17.219728 USDT" froze onto the screen permanently.
+const MIN_CACHE_TTL = 3600;
+async function quotedMinUsd(payCurrency, apiKey, upstashFn) {
+  const cacheKey = `minv2:${payCurrency}`;
+  try {
+    const hit = await upstashFn(['GET', cacheKey]);
+    const n = parseFloat(hit);
+    if (isFinite(n) && n > 0) return n;
+  } catch { /* storage down — fall through and ask NOWPayments directly */ }
+
+  let theirMin = 0;
+  try {
+    const r = await fetch(
+      `https://api.nowpayments.io/v1/min-amount?currency_from=${encodeURIComponent(payCurrency)}&fiat_equivalent=usd`,
+      { headers: { 'x-api-key': apiKey } }
+    );
+    // Read the body as text and parse it, as jget does below: a non-JSON error
+    // page then falls through to our own floor instead of throwing.
+    const t = await r.text();
+    let j = null; try { j = JSON.parse(t); } catch { }
+    if (r.ok && j) theirMin = parseFloat(j.fiat_equivalent) || 0;
+  } catch { /* unreachable: fall back to our own floor below */ }
+
+  const value = cleanUp(Math.max(minUsdFor(payCurrency), theirMin * MIN_MARGIN));
+  try { await upstashFn(['SET', cacheKey, String(value), 'EX', MIN_CACHE_TTL]); } catch { }
+  return value;
+}
 async function upstash(args) {
   const URL = process.env.UPSTASH_REDIS_REST_URL, TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!URL || !TOKEN) throw new StorageDown('storage not configured');
@@ -157,7 +217,7 @@ async function deposit(req, res) {
         paymentId: rec.paymentId,
         payinExtraId: rec.payinExtraId || null,
         network: rec.network || null,
-        minUsd: minUsdFor(payCurrency),
+        minUsd: await quotedMinUsd(payCurrency, apiKey, upstash),
         stable: STABLE.test(payCurrency),
         // Tells the client not to poll that original payment: it settled long
         // ago and would report "finished" before this deposit even lands.
@@ -205,16 +265,9 @@ async function deposit(req, res) {
     const floorUsd = minUsdFor(payCurrency);
     let data = null, priceUsd = 0, lastErr = 'NOWPayments error', status = 502;
 
-    // Their published minimum, only ever used to skip candidates we know are
-    // too small — never to raise the ask above what they would accept.
-    let theirMin = 0;
-    const mr = await jget(
-      `https://api.nowpayments.io/v1/min-amount?currency_from=${encodeURIComponent(payCurrency)}&fiat_equivalent=usd`,
-      { headers: { 'x-api-key': apiKey } }
-    );
-    if (mr.ok && mr.json) theirMin = parseFloat(mr.json.fiat_equivalent) || 0;
-
-    const start = cleanUp(Math.max(floorUsd, theirMin));
+    // The same figure the screen quotes, so the payment we create and the
+    // number the user reads can never disagree.
+    const start = Math.max(floorUsd, await quotedMinUsd(payCurrency, apiKey, upstash));
     let ladder = CLEAN_STEPS.filter((v) => v >= start);
     if (!ladder.length) ladder = [start];
 
@@ -224,7 +277,8 @@ async function deposit(req, res) {
     // created once per user per coin and reused after that, this path runs
     // rarely and the extra call costs nothing worth the risk.
 
-    for (let i = 0; i < ladder.length && i < 6; i++) {
+    // A few more rungs than before, because they are a dollar apart down here.
+    for (let i = 0; i < ladder.length && i < 8; i++) {
       const r = await tryCreate(ladder[i]);
       if (r.ok) { data = r.data; priceUsd = ladder[i]; break; }
       status = r.status; lastErr = r.msg;

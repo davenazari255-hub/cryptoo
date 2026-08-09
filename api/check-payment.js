@@ -62,6 +62,47 @@ module.exports = async function handler(req, res) {
 
   const body = req.body || {};
 
+  // ── Minimums ──────────────────────────────────────────────────────────
+  // What NOWPayments actually requires per coin right now, next to what the app
+  // quotes. Read-only. Exists because the two silently disagreed: the app said
+  // 12 USDT on BEP20 while NOWPayments would not accept under 12.3, so a user
+  // who sent exactly the amount we asked for had it rejected.
+  if (body.action === 'minimums') {
+    const want = process.env.AUDIT_SECRET;
+    const got = String(body.secret || '');
+    if (!want || got.length !== want.length ||
+        !crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want))) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const COINS = ['btc', 'eth', 'usdttrc20', 'usdterc20', 'usdtbsc', 'usdtmatic',
+                   'usdtarb', 'bnbbsc', 'sol', 'trx', 'ton'];
+    const MARGIN = 1.15;
+    const STEPS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+                   25, 30, 40, 50, 75, 100, 150, 200, 300, 500];
+    const clean = (x) => STEPS.find((v) => v >= x - 1e-9) || Math.ceil(x / 100) * 100;
+    const FLOOR = { usdttrc20: 12, usdterc20: 5, usdtbsc: 2, usdtmatic: 2, usdtarb: 2,
+                    btc: 10, eth: 10, bnbbsc: 5, sol: 5, trx: 5, ton: 5 };
+
+    const rows = [];
+    for (const c of COINS) {
+      let theirMin = null, err = null;
+      try {
+        const r = await fetch(
+          `https://api.nowpayments.io/v1/min-amount?currency_from=${c}&fiat_equivalent=usd`,
+          { headers: { 'x-api-key': apiKey } });
+        const j = await r.json();
+        if (!r.ok) err = JSON.stringify(j).slice(0, 120);
+        else theirMin = parseFloat(j.fiat_equivalent);
+      } catch (e) { err = String(e && e.message); }
+      const quoted = theirMin != null
+        ? clean(Math.max(FLOOR[c] || 5, theirMin * MARGIN)) : null;
+      rows.push({ coin: c, nowpaymentsMinUsd: theirMin, weQuoteUsd: quoted,
+                  headroomPct: (theirMin && quoted) ? Math.round((quoted / theirMin - 1) * 100) : null,
+                  err });
+    }
+    return res.status(200).json({ margin: MARGIN, rows });
+  }
+
   // ── Probe ─────────────────────────────────────────────────────────────
   // Answers one question and nothing else: when /api/sync returns 500, is the
   // database refusing us, or did we send it something it cannot parse?
