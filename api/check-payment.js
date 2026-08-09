@@ -62,6 +62,71 @@ module.exports = async function handler(req, res) {
 
   const body = req.body || {};
 
+  // ── Probe ─────────────────────────────────────────────────────────────
+  // Answers one question and nothing else: when /api/sync returns 500, is the
+  // database refusing us, or did we send it something it cannot parse?
+  //
+  // It runs the exact command shapes api/sync.js issues on a poll, one at a
+  // time, and reports each result separately. A quota error on every line means
+  // the plan is exhausted. A syntax error on one line means that command is a
+  // bug, and it would look identical from the outside.
+  if (body.action === 'probe') {
+    const want = process.env.AUDIT_SECRET;
+    const got = String(body.secret || '');
+    if (!want || got.length !== want.length ||
+        !crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want))) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const U = process.env.UPSTASH_REDIS_REST_URL, T = process.env.UPSTASH_REDIS_REST_TOKEN;
+    const one = async (label, args) => {
+      try {
+        const r = await fetch(U, { method: 'POST',
+          headers: { Authorization: `Bearer ${T}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(args) });
+        const txt = await r.text();
+        let j = null; try { j = JSON.parse(txt); } catch { }
+        if (j && j.error) return { label, http: r.status, error: String(j.error).slice(0, 160) };
+        return { label, http: r.status, ok: true,
+                 sample: JSON.stringify(j && j.result).slice(0, 80) };
+      } catch (e) { return { label, error: 'fetch: ' + (e && e.message) }; }
+    };
+
+    const uid = 'tg_probe_readonly';
+    const keys = [
+      `bal:${uid}`, `dep:total:${uid}`, `payout:earned:${uid}`, `dep:real:${uid}`,
+      `ref:count:${uid}`, `coupons:${uid}`, `pot:${uid}`, `rpot:${uid}`,
+      `checkin:${uid}`, `bonus:${uid}`, `partner:me:${uid}`, `rw:migrated:${uid}`,
+      `vol:spot:${uid}`, `vol:fut:${uid}`, `profile:${uid}`, 'config:tasks',
+      'config:banners', `ref:partner:${uid}`, `ref:by:${uid}`, `support:meta:${uid}`,
+    ];
+
+    // Ordered cheapest-first, and every one is a read against a key that does
+    // not exist, so this cannot change any real data.
+    const steps = [
+      ['DBSIZE  (not billed by Upstash)', ['DBSIZE']],
+      ['GET     (1 key)', ['GET', `banned:${uid}`]],
+      ['MGET    (the 20-key batch sync uses)', ['MGET', ...keys]],
+      ['SMEMBERS', ['SMEMBERS', `dep:tiers:${uid}`]],
+      ['LRANGE', ['LRANGE', `cmd:${uid}`, 0, -1]],
+      ['ZRANGEBYSCORE + LIMIT', ['ZRANGEBYSCORE', 'support:online', Date.now() - 75000, '+inf', 'LIMIT', 0, 1]],
+    ];
+
+    const out = [];
+    for (const [label, args] of steps) out.push(await one(label, args));
+
+    const quota = out.filter((r) => /max requests limit/i.test(r.error || '')).length;
+    const syntax = out.filter((r) => r.error && !/max requests limit/i.test(r.error)).length;
+    return res.status(200).json({
+      verdict: syntax > 0 ? 'A COMMAND IS MALFORMED — this is a code bug'
+             : quota > 0 ? 'QUOTA EXHAUSTED — every billable command is refused'
+             : 'ALL COMMANDS SUCCEEDED — the database is healthy',
+      billableRefusedByQuota: quota,
+      failedForOtherReasons: syntax,
+      steps: out,
+    });
+  }
+
   // ── Reconciliation ────────────────────────────────────────────────────
   // Answers one question: is there money that reached NOWPayments but never
   // reached a user's balance? It re-runs the exact owner resolution the IPN
