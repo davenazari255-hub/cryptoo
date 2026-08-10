@@ -248,7 +248,20 @@ async function deposit(req, res) {
           order_id: `user_${userId}`,
           order_description: `Deposit for ${userId}`,
           ipn_callback_url: ipnUrl,
-          is_fee_paid_by_user: true,
+          // Both flags matter, and they are coupled. NOWPayments support
+          // (Dias S) confirmed that is_fee_paid_by_user: true silently forces
+          // fixed rate on, whatever is_fixed_rate says. A fixed-rate payment
+          // locks pay_amount to an exact figure, so anything other than that
+          // exact amount lands as partially_paid — which api/ipn.js does not
+          // credit. That is how real deposits went missing.
+          //
+          // Standard (non-fixed) rate is what makes "send any amount" true, and
+          // it costs us the service fee: the user sends 10, slightly less than
+          // 10 settles to our wallet, and ipn.js still credits them the full ~10
+          // because it scales price_amount by actually_paid / pay_amount. That
+          // spread is the price of not losing users' money.
+          is_fixed_rate: false,
+          is_fee_paid_by_user: false,
         }),
       });
       if (resp.ok && resp.json && resp.json.pay_address) return { ok: true, data: resp.json };
