@@ -1695,12 +1695,11 @@
   // link used to write profit.toFixed(2), which rounds up, so Max could exceed
   // the real figure and get rejected — which is why "a little less" worked.
   //
-  // Capped at the bonus actually granted, because that is what the server will
-  // credit; showing more than it will pay is how a transfer appears to shave.
+  // The whole realised profit is transferable. It used to be clamped to the
+  // bonus granted (`Math.min(profit, granted)`), so a 10 USDT win on a 3 USDT
+  // bonus showed — and paid — only 3.
   function bonusTransferable(){
-    const profit=Math.max(0,state.bonusProfit||0);
-    const granted=Math.max(0,state.bonusCredited||0);
-    return Math.floor(Math.min(profit,granted)*100)/100; }
+    return Math.floor(Math.max(0,state.bonusProfit||0)*100)/100; }
 
   // ── bonus accounting ───────────────────────────────────────────────
   // The server knows only what it credited. Everything the trading does to that

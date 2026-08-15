@@ -664,11 +664,12 @@ module.exports = async function handler(req, res) {
       const bonusNow = parseFloat(await upstash(['GET', `bonus:${userId}`])) || 0;
       if (!(bonusNow > 0)) return res.status(400).json({ error: 'No bonus to transfer' });
 
-      // The profit figure comes from trading that happens entirely in the
-      // client, so this endpoint cannot verify it. What becomes real, spendable
-      // money is therefore capped at the bonus actually granted: the most any
-      // user can turn into a withdrawal is the bonus we chose to give them.
-      const credited = Math.min(want, bonusNow);
+      // Profit transfers used to be capped at the bonus actually granted
+      // (`Math.min(want, bonusNow)`), which is what users were reporting: win 10
+      // USDT on a 3 USDT bonus, transfer 10, receive 3 — the rest vanished with
+      // no explanation. The whole point of a trading bonus is that the profit is
+      // the user's, so the full amount they earned is credited.
+      const credited = want;
 
       await upstash(['SET', `bonus:${userId}`, '0']);
       const newBal = parseFloat(await upstash(['INCRBYFLOAT', `bal:${userId}`, credited]));
