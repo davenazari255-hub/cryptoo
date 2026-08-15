@@ -495,6 +495,9 @@
     .dep-coin .dc-name { font-size:14px; font-weight:600; color:var(--text-0); }
     .dep-coin .dc-net { font-size:11px; color:var(--text-2); margin-top:2px; }
     .dep-coin .dc-net b { color:#9aa3b8; font-weight:600; }
+    /* Temporarily disabled deposit network: visible but greyed and non-clickable */
+    .dep-coin-off { opacity:.5; cursor:not-allowed; pointer-events:none; }
+    .dep-coin-off .dc-off-tag { font-size:10px; font-weight:600; color:#ffae4e; background:#ffae4e14; border:0.5px solid #ffae4e33; padding:3px 8px; border-radius:7px; white-space:nowrap; }
     .dep-coin .dc-chev { color:#4a5168; font-size:18px; }
     .dep-badge { font-size:10px; color:var(--green); background:#4eeaa01a; border-radius:6px; padding:2px 7px; font-weight:600; }
     .dep-tip { display:flex; gap:8px; align-items:flex-start; background:var(--surface-3); border:0.5px solid var(--line-2); border-radius:12px; padding:11px 13px; margin-bottom:14px; }
@@ -3602,8 +3605,8 @@
     {t:'usdtbsc',   sym:'USDT', name:'Tether',  net:'BEP20',   color:'#26a17b'},
     // The two cheapest USDT routes end to end. NOWPayments' own minimum is
     // ~0.13 on Polygon and ~0.27 on Arbitrum, against ~11 on TRC20.
-    {t:'usdtmatic', sym:'USDT', name:'Tether',  net:'Polygon', color:'#26a17b'},
-    {t:'usdtarb',   sym:'USDT', name:'Tether',  net:'Arbitrum',color:'#26a17b'},
+    {t:'usdtmatic', sym:'USDT', name:'Tether',  net:'Polygon', color:'#26a17b', disabled:true},
+    {t:'usdtarb',   sym:'USDT', name:'Tether',  net:'Arbitrum',color:'#26a17b', disabled:true},
     {t:'bnbbsc',    sym:'BNB',  name:'BNB',     net:'BSC',     color:'#f3ba2f'},
     {t:'sol',       sym:'SOL',  name:'Solana',  net:'Solana',  color:'#14f195'},
     {t:'trx',       sym:'TRX',  name:'TRON',    net:'TRON',    color:'#eb0029'},
@@ -3782,7 +3785,14 @@
   function updateInviteSheet(){ const linkEl=document.getElementById('iv-link'); if(!linkEl) return;
     const stats=document.querySelectorAll('.iv-stat .n'); if(stats.length>=2){ stats[0].textContent=state.referralCount||0; stats[1].textContent='$'+fmtNum(state.referralEarned||0,2); } }
 
-  function depCoinRow(c,i){ return '<div class="dep-coin" onclick="genDeposit('+i+')">'+depLogo(c)
+  function depCoinRow(c,i){
+    // Disabled coins stay visible but greyed out and non-clickable, with a
+    // "Temporarily unavailable" note instead of the chevron.
+    if(c.disabled){ return '<div class="dep-coin dep-coin-off">'+depLogo(c)
+      +'<div class="dc-meta"><div class="dc-name">'+c.sym+' <span style="color:#7a8299;font-weight:400;font-size:12px;">'+c.name+'</span></div>'
+      +'<div class="dc-net">Network · <b>'+c.net+'</b></div></div>'
+      +'<span class="dc-off-tag">Temporarily unavailable</span></div>'; }
+    return '<div class="dep-coin" onclick="genDeposit('+i+')">'+depLogo(c)
     +'<div class="dc-meta"><div class="dc-name">'+c.sym+' <span style="color:#7a8299;font-weight:400;font-size:12px;">'+c.name+'</span></div>'
     +'<div class="dc-net">Network · <b>'+c.net+'</b></div></div>'
     +'<i class="ti ti-chevron-right dc-chev"></i></div>'; }
