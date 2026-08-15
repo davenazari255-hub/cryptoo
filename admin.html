@@ -199,6 +199,7 @@
       <div class="tab" id="tab-tasks" onclick="setTab('tasks')"><i class="ti ti-checklist" style="font-size:14px;margin-right:5px;vertical-align:-2px;"></i>Tasks</div>
       <div class="tab" id="tab-banners" onclick="setTab('banners')"><i class="ti ti-photo" style="font-size:14px;margin-right:5px;vertical-align:-2px;"></i>Banners</div>
       <div class="tab" id="tab-partners" onclick="setTab('partners')"><i class="ti ti-diamond" style="font-size:14px;margin-right:5px;vertical-align:-2px;"></i>Partners</div>
+      <div class="tab" id="tab-maintenance" onclick="setTab('maintenance')"><i class="ti ti-tool" style="font-size:14px;margin-right:5px;vertical-align:-2px;"></i>Maintenance</div>
     </div></div>
     <div class="bar">
       <button class="btn sec" onclick="refresh()"><i class="ti ti-refresh"></i> Refresh</button>
@@ -241,8 +242,8 @@
       catch (e) { $('gate-err').textContent = e.message; }
     }
     function logout() { sessionStorage.removeItem('kx_admin'); location.reload(); }
-    function setTab(t) { TAB = t; ['users','wd','dep','sup','tasks','banners','partners'].forEach(x => $('tab-' + x).classList.toggle('on', t === x)); if (t !== 'sup') stopThreadPoll(); refresh(); }
-    function refresh() { TAB === 'users' ? loadUsers() : TAB === 'wd' ? loadWithdrawals() : TAB === 'dep' ? loadDeposits() : TAB === 'sup' ? loadConversations() : TAB === 'tasks' ? loadTasks() : TAB === 'banners' ? loadBanners() : loadPartners(); }
+    function setTab(t) { TAB = t; ['users','wd','dep','sup','tasks','banners','partners','maintenance'].forEach(x => $('tab-' + x).classList.toggle('on', t === x)); if (t !== 'sup') stopThreadPoll(); refresh(); }
+    function refresh() { TAB === 'users' ? loadUsers() : TAB === 'wd' ? loadWithdrawals() : TAB === 'dep' ? loadDeposits() : TAB === 'sup' ? loadConversations() : TAB === 'tasks' ? loadTasks() : TAB === 'banners' ? loadBanners() : TAB === 'maintenance' ? loadMaintenance() : loadPartners(); }
 
     /* ── Deposits report ── */
     async function loadDeposits() {
@@ -928,6 +929,142 @@
       const on = sessionStorage.getItem('kx_online') === '1';
       const chk = $('onlineChk'); if (chk) { chk.checked = on; }
       if (on) toggleOnline();
+    }
+
+    /* ── Maintenance Mode ── */
+    let MAINTENANCE_STATE = null;
+    async function loadMaintenance() {
+      $('view').innerHTML = '<div class="empty">Loading…</div>';
+      try {
+        const d = await api({ action: 'getMaintenanceStatus' });
+        MAINTENANCE_STATE = d;
+        renderMaintenance(d);
+      } catch (e) {
+        $('view').innerHTML = '<div class="err">' + esc(e.message) + '</div>';
+      }
+    }
+
+    function renderMaintenance(state) {
+      const enabled = state.enabled || false;
+      const endTime = state.endTime ? new Date(state.endTime) : null;
+      const now = new Date();
+      const remaining = endTime ? Math.max(0, endTime - now) : 0;
+      const hours = Math.floor(remaining / (1000 * 60 * 60));
+      const minutes = Math.floor((remaining % (1000 * 60 * 60)) / (1000 * 60));
+
+      let h = '<div class="mini" style="margin-bottom:12px;line-height:1.6;">When maintenance mode is <b>enabled</b>, all users (except admins) will see a maintenance page instead of the app. You can set an estimated completion time to show a countdown timer.</div>';
+      
+      h += '<div class="card">';
+      h += '<div class="row" style="align-items:center;margin-bottom:16px;">';
+      h += '<span style="font-weight:700;font-size:15px;">Maintenance Mode</span>';
+      h += '<span class="st ' + (enabled ? 'rejected' : 'paid') + '">' + (enabled ? 'ACTIVE' : 'INACTIVE') + '</span>';
+      h += '</div>';
+
+      if (enabled && endTime) {
+        const status = remaining > 0 
+          ? '<div class="mini" style="color:#ffb454;"><i class="ti ti-clock"></i> Estimated completion: <b>' + when(endTime) + '</b> (' + hours + 'h ' + minutes + 'm remaining)</div>'
+          : '<div class="mini" style="color:#ff6b6b;"><i class="ti ti-alert-circle"></i> Completion time has passed</div>';
+        h += status;
+      }
+
+      h += '<div class="sec-title">Configure Maintenance</div>';
+      
+      // End time input
+      h += '<div class="pfield">';
+      h += '<label>Estimated Completion Time</label>';
+      h += '<div class="hint">When will the maintenance be completed? Leave empty for no countdown.</div>';
+      
+      const dateStr = endTime ? endTime.toISOString().slice(0, 16) : '';
+      h += '<input type="datetime-local" id="maint-endtime" value="' + esc(dateStr) + '" style="width:100%;background:#0f1117;border:1px solid #2e3347;color:#e8edf7;border-radius:9px;padding:10px 12px;font-size:14px;outline:none;">';
+      h += '</div>';
+
+      // Quick presets
+      h += '<div class="mini" style="margin:10px 0 16px;color:#7a8299;">Quick presets:</div>';
+      h += '<div class="acts" style="margin-bottom:16px;">';
+      h += '<button class="btn sec" style="padding:7px 12px;font-size:12px;" onclick="setMaintenancePreset(1)">+1 hour</button>';
+      h += '<button class="btn sec" style="padding:7px 12px;font-size:12px;" onclick="setMaintenancePreset(3)">+3 hours</button>';
+      h += '<button class="btn sec" style="padding:7px 12px;font-size:12px;" onclick="setMaintenancePreset(6)">+6 hours</button>';
+      h += '<button class="btn sec" style="padding:7px 12px;font-size:12px;" onclick="setMaintenancePreset(12)">+12 hours</button>';
+      h += '<button class="btn sec" style="padding:7px 12px;font-size:12px;" onclick="setMaintenancePreset(24)">+1 day</button>';
+      h += '</div>';
+
+      // Action buttons
+      h += '<div class="acts" style="margin-top:16px;">';
+      if (enabled) {
+        h += '<button class="btn" onclick="toggleMaintenance(false)"><i class="ti ti-check"></i> Disable Maintenance</button>';
+        h += '<button class="btn amber" onclick="updateMaintenanceTime()"><i class="ti ti-clock"></i> Update Time</button>';
+      } else {
+        h += '<button class="btn red" onclick="toggleMaintenance(true)"><i class="ti ti-tool"></i> Enable Maintenance</button>';
+      }
+      h += '<button class="btn ghost" onclick="previewMaintenance()"><i class="ti ti-eye"></i> Preview Page</button>';
+      h += '</div>';
+
+      h += '</div>';
+
+      // Info cards
+      h += '<div class="sec-title">What Happens?</div>';
+      h += '<div class="card" style="background:#161a26;border-color:#2a3142;">';
+      h += '<div class="mini" style="line-height:1.7;color:#98a2b8;">';
+      h += '<i class="ti ti-check" style="color:#4eeaa0;"></i> <b>Admins:</b> Can still access both the exchange and admin panel<br>';
+      h += '<i class="ti ti-lock" style="color:#ff6b6b;"></i> <b>Regular users:</b> Will see the maintenance page instead of the app<br>';
+      h += '<i class="ti ti-clock" style="color:#ffb454;"></i> <b>Countdown timer:</b> Shows remaining time if you set an end time<br>';
+      h += '<i class="ti ti-reload" style="color:#63a4ff;"></i> <b>Auto-redirect:</b> Users are automatically redirected when maintenance ends';
+      h += '</div>';
+      h += '</div>';
+
+      $('view').innerHTML = h;
+      $('count').textContent = enabled ? 'MODE ACTIVE' : 'mode inactive';
+    }
+
+    function setMaintenancePreset(hours) {
+      const now = new Date();
+      now.setHours(now.getHours() + hours);
+      const str = now.toISOString().slice(0, 16);
+      const inp = $('maint-endtime');
+      if (inp) inp.value = str;
+    }
+
+    async function toggleMaintenance(enable) {
+      const action = enable ? 'enable' : 'disable';
+      const msg = enable 
+        ? 'Enable maintenance mode?\n\nAll non-admin users will see the maintenance page.'
+        : 'Disable maintenance mode?\n\nUsers will be able to access the app again.';
+      
+      if (!confirm(msg)) return;
+
+      try {
+        const endTimeInput = $('maint-endtime');
+        const endTime = enable && endTimeInput && endTimeInput.value 
+          ? new Date(endTimeInput.value).toISOString()
+          : null;
+
+        await api({ action: 'setMaintenance', enabled: enable, endTime });
+        alert(enable ? 'Maintenance mode enabled!' : 'Maintenance mode disabled!');
+        loadMaintenance();
+      } catch (e) {
+        alert('Error: ' + e.message);
+      }
+    }
+
+    async function updateMaintenanceTime() {
+      const endTimeInput = $('maint-endtime');
+      if (!endTimeInput) return;
+
+      const endTime = endTimeInput.value ? new Date(endTimeInput.value).toISOString() : null;
+      
+      if (!confirm('Update the maintenance completion time?')) return;
+
+      try {
+        await api({ action: 'setMaintenance', enabled: true, endTime });
+        alert('Maintenance time updated!');
+        loadMaintenance();
+      } catch (e) {
+        alert('Error: ' + e.message);
+      }
+    }
+
+    function previewMaintenance() {
+      window.open('maintenance.html', '_blank');
     }
 
     // Boot: prefer Telegram in-app admin auth, fall back to a stored secret,

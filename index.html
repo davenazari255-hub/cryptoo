@@ -1481,6 +1481,47 @@
 </div>
 
 <script>
+  // ── Maintenance Mode Check ──
+  // Check if maintenance mode is active before loading the app
+  (async function checkMaintenanceMode() {
+    try {
+      const res = await fetch('/api/admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'getMaintenanceStatus', public: true })
+      });
+      const data = await res.json();
+      
+      if (data.enabled) {
+        // Check if user is admin via Telegram
+        let isAdmin = false;
+        try {
+          if (window.Telegram && Telegram.WebApp && Telegram.WebApp.initData) {
+            const initData = Telegram.WebApp.initData;
+            // Try to verify if user is admin
+            const verifyRes = await fetch('/api/admin', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'users', initData })
+            });
+            isAdmin = verifyRes.ok;
+          }
+        } catch (e) {
+          // Not an admin, proceed with maintenance redirect
+        }
+        
+        if (!isAdmin) {
+          // Redirect non-admin users to maintenance page
+          window.location.href = 'maintenance.html';
+          return;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to check maintenance status:', e);
+      // On error, allow app to load (fail-open)
+    }
+  })();
+
   // ─────────────────────────────────────────────
   //  KolonoEX — paper-trading engine (frontend only)
   //  Prices: live from Binance. Balances/trades: local simulation (localStorage).
