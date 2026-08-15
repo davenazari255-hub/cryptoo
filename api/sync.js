@@ -664,11 +664,18 @@ module.exports = async function handler(req, res) {
       const bonusNow = parseFloat(await upstash(['GET', `bonus:${userId}`])) || 0;
       if (!(bonusNow > 0)) return res.status(400).json({ error: 'No bonus to transfer' });
 
-      // The profit figure comes from trading that happens entirely in the
-      // client, so this endpoint cannot verify it. What becomes real, spendable
-      // money is therefore capped at the bonus actually granted: the most any
-      // user can turn into a withdrawal is the bonus we chose to give them.
-      const credited = Math.min(want, bonusNow);
+      // Credit the user's FULL realised profit. Previously this was capped at
+      // `bonusNow` (Math.min(want, bonusNow)) — the remaining bonus pool, which
+      // shrinks as the user opens positions and pays fees. That is what caused
+      // the "made $10 profit, could only withdraw $3" reports: the pool had
+      // shrunk to ~$3 even though real profit was $10, so the transfer was
+      // clamped to the leftover pool instead of the profit earned.
+      //
+      // NOTE (security): `want` is derived from client-side bonusProfit, which
+      // this endpoint cannot verify. Crediting it in full means a tampered
+      // localStorage could inflate the payout. Accepted per product decision
+      // (option 1 — full real profit, no cap).
+      const credited = want;
 
       await upstash(['SET', `bonus:${userId}`, '0']);
       const newBal = parseFloat(await upstash(['INCRBYFLOAT', `bal:${userId}`, credited]));
