@@ -383,7 +383,7 @@ function cleanBanners(list) {
     const DEFAULT_TASKS = [
       { id: 'welcome', icon: 'ti-gift', title: 'Welcome Bonus', desc: 'Sign in to KolonoEX', reward: 10, metric: 'always', target: 0, go: 'home' },
       { id: 'deposit', icon: 'ti-wallet', title: 'Net Deposit', desc: 'Deposit a total of 100 USDT', reward: 10, metric: 'deposit', target: 100, go: 'assets' },
-      { id: 'depositmatch', icon: 'ti-gift', title: '100% Deposit Match', desc: 'Deposit any amount and get the same value back as a bonus coupon — up to 50 USDT free', reward: 50, metric: 'depositMatch', target: 0, go: 'assets' },
+      { id: 'depositmatch', icon: 'ti-gift', title: '100% Deposit Match', desc: 'Deposit 10–100 USDT and get the exact same amount back as a bonus coupon', reward: 100, metric: 'depositMatch', target: 10, go: 'assets', featured: true },
       { id: 'spot', icon: 'ti-arrows-exchange', title: 'First Spot Trade', desc: 'Trade 100 USDT volume in Spot', reward: 5, metric: 'spotVol', target: 100, go: 'trade' },
       { id: 'futures', icon: 'ti-trending-up', title: 'First Futures Trade', desc: 'Trade 20,000 USDT volume in Futures', reward: 15, metric: 'futVol', target: 20000, go: 'futures' },
       { id: 'tgchannel', icon: 'ti-brand-telegram', title: 'Join our Telegram', desc: 'Join the @KolonoEX channel', reward: 0.5, metric: 'tgChannel', target: 0, go: 'social', link: 'https://t.me/KolonoEX' },
