@@ -52,6 +52,57 @@ async function tgSend(chatId, text) {
   } catch (e) { /* ignore */ }
 }
 
+// ── Photos ────────────────────────────────────────────────────────────────
+// Images are not stored in Redis. They are uploaded to Telegram once (which
+// doubles as the notification the admin/user receives in the bot anyway), and
+// only the resulting file_id is kept on the message. Rendering goes through the
+// signed proxy below, because the raw Telegram file URL contains the bot token.
+const IMG_MAX_BYTES = 5 * 1024 * 1024;
+
+function imgKey() {
+  return process.env.ADMIN_SECRET || process.env.TELEGRAM_BOT_TOKEN || 'kolonoex';
+}
+function imgSig(fileId) {
+  return crypto.createHmac('sha256', imgKey()).update(String(fileId)).digest('hex').slice(0, 20);
+}
+function imgUrl(fileId) {
+  return `/api/support?action=img&id=${encodeURIComponent(fileId)}&t=${imgSig(fileId)}`;
+}
+// Accepts the small JPEG the client produced by down-scaling on a canvas.
+function parseDataUrl(s) {
+  const m = /^data:(image\/(?:jpeg|jpg|png|webp));base64,([A-Za-z0-9+/=\s]+)$/.exec(String(s || ''));
+  if (!m) return null;
+  let buf; try { buf = Buffer.from(m[2].replace(/\s+/g, ''), 'base64'); } catch { return null; }
+  if (!buf.length || buf.length > IMG_MAX_BYTES) return null;
+  return { buf, mime: m[1] === 'image/jpg' ? 'image/jpeg' : m[1] };
+}
+const chatIdOf = (id) => (String(id).startsWith('tg_') ? String(id).slice(3) : String(id));
+
+// Upload the bytes once; returns the largest file_id Telegram gives back.
+async function tgUploadPhoto(chatId, buf, mime, caption) {
+  const token = process.env.TELEGRAM_BOT_TOKEN; if (!token || !chatId) return null;
+  try {
+    const fd = new FormData();
+    fd.append('chat_id', chatIdOf(chatId));
+    if (caption) { fd.append('caption', String(caption).slice(0, 1024)); fd.append('parse_mode', 'HTML'); }
+    fd.append('photo', new Blob([buf], { type: mime || 'image/jpeg' }), 'photo.jpg');
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, { method: 'POST', body: fd });
+    const d = await r.json();
+    const ph = d && d.ok && d.result && d.result.photo;
+    return ph && ph.length ? ph[ph.length - 1].file_id : null;
+  } catch { return null; }
+}
+// Re-send an already uploaded photo to another chat — no bytes on the wire.
+async function tgSendPhotoId(chatId, fileId, caption) {
+  const token = process.env.TELEGRAM_BOT_TOKEN; if (!token || !chatId || !fileId) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatIdOf(chatId), photo: fileId, caption: caption ? String(caption).slice(0, 1024) : undefined, parse_mode: 'HTML' }),
+    });
+  } catch { /* ignore */ }
+}
+
 const ONLINE_TTL = 45000;      // an admin heartbeat is "online" for 45s
 const HISTORY_CAP = 120;       // messages kept per conversation
 const MSG_MAX = 1000;          // max chars per message
@@ -86,14 +137,51 @@ async function pushMessage(userId, msg) {
 }
 async function getMessages(userId) {
   const rows = (await upstash(['LRANGE', `support:msgs:${userId}`, 0, HISTORY_CAP - 1])) || [];
-  return rows.map(parseJSON).filter(Boolean).reverse(); // oldest → newest
+  return rows.map(parseJSON).filter(Boolean).reverse().map(withImg); // oldest → newest
+}
+// The stored message only carries the Telegram file_id; the signed URL is
+// derived at read time so the signing key can rotate without rewriting history.
+function withImg(m) {
+  if (m && m.photo) return { ...m, img: imgUrl(m.photo) };
+  return m;
 }
 
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
+
+  // Signed image proxy (GET). The Telegram file URL embeds the bot token, so it
+  // can never reach the client; the signature stops the endpoint from being an
+  // open relay for arbitrary file_ids.
+  if (req.method === 'GET') {
+    const q = req.query || {};
+    if (String(q.action || '') !== 'img') return res.status(405).json({ error: 'Method not allowed' });
+    const fileId = String(q.id || ''), sig = String(q.t || '');
+    if (!fileId || !sig) return res.status(400).json({ error: 'id and t required' });
+    let ok = false;
+    try { const a = Buffer.from(imgSig(fileId)), b = Buffer.from(sig);
+      ok = a.length === b.length && crypto.timingSafeEqual(a, b); } catch { ok = false; }
+    if (!ok) return res.status(403).json({ error: 'Bad signature' });
+    const token = process.env.TELEGRAM_BOT_TOKEN;
+    if (!token) return res.status(500).json({ error: 'Bot not configured' });
+    try {
+      const gf = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`);
+      const gd = await gf.json();
+      const path = gd && gd.ok && gd.result && gd.result.file_path;
+      if (!path) return res.status(404).json({ error: 'File not found' });
+      const fr = await fetch(`https://api.telegram.org/file/bot${token}/${path}`);
+      if (!fr.ok) return res.status(502).json({ error: 'Fetch failed' });
+      const buf = Buffer.from(await fr.arrayBuffer());
+      res.setHeader('Content-Type', fr.headers.get('content-type') || 'image/jpeg');
+      res.setHeader('Cache-Control', 'private, max-age=86400, immutable');
+      return res.status(200).send(buf);
+    } catch (e) {
+      return res.status(500).json({ error: 'Proxy error' });
+    }
+  }
+
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const body = req.body || {};
@@ -141,20 +229,29 @@ module.exports = async function handler(req, res) {
     if (action === 'reply') {
       if (!isAdmin) return res.status(401).json({ error: 'Unauthorized' });
       const userId = String(body.userId || ''); const text = String(body.text || '').slice(0, MSG_MAX).trim();
-      if (!userId || !text) return res.status(400).json({ error: 'userId and text required' });
+      const img = body.image ? parseDataUrl(body.image) : null;
+      if (body.image && !img) return res.status(400).json({ error: 'Invalid or oversized image' });
+      if (!userId || (!text && !img)) return res.status(400).json({ error: 'userId and text or image required' });
       const at = Date.now();
       const msg = { id: at + '-a', from: 'admin', text, at };
+      // Upload once to the user's own chat: that upload *is* the notification.
+      if (img) {
+        const cap = `💬 <b>Support replied</b>${text ? '\n\n' + escHtml(text) : ''}`;
+        const fileId = await tgUploadPhoto(userId, img.buf, img.mime, cap);
+        if (!fileId) return res.status(502).json({ error: 'Image upload failed' });
+        msg.photo = fileId;
+      }
       await pushMessage(userId, msg);
       const meta = parseJSON(await upstash(['GET', `support:meta:${userId}`])) || {};
-      meta.lastText = text; meta.lastAt = at; meta.lastFrom = 'admin';
+      meta.lastText = text || '📷 Photo'; meta.lastAt = at; meta.lastFrom = 'admin';
       meta.unreadUser = (parseInt(meta.unreadUser, 10) || 0) + 1; meta.unreadAdmin = 0;
       await upstash(['SET', `support:meta:${userId}`, JSON.stringify(meta)]);
       await upstash(['ZADD', 'support:index', at, userId]);
       // Notify the user: in-app command + bot push.
-      await upstash(['LPUSH', `cmd:${userId}`, JSON.stringify({ type: 'supportReply', text, at })]);
+      await upstash(['LPUSH', `cmd:${userId}`, JSON.stringify({ type: 'supportReply', text, at, img: msg.photo ? imgUrl(msg.photo) : undefined })]);
       await upstash(['LTRIM', `cmd:${userId}`, 0, 99]);
-      await tgSend(userId, `💬 <b>Support replied</b>\n\n${escHtml(text)}`);
-      return res.status(200).json({ ok: true, message: msg });
+      if (!msg.photo) await tgSend(userId, `💬 <b>Support replied</b>\n\n${escHtml(text)}`);
+      return res.status(200).json({ ok: true, message: withImg(msg) });
     }
 
     // ───────────── USER ACTIONS (TG-authed) ─────────────
@@ -175,22 +272,38 @@ module.exports = async function handler(req, res) {
     }
     if (action === 'send') {
       const text = String(body.text || '').slice(0, MSG_MAX).trim();
-      if (!text) return res.status(400).json({ error: 'text required' });
+      const img = body.image ? parseDataUrl(body.image) : null;
+      if (body.image && !img) return res.status(400).json({ error: 'Invalid or oversized image' });
+      if (!text && !img) return res.status(400).json({ error: 'text or image required' });
       const at = Date.now();
       const msg = { id: at + '-u', from: 'user', text, at };
+      const who = `${escHtml(tgUser.first_name || '')}${tgUser.username ? ' (@' + escHtml(tgUser.username) + ')' : ''}`;
+      const note = `🆘 <b>Support message</b>\nFrom: ${who}\nID: <code>${tgUser.id}</code>${text ? '\n\n' + escHtml(text) : ''}`;
+      // One upload to the first admin; every other admin gets the file_id.
+      const admins = [...adminIds()].filter((a) => a !== 'secret');
+      if (img) {
+        let fileId = null;
+        for (const aid of admins) { fileId = await tgUploadPhoto(aid, img.buf, img.mime, note); if (fileId) break; }
+        if (!fileId) return res.status(502).json({ error: 'Image upload failed' });
+        msg.photo = fileId;
+      }
       await pushMessage(userId, msg);
       const meta = {
         userId, name: tgUser.first_name || null, username: tgUser.username || null,
-        lastText: text, lastAt: at, lastFrom: 'user',
+        lastText: text || '📷 Photo', lastAt: at, lastFrom: 'user',
         unreadAdmin: (parseInt((parseJSON(await upstash(['GET', `support:meta:${userId}`])) || {}).unreadAdmin, 10) || 0) + 1,
         unreadUser: 0,
       };
       await upstash(['SET', `support:meta:${userId}`, JSON.stringify(meta)]);
       await upstash(['ZADD', 'support:index', at, userId]);
       // Notify every admin via the bot (so tickets reach them even when offline).
-      const note = `🆘 <b>Support message</b>\nFrom: ${escHtml(tgUser.first_name || '')}${tgUser.username ? ' (@' + escHtml(tgUser.username) + ')' : ''}\nID: <code>${tgUser.id}</code>\n\n${escHtml(text)}`;
-      for (const aid of adminIds()) { if (aid !== 'secret') await tgSend(aid, note); }
-      return res.status(200).json({ ok: true, online, message: msg });
+      if (msg.photo) {
+        let first = true;
+        for (const aid of admins) { if (first) { first = false; continue; } await tgSendPhotoId(aid, msg.photo, note); }
+      } else {
+        for (const aid of admins) await tgSend(aid, note);
+      }
+      return res.status(200).json({ ok: true, online, message: withImg(msg) });
     }
 
     return res.status(400).json({ error: 'Unknown action' });
