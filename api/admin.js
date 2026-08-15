@@ -481,6 +481,39 @@ function cleanBanners(list) {
       return res.status(200).json({ ok: true, mode });
     }
 
+    // Reset EVERY user at once. Same semantics as the single-user reset above,
+    // applied to the whole `users` set. `mode: 'full'` wipes balances/state and
+    // sends a resetAccount command; anything else clears only task/check-in
+    // progress (a resetTasks command). Telegram push notifications are
+    // deliberately skipped here — sending one per user would be slow and could
+    // trip Telegram's rate limits on a large user base; the in-app command
+    // resets them on next open. Returns how many users were affected.
+    if (body.action === 'resetAll') {
+      const mode = body.mode === 'full' ? 'full' : 'tasks';
+      const ids = (await upstash(['SMEMBERS', 'users'])) || [];
+      let count = 0;
+      for (const id of ids) {
+        if (!id) continue;
+        try {
+          if (mode === 'full') {
+            await upstash(['DEL', `bal:${id}`, `dep:total:${id}`, `dep:real:${id}`, `ledger:${id}`, `seen:${id}`,
+              `task:claimed:${id}`, `checkin:${id}`, `bonus:${id}`, `vol:spot:${id}`, `vol:fut:${id}`,
+              `coupons:${id}`, `coupon:used:${id}`, `pot:${id}`, `rpot:${id}`, `dep:tiers:${id}`,
+              `payout:earned:${id}`]);
+            await upstash(['LPUSH', `cmd:${id}`, JSON.stringify({ type: 'resetAccount' })]);
+          } else {
+            await upstash(['DEL', `task:claimed:${id}`, `checkin:${id}`,
+              `vol:spot:${id}`, `vol:fut:${id}`, `task:tgchannel:${id}`,
+              `coupons:${id}`, `coupon:used:${id}`, `pot:${id}`, `rpot:${id}`, `dep:tiers:${id}`]);
+            await upstash(['LPUSH', `cmd:${id}`, JSON.stringify({ type: 'resetTasks' })]);
+          }
+          await upstash(['LTRIM', `cmd:${id}`, 0, 99]);
+          count += 1;
+        } catch (e) { /* skip a single bad user rather than fail the whole batch */ }
+      }
+      return res.status(200).json({ ok: true, mode, count, total: ids.length });
+    }
+
     // Adjust the user's bonus balance (with an optional note). Delivered to the
     // app via a command and pushed to the user's bot chat.
     if (body.action === 'bonus') {
