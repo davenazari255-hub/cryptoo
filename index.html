@@ -1698,9 +1698,14 @@
   // Capped at the bonus actually granted, because that is what the server will
   // credit; showing more than it will pay is how a transfer appears to shave.
   function bonusTransferable(){
+    // The user's REAL realised profit from bonus trading is transferable in full.
+    // Previously this was capped at the granted bonus (Math.min(profit,granted)),
+    // which meant a user who turned a $5 bonus into $10 profit could only move
+    // out $5 (or less, as the shrinking pool capped it server-side) — the exact
+    // "made $10, could only withdraw $3" bug users reported. Principal is never
+    // transferable (only profit sits in bonusProfit), so this returns profit.
     const profit=Math.max(0,state.bonusProfit||0);
-    const granted=Math.max(0,state.bonusCredited||0);
-    return Math.floor(Math.min(profit,granted)*100)/100; }
+    return Math.floor(profit*100)/100; }
 
   // ── bonus accounting ───────────────────────────────────────────────
   // The server knows only what it credited. Everything the trading does to that
