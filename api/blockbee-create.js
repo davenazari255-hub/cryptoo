@@ -34,6 +34,26 @@ const TICKERS = {
   sol: 'sol/sol',
 };
 
+// BlockBee's /qrcode/ endpoint returns JSON ({ status, qr_code, payment_uri })
+// where qr_code is a base64 PNG — NOT a raw image. Putting the endpoint URL in
+// an <img src> shows nothing. Fetch it here and return a ready-to-embed data
+// URI instead. Best-effort: on any failure we return null and the frontend
+// falls back to its own QR generator, so a QR hiccup never blocks the deposit.
+async function fetchQrDataUri(ticker, address) {
+  try {
+    const u = `${BLOCKBEE_BASE}/${ticker}/qrcode/?address=${encodeURIComponent(address)}&size=300`;
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 8000);
+    let j = null;
+    try {
+      const resp = await fetch(u, { signal: ac.signal });
+      j = await resp.json();
+    } finally { clearTimeout(timer); }
+    if (j && j.qr_code) return `data:image/png;base64,${j.qr_code}`;
+  } catch (e) { /* fall through to null */ }
+  return null;
+}
+
 // ── storage: refuse to issue an address if storage is down, so we never hand
 // out an address we cannot attribute to a user (same policy as the old flow). ──
 class StorageDown extends Error {}
@@ -131,9 +151,11 @@ async function createAddress(req, res) {
   if (saved) {
     let rec = null; try { rec = JSON.parse(saved); } catch {}
     if (rec && rec.address) {
+      const qr = await fetchQrDataUri(ticker, rec.address);
       return res.status(200).json({
         address: rec.address,
-        qr: `${BLOCKBEE_BASE}/${ticker}/qrcode/?address=${encodeURIComponent(rec.address)}&size=300`,
+        // Ready-to-embed data-URI QR (null → frontend uses its own fallback).
+        qr,
         payCurrency: currency.toUpperCase(),
         network: rec.network || null,
         minCoin: rec.minCoin != null ? rec.minCoin : null,
@@ -203,10 +225,14 @@ async function createAddress(req, res) {
   const rec = { address, network: currency.toUpperCase(), minCoin, nonce, at: Date.now() };
   await upstash(['SET', addrKey, JSON.stringify(rec)]);
 
+  // Fetch the QR as a data URI (BlockBee returns base64 JSON, not a raw image).
+  const qr = await fetchQrDataUri(ticker, address);
+
   return res.status(200).json({
     address,
-    // A QR image the app can render directly (BlockBee-hosted PNG of the address).
-    qr: `${BLOCKBEE_BASE}/${ticker}/qrcode/?address=${encodeURIComponent(address)}&size=300`,
+    // A ready-to-embed data-URI QR; null if BlockBee's QR call failed, in which
+    // case the frontend falls back to its own QR generator.
+    qr,
     payCurrency: currency.toUpperCase(),
     network: currency.toUpperCase(),
     minCoin,
