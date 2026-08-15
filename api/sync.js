@@ -40,7 +40,12 @@ function verifyTelegram(initData) {
 const parseJSON = (s) => { try { return JSON.parse(s); } catch { return null; } };
 const escHtml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-const REFERRAL_BONUS = 0.5; // default USD credited to the referrer per valid invite
+const REFERRAL_BONUS = 0.05; // default USD credited to the referrer per valid invite
+// Hard ceiling on the per-invite signup bonus, including any per-partner
+// override stored in Redis (partner:cfg:<code>.refBonus). Existing partners
+// were set to 0.5 in the admin panel; rather than rewrite every partner row in
+// the database, we clamp whatever value is read to this cap at read time.
+const MAX_REFERRAL_BONUS = 0.05;
 
 // The same allowlist api/admin.js, bot.js, partner.js and support.js use:
 // built-in owner plus the comma-separated ADMIN_IDS env var. Duplicated rather
@@ -78,12 +83,12 @@ const COUPON_TTL_MS = 7 * 24 * 60 * 60 * 1000;   // coupons expire after 7 days
 // the two rewards indistinguishable: raising the referral bar to 10 also raised
 // the check-in bar, and each surface described the other's rules.
 //
-//   check-in  -> pot:<user>   mints at 5   (small, daily, should land often)
+//   check-in  -> pot:<user>   mints at 30  (small, daily, should land often)
 //   referral  -> rpot:<user>  mints at 10  (a couple of invites should not tip it)
 //
 // Existing users keep their pot: balance as the check-in pot; rpot: starts empty,
 // so nothing already banked is lost.
-const POT_THRESHOLD = 5;
+const POT_THRESHOLD = 30;
 const REF_POT_THRESHOLD = 10;
 
 const POTS = {
@@ -192,6 +197,7 @@ const MAX_COUPON_VALUE = 1000;
 const DEFAULT_TASKS = [
   { id: 'welcome', icon: 'ti-gift', title: 'Welcome Bonus', desc: 'Sign in to KolonoEX', reward: 10, metric: 'always', target: 0, go: 'home' },
   { id: 'deposit', icon: 'ti-wallet', title: 'Net Deposit', desc: 'Deposit to unlock tiered rewards', reward: 10, metric: 'deposit', target: 100, go: 'assets' },
+  { id: 'depositmatch', icon: 'ti-gift', title: 'Deposit & Double Up', desc: 'Get a bonus coupon equal to your total deposit — up to 50 USDT', reward: 50, metric: 'depositMatch', target: 0, go: 'assets' },
   { id: 'spot', icon: 'ti-arrows-exchange', title: 'First Spot Trade', desc: 'Trade 100 USDT volume in Spot', reward: 5, metric: 'spotVol', target: 100, go: 'trade' },
   { id: 'futures', icon: 'ti-trending-up', title: 'First Futures Trade', desc: 'Trade 20,000 USDT volume in Futures', reward: 15, metric: 'futVol', target: 20000, go: 'futures' },
   { id: 'tgchannel', icon: 'ti-brand-telegram', title: 'Join our Telegram', desc: 'Join the @KolonoEX channel', reward: 0.5, metric: 'tgChannel', target: 0, go: 'social', link: 'https://t.me/KolonoEX' },
@@ -376,6 +382,10 @@ async function taskConditionMet(upstashFn, userId, task, vols) {
     case 'tgChannel': return !!(await upstashFn(['GET', `task:tgchannel:${userId}`]));
     case 'xFollow':   return true; // honour-based; the claim ledger limits it to once
     case 'deposit':   return (parseFloat(await upstashFn(['GET', `dep:total:${userId}`])) || 0) >= target;
+    // Deposit-match: claimable once the user has deposited anything at all. The
+    // reward amount (a coupon equal to their total deposit, capped) is computed
+    // in the claimTask handler, not here.
+    case 'depositMatch': return (parseFloat(await upstashFn(['GET', `dep:total:${userId}`])) || 0) >= 1;
     case 'referral':  return (parseInt(await upstashFn(['GET', `ref:count:${userId}`]), 10) || 0) >= target;
     case 'spotVol':   return (vols.spot || 0) >= target;
     case 'futVol':    return (vols.fut || 0) >= target;
@@ -427,6 +437,11 @@ async function recordReferral(upstashFn, userId, startParam, newUserName) {
     const cfg = parseJSON(await upstashFn(['GET', `partner:cfg:${partnerCode}`])) || {};
     if (cfg.refBonus != null && isFinite(parseFloat(cfg.refBonus))) bonus = parseFloat(cfg.refBonus);
   }
+  // Cap the signup bonus at MAX_REFERRAL_BONUS for BOTH normal and partner
+  // links. Existing partners were configured with refBonus = 0.5 in the admin
+  // panel; clamping here brings them down to 0.05 without rewriting the
+  // database. Negative overrides collapse to 0.
+  bonus = Math.max(0, Math.min(MAX_REFERRAL_BONUS, bonus));
 
   // Credit the referrer and track the relationship.
   await upstashFn(['SADD', `ref:list:${referrer}`, userId]);
@@ -441,7 +456,7 @@ async function recordReferral(upstashFn, userId, startParam, newUserName) {
 
   // Notify the referrer: in-bot push + in-app notification (delivered on next sync).
   const who = escHtml(newUserName || 'A new user');
-  const text = `🎉 <b>${who}</b> just joined KolonoEX using your invite link!\n\n💰 You earned <b>$${bonus}</b> — it is collecting in your Coupon Center and becomes an activatable coupon once your referral rewards reach $${REF_POT_THRESHOLD}.`;
+  const text = `🎉 <b>${who}</b> just joined KolonoEX using your invite link!\n\n💰 You earned <b>$${bonus}</b> — it is collecting in your Coupon Center and becomes an activatable coupon once your referral rewards reach $${REF_POT_THRESHOLD}.\n\n📈 Plus, you now earn <b>3%</b> of everything they deposit, straight to your withdrawable balance.`;
   await tgSend(referrer.slice(3), text);
   await upstashFn(['LPUSH', `cmd:${referrer}`, JSON.stringify({ type: 'message', kind: 'referral', title: 'New referral 🎉', text: `${newUserName || 'A friend'} joined with your link. You earned $${bonus} bonus!` })]);
   await upstashFn(['LTRIM', `cmd:${referrer}`, 0, 99]);
@@ -530,7 +545,19 @@ module.exports = async function handler(req, res) {
       const first = await upstash(['SADD', `task:claimed:${userId}`, taskId]);
       if (first === 0) return res.status(409).json({ error: 'Already claimed', claimed: await upstash(['SMEMBERS', `task:claimed:${userId}`]) });
 
-      const reward = Math.min(MAX_TASK_REWARD, Math.max(0, parseFloat(task.reward) || 0));
+      // Reward amount. Normal tasks pay their flat `reward`, capped at
+      // MAX_TASK_REWARD. The deposit-match task instead grants a coupon equal
+      // to the user's TOTAL deposit, with `task.reward` acting as the ceiling
+      // (and never above MAX_COUPON_VALUE) — "deposit X, get X back as bonus,
+      // up to the cap".
+      let reward;
+      if (task.metric === 'depositMatch') {
+        const depTotal = parseFloat(await upstash(['GET', `dep:total:${userId}`])) || 0;
+        const cap = Math.min(MAX_COUPON_VALUE, Math.max(0, parseFloat(task.reward) || 0));
+        reward = Math.round(Math.min(depTotal, cap) * 100) / 100;
+      } else {
+        reward = Math.min(MAX_TASK_REWARD, Math.max(0, parseFloat(task.reward) || 0));
+      }
 
       // The reward is issued as a coupon, NOT credited here. It only reaches the
       // bonus balance when the user activates it in the Coupon Center, and it

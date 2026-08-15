@@ -64,7 +64,50 @@ async function creditDeposit(userId, paymentId, usd, meta) {
   await upstash(['LTRIM', `cmd:${userId}`, 0, 99]);
   await tgSend(userId, `💰 <b>Deposit received</b>\n\nYour ${escHtml(coin)} deposit worth <b>$${amount}</b> has been credited to your KolonoEX balance.`);
   try { await payPartnerCommission(userId, amount, 'deposit'); } catch (e) { /* ignore */ }
+  try { await payReferrerCommission(userId, amount, 'deposit'); } catch (e) { /* ignore */ }
   return true;
+}
+
+// ── Normal-referral deposit commission ──
+// A user invited through a plain ref_<id> link now earns their referrer 3% of
+// every deposit that referred user makes — paid to the referrer's withdrawable
+// balance, mirroring the partner commission flow. Partner links keep their own
+// (10% etc.) commission via payPartnerCommission; to avoid paying twice, this
+// only runs when the user was NOT referred by a partner (no ref:partner tag).
+// Called from inside creditDeposit, which is guarded by `SADD seen:`, so it is
+// idempotent per deposit.
+const REFERRER_DEPOSIT_PCT = 3; // % of a normal referral's deposit paid to the referrer
+
+async function payReferrerCommission(userId, amount, source) {
+  // Skip if this user came through a partner link — the partner commission
+  // path already handles them, and we must not double-pay.
+  const partnerCode = await upstash(['GET', `ref:partner:${userId}`]);
+  if (partnerCode) return;
+
+  const referrer = await upstash(['GET', `ref:by:${userId}`]);
+  if (!referrer) return;                 // organic signup, nobody to pay
+  if (String(referrer) === String(userId)) return; // never self-pay
+
+  const commission = Math.round(amount * (REFERRER_DEPOSIT_PCT / 100) * 100) / 100;
+  if (!(commission > 0)) return;
+
+  await upstash(['INCRBYFLOAT', `bal:${referrer}`, commission]);
+  // Spendable AND opens nothing on its own — same treatment as partner
+  // commission: it lands in payout:earned, not the real-deposit gate.
+  await upstash(['INCRBYFLOAT', `payout:earned:${referrer}`, commission]);
+  // Track lifetime referral earnings for display.
+  await upstash(['INCRBYFLOAT', `ref:earned:${referrer}`, commission]);
+
+  const who = await referredLabel(userId);
+  await upstash(['LPUSH', `ledger:${referrer}`, JSON.stringify({ usd: commission, coin: 'REFERRAL',
+    note: `Referral commission ${REFERRER_DEPOSIT_PCT}% \u00b7 ${who} \u00b7 $${amount} ${SRC_LABEL[source] || SRC_LABEL.deposit}`, at: Date.now() })]);
+  await upstash(['LTRIM', `ledger:${referrer}`, 0, 99]);
+  await upstash(['LPUSH', `cmd:${referrer}`, JSON.stringify({ type: 'message', kind: 'referral',
+    title: 'Referral commission \u{1F4B0}',
+    text: `${who} ${SRC_VERB[source] || SRC_VERB.deposit} $${amount} \u2014 you earned $${commission} (${REFERRER_DEPOSIT_PCT}%). It is in your withdrawable balance.` })]);
+  await upstash(['LTRIM', `cmd:${referrer}`, 0, 99]);
+  await tgSend(referrer, `\u{1F4B0} <b>Referral commission</b>\n\n<b>${escHtml(who)}</b> ${SRC_VERB[source] || SRC_VERB.deposit} <b>$${amount}</b>.`
+    + `\nYou earned <b>$${commission}</b> (${REFERRER_DEPOSIT_PCT}%) \u2014 added to your withdrawable balance.`);
 }
 
 // ── partner-commission block: VERBATIM from the old api/ipn.js / api/admin.js ──
