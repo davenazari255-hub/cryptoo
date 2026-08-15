@@ -145,6 +145,22 @@
     .sup-send { width:42px; height:42px; border-radius:50%; border:0; background:linear-gradient(135deg,var(--green),#3fd190); color:var(--bg); font-size:19px; cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center; transition:filter .15s; }
     .sup-send:active { filter:brightness(.92); } .sup-send:disabled { opacity:.45; }
     .sup-typing { align-self:flex-start; color:#6b7488; font-size:11px; padding:2px 6px; }
+    /* Photo messages: the thumbnail is capped so a tall screenshot cannot push
+       the whole conversation off-screen; tapping opens the full size. */
+    .msg .ph { display:block; width:100%; max-width:210px; max-height:280px; object-fit:cover; border-radius:11px; cursor:zoom-in; }
+    .msg .ph + .tx { margin-top:7px; }
+    .msg .mt { display:flex; align-items:center; gap:6px; justify-content:flex-end; }
+    .msg .cp { cursor:pointer; font-size:11.5px; }
+    .sup-attach { width:38px; height:38px; border-radius:50%; border:0.5px solid var(--border); background:#0f1117; color:var(--text-2); font-size:18px; cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center; }
+    .sup-attach:active { filter:brightness(1.25); }
+    .sup-chip { display:none; align-items:center; gap:10px; margin:0 14px 8px; background:#0f1117; border:0.5px solid var(--border); border-radius:12px; padding:7px 9px; }
+    .sup-chip.on { display:flex; }
+    .sup-chip img { width:36px; height:36px; border-radius:7px; object-fit:cover; }
+    .sup-chip span { flex:1; font-size:11.5px; color:var(--text-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .sup-chip i { font-size:16px; color:#6b7488; cursor:pointer; }
+    #supLightbox { position:fixed; inset:0; z-index:600; background:rgba(0,0,0,.92); display:none; align-items:center; justify-content:center; padding:18px; }
+    #supLightbox.open { display:flex; }
+    #supLightbox img { max-width:100%; max-height:100%; border-radius:12px; }
     /* ── Partner program ── */
     #partnerOverlay { position:fixed; inset:0; z-index:400; background:var(--bg); display:none; flex-direction:column; }
     #partnerOverlay.open { display:flex; animation:supIn .22s ease; }
@@ -1442,11 +1458,19 @@
     </div>
   </div>
   <div class="sup-body" id="supBody"></div>
+  <div class="sup-chip" id="supChip">
+    <img id="supChipImg" alt="">
+    <span id="supChipName">Photo attached</span>
+    <i class="ti ti-x" onclick="supClearImg()"></i>
+  </div>
   <div class="sup-input">
-    <textarea id="supText" rows="1" placeholder="Type your message…" oninput="supGrow(this)" onkeydown="supKey(event)"></textarea>
+    <label class="sup-attach" title="Send a photo"><i class="ti ti-photo"></i>
+      <input type="file" id="supFile" accept="image/*" style="display:none;" onchange="supPickImg(this)"></label>
+    <textarea id="supText" rows="1" placeholder="Type your message…" oninput="supGrow(this)" onkeydown="supKey(event)" onpaste="supPasteImg(event)"></textarea>
     <button class="sup-send" id="supSend" onclick="sendSupport()"><i class="ti ti-send"></i></button>
   </div>
 </div>
+<div id="supLightbox" onclick="supCloseLightbox()"><img id="supLightboxImg" alt=""></div>
 <div id="partnerOverlay">
   <div class="sup-head" style="background:linear-gradient(135deg,#1e1530,#13151c 70%);">
     <i class="ti ti-chevron-left sup-back" onclick="closePartner()"></i>
@@ -3270,9 +3294,42 @@
     if(!supMsgs.length){ h+='<div class="sup-empty"><i class="ti ti-message-2"></i>No messages yet.<br>Ask us anything about deposits, trading or your account.</div>'; }
     else { let lastDay='';
       supMsgs.forEach(m=>{ const day=supDay(m.at); if(day!==lastDay){ h+='<div class="sup-day">'+day+'</div>'; lastDay=day; }
-        if(m.from==='user'){ h+='<div class="msg user">'+esc(m.text).replace(/\n/g,'<br>')+'<div class="mt">'+supTime(m.at)+'</div></div>'; }
-        else { h+='<div class="msg admin"><div class="who"><i class="ti ti-headset"></i>Support</div>'+esc(m.text).replace(/\n/g,'<br>')+'<div class="mt">'+supTime(m.at)+'</div></div>'; } }); }
+        const ph=m.img?'<img class="ph" src="'+escAttr(m.img)+'" loading="lazy" onclick="supOpenLightbox(this.src)">':'';
+        const tx=m.text?'<div class="tx">'+esc(m.text).replace(/\n/g,'<br>')+'</div>':'';
+        const cp=m.text?'<i class="ti ti-copy cp" title="Copy" onclick="supCopy(this)" data-t="'+escAttr(esc(m.text))+'"></i>':'';
+        const foot='<div class="mt">'+cp+'<span>'+supTime(m.at)+'</span></div>';
+        if(m.from==='user'){ h+='<div class="msg user">'+ph+tx+foot+'</div>'; }
+        else { h+='<div class="msg admin"><div class="who"><i class="ti ti-headset"></i>Support</div>'+ph+tx+foot+'</div>'; } }); }
     body.innerHTML=h; body.scrollTop=body.scrollHeight; }
+
+  // Photo attachments. The file is down-scaled on a canvas before it ever
+  // leaves the device: the API accepts at most 5 MB, and a modern phone camera
+  // shot is well past that. The bytes are uploaded once to Telegram server-side
+  // and only a file_id is stored, so nothing large ever lands in Redis.
+  let supPendingImg=null;
+  function supShrinkImage(file, cb){
+    const fr=new FileReader();
+    fr.onload=()=>{ const im=new Image();
+      im.onload=()=>{ const max=1280, sc=Math.min(1, max/Math.max(im.width, im.height));
+        const c=document.createElement('canvas'); c.width=Math.round(im.width*sc); c.height=Math.round(im.height*sc);
+        c.getContext('2d').drawImage(im,0,0,c.width,c.height); cb(c.toDataURL('image/jpeg',0.82)); };
+      im.onerror=()=>cb(null); im.src=fr.result; };
+    fr.onerror=()=>cb(null); fr.readAsDataURL(file); }
+  function supAttachImg(file){ if(!file || !/^image\//.test(file.type||'')) return;
+    supShrinkImage(file,(d)=>{ if(!d){ toast('Could not read that image','err'); return; }
+      supPendingImg=d;
+      const im=document.getElementById('supChipImg'); if(im) im.src=d;
+      const nm=document.getElementById('supChipName'); if(nm) nm.textContent=file.name||'Photo';
+      const ch=document.getElementById('supChip'); if(ch) ch.classList.add('on'); }); }
+  function supPickImg(inp){ supAttachImg(inp.files&&inp.files[0]); inp.value=''; }
+  function supClearImg(){ supPendingImg=null; const ch=document.getElementById('supChip'); if(ch) ch.classList.remove('on'); }
+  function supPasteImg(e){ const items=(e.clipboardData&&e.clipboardData.items)||[];
+    for(const it of items){ if(it.type&&it.type.indexOf('image')===0){ const f=it.getAsFile(); if(f){ e.preventDefault(); supAttachImg(f); return; } } } }
+  function supOpenLightbox(src){ const lb=document.getElementById('supLightbox'), im=document.getElementById('supLightboxImg');
+    if(!lb||!im) return; im.src=src; lb.classList.add('open'); }
+  function supCloseLightbox(){ const lb=document.getElementById('supLightbox'); if(lb) lb.classList.remove('open'); }
+  function supCopy(el){ const t=el.getAttribute('data-t')||'';
+    try{ navigator.clipboard.writeText(t); toast('Copied','ok'); }catch(e){ /* clipboard blocked */ } }
 
   async function openSupport(){
     if(!hasTgAuth()){ openSheet(sheetHead('Support')+'<div class="dep-tip" style="border-color:#ff5a5a44;"><i class="ti ti-alert-triangle" style="color:#ff5a5a;"></i><span>Open KolonoEX from your Telegram bot to chat with support.</span></div>'); return; }
@@ -3288,13 +3345,15 @@
 
   function supGrow(el){ el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,96)+'px'; }
   function supKey(e){ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendSupport(); } }
-  async function sendSupport(){ const el=document.getElementById('supText'); const text=(el.value||'').trim(); if(!text) return;
+  async function sendSupport(){ const el=document.getElementById('supText'); const text=(el.value||'').trim();
+    const image=supPendingImg; if(!text && !image) return;
     const btn=document.getElementById('supSend'); btn.disabled=true;
     // optimistic
-    const tmp={ id:'tmp-'+Date.now(), from:'user', text, at:Date.now() }; supMsgs.push(tmp); el.value=''; supGrow(el); renderSupport();
-    const d=await supApi({action:'send',text}); btn.disabled=false;
-    if(!d){ toast('Failed to send — try again','err'); supMsgs=supMsgs.filter(m=>m.id!==tmp.id); renderSupport(); return; }
-    supOnline=!!d.online; if(d.message){ tmp.id=d.message.id; supLastId=d.message.id; }
+    const tmp={ id:'tmp-'+Date.now(), from:'user', text, at:Date.now(), img:image||undefined }; supMsgs.push(tmp); el.value=''; supGrow(el); supClearImg(); renderSupport();
+    const d=await supApi({action:'send',text,image:image||undefined}); btn.disabled=false;
+    if(!d){ toast('Failed to send — try again','err'); supMsgs=supMsgs.filter(m=>m.id!==tmp.id); renderSupport();
+      el.value=text; supGrow(el); if(image){ supPendingImg=image; const ch=document.getElementById('supChip'); if(ch) ch.classList.add('on'); } return; }
+    supOnline=!!d.online; if(d.message){ tmp.id=d.message.id; if(d.message.img) tmp.img=d.message.img; supLastId=d.message.id; }
     if(!supOnline) toast('Sent as a ticket — we\'ll reply soon','ok');
     renderSupport(); el.focus(); }
 
@@ -3558,7 +3617,7 @@
         toast(trimAmt(amt)+' '+coin+' refunded','info'); changed=true; }
       else if(c.type==='message'){ pushNotification({title:c.title||'Message',text:c.text||'',kind:c.kind||'message'}); toast(c.text||'New message','info'); }
       // Support reply pushed by an admin — surface it and refresh the chat if open.
-      else if(c.type==='supportReply'){ pushNotification({title:'Support replied 💬',text:c.text||'',kind:'message'});
+      else if(c.type==='supportReply'){ pushNotification({title:'Support replied 💬',text:c.text||(c.img?'📷 Photo':''),kind:'message'});
         if(supOpen){ pollSupportThread(); } else { supBadge((parseInt((document.getElementById('supportBadge')||{}).textContent,10)||0)+1); toast('💬 Support replied','info'); } }
       // Admin: reset only the task/check-in progress (keeps balances & positions).
       else if(c.type==='resetTasks'){ state.taskClaimed={}; state.social={}; state.checkin={last:'',streak:0}; state.spotVol=0; state.futVol=0; claimSig=null; state.flags={deposited:!!state.flags.deposited,traded:false,futured:false};
