@@ -17,6 +17,27 @@ async function upstash(args) {
   return data.result;
 }
 
+// Batch many commands into ONE HTTP request via Upstash's /pipeline endpoint.
+// `commands` is a 2D array: [["DEL","k"],["LPUSH","l","x"],...]. Not atomic —
+// commands run in order but may interleave with other clients, which is fine
+// for an independent per-user reset. The response is one result per command;
+// individual command errors are returned inline as {error} and skipped rather
+// than throwing, so one bad key can't fail the whole batch. This turns the
+// resetAll loop from ~3 round trips PER USER into a handful of batched calls.
+async function upstashPipeline(commands) {
+  if (!commands.length) return [];
+  const URL = process.env.UPSTASH_REDIS_REST_URL, TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!URL || !TOKEN) throw new Error('Upstash not configured');
+  const res = await fetch(`${URL.replace(/\/+$/, '')}/pipeline`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(commands),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error('Upstash pipeline: ' + (data.error || res.status));
+  return data; // array of { result } | { error }
+}
+
 const parseJSON = (s) => { try { return JSON.parse(s); } catch { return null; } };
 const escHtml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -490,28 +511,63 @@ function cleanBanners(list) {
     // resets them on next open. Returns how many users were affected.
     if (body.action === 'resetAll') {
       const mode = body.mode === 'full' ? 'full' : 'tasks';
-      const ids = (await upstash(['SMEMBERS', 'users'])) || [];
-      let count = 0;
-      for (const id of ids) {
-        if (!id) continue;
-        try {
-          if (mode === 'full') {
-            await upstash(['DEL', `bal:${id}`, `dep:total:${id}`, `dep:real:${id}`, `ledger:${id}`, `seen:${id}`,
+      const ids = ((await upstash(['SMEMBERS', 'users'])) || []).filter(Boolean);
+
+      // Build the 3 commands each user needs, then ship them in batched
+      // /pipeline requests instead of ~3 sequential round trips PER user.
+      // Old path: 22k users * 3 = 66k serial requests → many minutes → the
+      // serverless function times out and the reset never finishes.
+      // New path: USERS_PER_BATCH users per pipeline call, batches fired in
+      // parallel waves → a few dozen requests total, seconds instead of minutes.
+      const cmdResetType = mode === 'full' ? 'resetAccount' : 'resetTasks';
+      const buildUserCommands = (id) => (mode === 'full'
+        ? [
+            ['DEL', `bal:${id}`, `dep:total:${id}`, `dep:real:${id}`, `ledger:${id}`, `seen:${id}`,
               `task:claimed:${id}`, `checkin:${id}`, `bonus:${id}`, `vol:spot:${id}`, `vol:fut:${id}`,
               `coupons:${id}`, `coupon:used:${id}`, `pot:${id}`, `rpot:${id}`, `dep:tiers:${id}`,
-              `payout:earned:${id}`]);
-            await upstash(['LPUSH', `cmd:${id}`, JSON.stringify({ type: 'resetAccount' })]);
-          } else {
-            await upstash(['DEL', `task:claimed:${id}`, `checkin:${id}`,
+              `payout:earned:${id}`],
+            ['LPUSH', `cmd:${id}`, JSON.stringify({ type: cmdResetType })],
+            ['LTRIM', `cmd:${id}`, 0, 99],
+          ]
+        : [
+            ['DEL', `task:claimed:${id}`, `checkin:${id}`,
               `vol:spot:${id}`, `vol:fut:${id}`, `task:tgchannel:${id}`,
-              `coupons:${id}`, `coupon:used:${id}`, `pot:${id}`, `rpot:${id}`, `dep:tiers:${id}`]);
-            await upstash(['LPUSH', `cmd:${id}`, JSON.stringify({ type: 'resetTasks' })]);
-          }
-          await upstash(['LTRIM', `cmd:${id}`, 0, 99]);
-          count += 1;
-        } catch (e) { /* skip a single bad user rather than fail the whole batch */ }
+              `coupons:${id}`, `coupon:used:${id}`, `pot:${id}`, `rpot:${id}`, `dep:tiers:${id}`],
+            ['LPUSH', `cmd:${id}`, JSON.stringify({ type: cmdResetType })],
+            ['LTRIM', `cmd:${id}`, 0, 99],
+          ]);
+
+      // Tunables. USERS_PER_BATCH keeps each pipeline payload well under
+      // Upstash's 10 MB request limit (500 users ≈ a few hundred KB), and
+      // WAVE limits how many pipeline requests are in flight at once so we
+      // stay friendly to the connection pool / function memory.
+      const USERS_PER_BATCH = 500;
+      const WAVE = 10;
+
+      const batches = [];
+      for (let i = 0; i < ids.length; i += USERS_PER_BATCH) {
+        const slice = ids.slice(i, i + USERS_PER_BATCH);
+        const commands = [];
+        for (const id of slice) commands.push(...buildUserCommands(id));
+        batches.push({ users: slice.length, commands });
       }
-      return res.status(200).json({ ok: true, mode, count, total: ids.length });
+
+      let count = 0;
+      let failedBatches = 0;
+      for (let i = 0; i < batches.length; i += WAVE) {
+        const wave = batches.slice(i, i + WAVE);
+        const results = await Promise.allSettled(wave.map((b) => upstashPipeline(b.commands)));
+        results.forEach((r, j) => {
+          // One failed pipeline request costs its whole batch, not the run.
+          if (r.status === 'fulfilled') count += wave[j].users;
+          else failedBatches += 1;
+        });
+      }
+
+      return res.status(200).json({
+        ok: failedBatches === 0, mode, count, total: ids.length,
+        batches: batches.length, failedBatches,
+      });
     }
 
     // Adjust the user's bonus balance (with an optional note). Delivered to the
