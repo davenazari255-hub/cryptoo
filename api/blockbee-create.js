@@ -41,14 +41,22 @@ async function upstash(args) {
   const URL = process.env.UPSTASH_REDIS_REST_URL, TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!URL || !TOKEN) throw new StorageDown('storage not configured');
   let res, data;
+  // Guard the storage call with a timeout. Without this, a hung connection to
+  // Upstash would leave the serverless function pending forever — the address
+  // would already be created at BlockBee but the app's deposit spinner would
+  // never resolve (exactly the "address made but never shown" symptom).
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 8000);
   try {
     res = await fetch(URL, {
       method: 'POST',
       headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(args),
+      signal: ac.signal,
     });
     data = await res.json();
   } catch (e) { throw new StorageDown('storage unreachable'); }
+  finally { clearTimeout(timer); }
   if (!res.ok || (data && data.error)) throw new StorageDown(String((data && data.error) || res.status));
   return data ? data.result : null;
 }
@@ -158,8 +166,21 @@ async function createAddress(req, res) {
     + `&callback=${encodeURIComponent(callbackUrl)}`
     + `&pending=1&post=1&json=1`;
 
-  const r = await fetch(url);
-  const t = await r.text();
+  // Guard the BlockBee call with an explicit timeout. Without this, a slow or
+  // hung connection to BlockBee would leave the serverless function pending and
+  // the app's deposit spinner would spin forever with no response. On timeout
+  // we abort and return a clear error the frontend can surface.
+  let r, t;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 12000);
+  try {
+    r = await fetch(url, { signal: ac.signal });
+    t = await r.text();
+  } catch (e) {
+    return res.status(504).json({ error: 'Deposit provider timed out. Please try again in a moment.' });
+  } finally {
+    clearTimeout(timer);
+  }
   let data = null; try { data = JSON.parse(t); } catch {}
 
   if (!r.ok || !data || data.status !== 'success' || !data.address_in) {
@@ -168,7 +189,12 @@ async function createAddress(req, res) {
   }
 
   const address = String(data.address_in);
-  const minCoin = data.minimum_transaction_coin != null ? data.minimum_transaction_coin : null;
+  // BlockBee returns minimum_transaction_coin as a STRING (e.g. "10.00000000").
+  // The frontend's trimAmt() calls .toFixed() on it, which throws on a string
+  // and silently aborts the "show address" render — leaving the spinner stuck.
+  // Coerce to a Number here so the value the app receives is always numeric.
+  const minCoinNum = data.minimum_transaction_coin != null ? Number(data.minimum_transaction_coin) : null;
+  const minCoin = (minCoinNum != null && isFinite(minCoinNum)) ? minCoinNum : null;
 
   // Store the owner + nonce, keyed by address (the webhook resolves by
   // address_in as the definitive link) and keep the reusable record.
