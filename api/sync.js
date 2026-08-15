@@ -197,7 +197,7 @@ const MAX_COUPON_VALUE = 1000;
 const DEFAULT_TASKS = [
   { id: 'welcome', icon: 'ti-gift', title: 'Welcome Bonus', desc: 'Sign in to KolonoEX', reward: 10, metric: 'always', target: 0, go: 'home' },
   { id: 'deposit', icon: 'ti-wallet', title: 'Net Deposit', desc: 'Deposit to unlock tiered rewards', reward: 10, metric: 'deposit', target: 100, go: 'assets' },
-  { id: 'depositmatch', icon: 'ti-gift', title: '100% Deposit Match', desc: 'Deposit any amount and get the same value back as a bonus coupon — up to 50 USDT free', reward: 50, metric: 'depositMatch', target: 0, go: 'assets' },
+  { id: 'depositmatch', icon: 'ti-gift', title: '100% Deposit Match', desc: 'Deposit 10–100 USDT and get the exact same amount back as a bonus coupon', reward: 100, metric: 'depositMatch', target: 10, go: 'assets', featured: true },
   { id: 'spot', icon: 'ti-arrows-exchange', title: 'First Spot Trade', desc: 'Trade 100 USDT volume in Spot', reward: 5, metric: 'spotVol', target: 100, go: 'trade' },
   { id: 'futures', icon: 'ti-trending-up', title: 'First Futures Trade', desc: 'Trade 20,000 USDT volume in Futures', reward: 15, metric: 'futVol', target: 20000, go: 'futures' },
   { id: 'tgchannel', icon: 'ti-brand-telegram', title: 'Join our Telegram', desc: 'Join the @KolonoEX channel', reward: 0.5, metric: 'tgChannel', target: 0, go: 'social', link: 'https://t.me/KolonoEX' },
@@ -287,19 +287,19 @@ async function invitedBy(upstashFn, userId, preRef, preCode) {
   };
 }
 
-// Tasks added to DEFAULT_TASKS after a `config:tasks` blob was first saved in
-// Redis would otherwise never appear: the saved (older) list overrides the code
-// default wholesale, so a brand-new task is invisible in the app even though it
-// is defined here. To fix that without forcing an admin to reset the config, any
-// default task whose id is missing from the saved list is spliced back in at its
-// default position. An admin can still re-order or re-word it (same id → their
-// version wins); this only re-adds ids that were never in the saved config at
-// all, so it cannot resurrect a task the admin edited on purpose.
+// A short allowlist of task ids that must always be present, even if a saved
+// `config:tasks` blob predates them. This is deliberately NOT "every default":
+// an admin must be able to delete any other task from the panel and have that
+// deletion stick. Only these ids are re-injected when missing, so the
+// deposit-match promo can never silently disappear behind an older saved list,
+// while ordinary tasks the admin removes stay removed.
+const ALWAYS_PRESENT_IDS = ['depositmatch'];
+
 function mergeMissingDefaults(saved) {
   const list = Array.isArray(saved) ? saved.slice() : [];
   const have = new Set(list.map((t) => t && String(t.id)));
   DEFAULT_TASKS.forEach((def, i) => {
-    if (!have.has(String(def.id))) {
+    if (ALWAYS_PRESENT_IDS.includes(String(def.id)) && !have.has(String(def.id))) {
       // Insert near its default slot so the ordering stays sensible.
       list.splice(Math.min(i, list.length), 0, def);
     }
@@ -402,10 +402,11 @@ async function taskConditionMet(upstashFn, userId, task, vols) {
     case 'tgChannel': return !!(await upstashFn(['GET', `task:tgchannel:${userId}`]));
     case 'xFollow':   return true; // honour-based; the claim ledger limits it to once
     case 'deposit':   return (parseFloat(await upstashFn(['GET', `dep:total:${userId}`])) || 0) >= target;
-    // Deposit-match: claimable once the user has deposited anything at all. The
-    // reward amount (a coupon equal to their total deposit, capped) is computed
-    // in the claimTask handler, not here.
-    case 'depositMatch': return (parseFloat(await upstashFn(['GET', `dep:total:${userId}`])) || 0) >= 1;
+    // Deposit-match: claimable once the user's total deposit reaches the task
+    // target (the minimum deposit — 10 USDT by default). The reward amount (a
+    // coupon equal to their total deposit, capped at task.reward) is computed in
+    // the claimTask handler, not here.
+    case 'depositMatch': return (parseFloat(await upstashFn(['GET', `dep:total:${userId}`])) || 0) >= (target || 1);
     case 'referral':  return (parseInt(await upstashFn(['GET', `ref:count:${userId}`]), 10) || 0) >= target;
     case 'spotVol':   return (vols.spot || 0) >= target;
     case 'futVol':    return (vols.fut || 0) >= target;

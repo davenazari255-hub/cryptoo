@@ -392,16 +392,20 @@ function cleanBanners(list) {
     if (body.action === 'getTasks') {
       const raw = await upstash(['GET', 'config:tasks']);
       const tasks = parseJSON(raw);
-      // Splice in any default task whose id is missing from the saved config, so
-      // tasks added to the code after the config was first saved (e.g. the
-      // deposit-match task) are visible and editable here instead of hidden
-      // behind an older saved list. Same-id tasks keep the admin's saved values.
+      // Re-inject only the always-present promo task (deposit-match) when it is
+      // missing from the saved config, so it shows up and stays editable here
+      // even behind an older saved list. Every OTHER task the admin deleted must
+      // stay deleted — so we do NOT re-add the rest of DEFAULT_TASKS. This
+      // mirrors ALWAYS_PRESENT_IDS in api/sync.js.
+      const ALWAYS_PRESENT_IDS = ['depositmatch'];
       let out;
       if (Array.isArray(tasks) && tasks.length) {
         out = tasks.slice();
         const have = new Set(out.map((t) => t && String(t.id)));
         DEFAULT_TASKS.forEach((def, i) => {
-          if (!have.has(String(def.id))) out.splice(Math.min(i, out.length), 0, def);
+          if (ALWAYS_PRESENT_IDS.includes(String(def.id)) && !have.has(String(def.id))) {
+            out.splice(Math.min(i, out.length), 0, def);
+          }
         });
       } else {
         out = DEFAULT_TASKS;
@@ -424,6 +428,9 @@ function cleanBanners(list) {
         target: Math.max(0, parseFloat(t.target) || 0),
         go: ['home', 'assets', 'trade', 'futures', 'invite', 'social'].includes(t.go) ? t.go : 'home',
         link: cleanLink(t.link),
+        // Preserve the "featured" flag so a highlighted promo task keeps its
+        // special styling in the app after an admin saves the task list.
+        featured: !!t.featured,
       })).filter((t) => t.id);
       await upstash(['SET', 'config:tasks', JSON.stringify(clean)]);
       return res.status(200).json({ ok: true, tasks: clean });
