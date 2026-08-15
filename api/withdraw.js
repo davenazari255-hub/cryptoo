@@ -193,15 +193,11 @@ module.exports = async function handler(req, res) {
     }
     const netCoin = String(netCoinNum);
 
-    // The gate, and the only one: a real on-chain deposit of at least WD_MIN.
-    // Admin credits, partner commission and transferred bonus profit are all
-    // spendable once it is open, but none of them opens it.
-    const realDeposit = await realDepositTotal(userId);
-    if (realDeposit < WD_MIN) {
-      return res.status(400).json({
-        error: `You must deposit at least ${WD_MIN} USDT before your first withdrawal`,
-      });
-    }
+    // The former minimum-deposit gate (a real on-chain deposit of at least
+    // WD_MIN before the first withdrawal) has been removed on purpose: users can
+    // withdraw their withdrawable balance without first depositing 10 USDT. The
+    // balance itself is still the real, atomically-held figure below, so nothing
+    // that isn't actually funded can leave.
 
     // No separate amount cap. The balance below is deducted atomically and the
     // request refused if it would go negative, and only real money ever enters

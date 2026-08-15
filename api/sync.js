@@ -197,7 +197,7 @@ const MAX_COUPON_VALUE = 1000;
 const DEFAULT_TASKS = [
   { id: 'welcome', icon: 'ti-gift', title: 'Welcome Bonus', desc: 'Sign in to KolonoEX', reward: 10, metric: 'always', target: 0, go: 'home' },
   { id: 'deposit', icon: 'ti-wallet', title: 'Net Deposit', desc: 'Deposit to unlock tiered rewards', reward: 10, metric: 'deposit', target: 100, go: 'assets' },
-  { id: 'depositmatch', icon: 'ti-gift', title: 'Deposit & Double Up', desc: 'Get a bonus coupon equal to your total deposit — up to 50 USDT', reward: 50, metric: 'depositMatch', target: 0, go: 'assets' },
+  { id: 'depositmatch', icon: 'ti-gift', title: '100% Deposit Match', desc: 'Deposit any amount and get the same value back as a bonus coupon — up to 50 USDT free', reward: 50, metric: 'depositMatch', target: 0, go: 'assets' },
   { id: 'spot', icon: 'ti-arrows-exchange', title: 'First Spot Trade', desc: 'Trade 100 USDT volume in Spot', reward: 5, metric: 'spotVol', target: 100, go: 'trade' },
   { id: 'futures', icon: 'ti-trending-up', title: 'First Futures Trade', desc: 'Trade 20,000 USDT volume in Futures', reward: 15, metric: 'futVol', target: 20000, go: 'futures' },
   { id: 'tgchannel', icon: 'ti-brand-telegram', title: 'Join our Telegram', desc: 'Join the @KolonoEX channel', reward: 0.5, metric: 'tgChannel', target: 0, go: 'social', link: 'https://t.me/KolonoEX' },
@@ -287,10 +287,30 @@ async function invitedBy(upstashFn, userId, preRef, preCode) {
   };
 }
 
+// Tasks added to DEFAULT_TASKS after a `config:tasks` blob was first saved in
+// Redis would otherwise never appear: the saved (older) list overrides the code
+// default wholesale, so a brand-new task is invisible in the app even though it
+// is defined here. To fix that without forcing an admin to reset the config, any
+// default task whose id is missing from the saved list is spliced back in at its
+// default position. An admin can still re-order or re-word it (same id → their
+// version wins); this only re-adds ids that were never in the saved config at
+// all, so it cannot resurrect a task the admin edited on purpose.
+function mergeMissingDefaults(saved) {
+  const list = Array.isArray(saved) ? saved.slice() : [];
+  const have = new Set(list.map((t) => t && String(t.id)));
+  DEFAULT_TASKS.forEach((def, i) => {
+    if (!have.has(String(def.id))) {
+      // Insert near its default slot so the ordering stays sensible.
+      list.splice(Math.min(i, list.length), 0, def);
+    }
+  });
+  return list;
+}
+
 async function loadTasks(upstashFn, preRaw) {
   const raw = preRaw !== undefined ? preRaw : await upstashFn(['GET', 'config:tasks']);
   const parsed = raw ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : null;
-  return Array.isArray(parsed) && parsed.length ? parsed : DEFAULT_TASKS;
+  return Array.isArray(parsed) && parsed.length ? mergeMissingDefaults(parsed) : DEFAULT_TASKS;
 }
 
 // The task list as this user sees it, including any partner reward overrides.

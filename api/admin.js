@@ -383,6 +383,7 @@ function cleanBanners(list) {
     const DEFAULT_TASKS = [
       { id: 'welcome', icon: 'ti-gift', title: 'Welcome Bonus', desc: 'Sign in to KolonoEX', reward: 10, metric: 'always', target: 0, go: 'home' },
       { id: 'deposit', icon: 'ti-wallet', title: 'Net Deposit', desc: 'Deposit a total of 100 USDT', reward: 10, metric: 'deposit', target: 100, go: 'assets' },
+      { id: 'depositmatch', icon: 'ti-gift', title: '100% Deposit Match', desc: 'Deposit any amount and get the same value back as a bonus coupon — up to 50 USDT free', reward: 50, metric: 'depositMatch', target: 0, go: 'assets' },
       { id: 'spot', icon: 'ti-arrows-exchange', title: 'First Spot Trade', desc: 'Trade 100 USDT volume in Spot', reward: 5, metric: 'spotVol', target: 100, go: 'trade' },
       { id: 'futures', icon: 'ti-trending-up', title: 'First Futures Trade', desc: 'Trade 20,000 USDT volume in Futures', reward: 15, metric: 'futVol', target: 20000, go: 'futures' },
       { id: 'tgchannel', icon: 'ti-brand-telegram', title: 'Join our Telegram', desc: 'Join the @KolonoEX channel', reward: 0.5, metric: 'tgChannel', target: 0, go: 'social', link: 'https://t.me/KolonoEX' },
@@ -391,12 +392,26 @@ function cleanBanners(list) {
     if (body.action === 'getTasks') {
       const raw = await upstash(['GET', 'config:tasks']);
       const tasks = parseJSON(raw);
-      return res.status(200).json({ tasks: Array.isArray(tasks) && tasks.length ? tasks : DEFAULT_TASKS });
+      // Splice in any default task whose id is missing from the saved config, so
+      // tasks added to the code after the config was first saved (e.g. the
+      // deposit-match task) are visible and editable here instead of hidden
+      // behind an older saved list. Same-id tasks keep the admin's saved values.
+      let out;
+      if (Array.isArray(tasks) && tasks.length) {
+        out = tasks.slice();
+        const have = new Set(out.map((t) => t && String(t.id)));
+        DEFAULT_TASKS.forEach((def, i) => {
+          if (!have.has(String(def.id))) out.splice(Math.min(i, out.length), 0, def);
+        });
+      } else {
+        out = DEFAULT_TASKS;
+      }
+      return res.status(200).json({ tasks: out });
     }
     if (body.action === 'saveTasks') {
       const tasks = Array.isArray(body.tasks) ? body.tasks : null;
       if (!tasks) return res.status(400).json({ error: 'tasks array required' });
-      const ALLOWED_METRICS = ['always', 'deposit', 'spotVol', 'futVol', 'referral', 'tgChannel', 'xFollow'];
+      const ALLOWED_METRICS = ['always', 'deposit', 'depositMatch', 'spotVol', 'futVol', 'referral', 'tgChannel', 'xFollow'];
       // Only allow safe http(s)/tg links for the social "Go" button.
       const cleanLink = (s) => { const v = String(s || '').trim().slice(0, 200); return /^(https?:\/\/|tg:\/\/)/i.test(v) ? v : ''; };
       const clean = tasks.slice(0, 12).map((t, i) => ({
