@@ -328,9 +328,28 @@
         + '<div class="row"><span class="k">Equity ≈ $' + fmt(u.equity) + ' \u00b7 <i class="ti ti-ticket" style="font-size:11px;color:#f0b90b;"></i> $' + fmt(u.bonus) + '</span><span class="k"><i class="ti ti-users" style="font-size:11px;"></i> ' + (u.referrals || 0) + ' · ' + u.positions + ' pos</span></div></div>';
     }
     async function loadUsers() {
-      $('view').innerHTML = '<div class="search"><i class="ti ti-search" style="color:#7a8299;"></i><input id="usearch" placeholder="Search name, username or id" oninput="renderUsers()"></div><div id="ulist"><div class="empty">Loading…</div></div>';
+      $('view').innerHTML = '<div class="acts" style="margin-bottom:10px;">'
+        + '<button class="btn amber" onclick="resetAllUsers(\'tasks\')"><i class="ti ti-refresh"></i> Reset tasks · ALL users</button>'
+        + '<button class="btn red" onclick="resetAllUsers(\'full\')"><i class="ti ti-alert-triangle"></i> Full reset · ALL users</button>'
+        + '</div>'
+        + '<div class="search"><i class="ti ti-search" style="color:#7a8299;"></i><input id="usearch" placeholder="Search name, username or id" oninput="renderUsers()"></div><div id="ulist"><div class="empty">Loading…</div></div>';
       try { const d = await api({ action: 'users' }); USERS = d.users || []; $('count').textContent = USERS.length + ' users'; renderUsers(); }
       catch (e) { $('view').innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
+    }
+    // Reset EVERY user at once. Guarded by a double confirmation (and a typed
+    // word for the destructive "full" mode) because there is no undo.
+    async function resetAllUsers(mode) {
+      const full = mode === 'full';
+      const msg = full
+        ? 'FULL RESET of ALL users?\n\nThis wipes every user\'s balance, deposits, bonus, coupons and progress. There is no undo.'
+        : 'Reset tasks & check-in for ALL users?\n\nBalances and positions are kept; only the earning progress is cleared.';
+      if (!confirm(msg)) return;
+      if (full && (prompt('Type RESET to confirm a full reset of every user:') || '').trim().toUpperCase() !== 'RESET') return;
+      try {
+        const d = await api({ action: 'resetAll', mode });
+        alert((full ? 'Full reset' : 'Task reset') + ' done for ' + (d.count || 0) + ' of ' + (d.total || 0) + ' users — applies on each user\'s next sync.');
+        loadUsers();
+      } catch (e) { alert(e.message); }
     }
     function renderUsers() {
       const q = ($('usearch') ? $('usearch').value : '').toLowerCase().trim();
@@ -511,15 +530,17 @@
         + '<div class="adj"><input data-f="link" placeholder="link (for go=social, e.g. https://t.me/KolonoEX)" value="' + esc(t.link || '') + '" style="flex:2;"></div>'
         + '<div class="adj"><select data-f="metric" style="flex:1;background:#0f1117;border:0.5px solid #2e3347;color:#e8edf7;border-radius:9px;padding:9px;">' + opt(METRICS, t.metric || 'always') + '</select>'
         + '<input data-f="target" inputmode="decimal" placeholder="target" value="' + esc(t.target || 0) + '">'
-        + '<select data-f="go" style="flex:1;background:#0f1117;border:0.5px solid #2e3347;color:#e8edf7;border-radius:9px;padding:9px;">' + opt(GOES, t.go || 'home') + '</select></div></div>';
+        + '<select data-f="go" style="flex:1;background:#0f1117;border:0.5px solid #2e3347;color:#e8edf7;border-radius:9px;padding:9px;">' + opt(GOES, t.go || 'home') + '</select></div>'
+        + '<label class="adj" style="align-items:center;gap:8px;font-size:13px;color:#cfd6e6;cursor:pointer;"><input type="checkbox" data-f="featured"' + (t.featured ? ' checked' : '') + ' style="width:16px;height:16px;accent-color:#4eeaa0;"> Featured (highlighted &amp; “HOT” badge — makes this task stand out)</label></div>';
     }
     function collectTasks() {
       return [...document.querySelectorAll('#view .card[data-ti]')].map(card => {
         const g = f => { const el = card.querySelector('[data-f="' + f + '"]'); return el ? el.value : ''; };
-        return { id: g('id'), icon: g('icon'), title: g('title'), desc: g('desc'), reward: parseFloat(g('reward')) || 0, metric: g('metric'), target: parseFloat(g('target')) || 0, go: g('go'), link: g('link') };
+        const chk = f => { const el = card.querySelector('[data-f="' + f + '"]'); return !!(el && el.checked); };
+        return { id: g('id'), icon: g('icon'), title: g('title'), desc: g('desc'), reward: parseFloat(g('reward')) || 0, metric: g('metric'), target: parseFloat(g('target')) || 0, go: g('go'), link: g('link'), featured: chk('featured') };
       });
     }
-    function addTaskRow() { TASKS_CACHE = collectTasks(); TASKS_CACHE.push({ id: 'task' + (TASKS_CACHE.length + 1), icon: 'ti-gift', title: 'New task', desc: '', reward: 1, metric: 'always', target: 0, go: 'home', link: '' }); renderTasksEditor(); }
+    function addTaskRow() { TASKS_CACHE = collectTasks(); TASKS_CACHE.push({ id: 'task' + (TASKS_CACHE.length + 1), icon: 'ti-gift', title: 'New task', desc: '', reward: 1, metric: 'always', target: 0, go: 'home', link: '', featured: false }); renderTasksEditor(); }
     function delTaskRow(i) { TASKS_CACHE = collectTasks(); TASKS_CACHE.splice(i, 1); renderTasksEditor(); }
     async function saveTasks() {
       const tasks = collectTasks();
