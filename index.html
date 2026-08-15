@@ -1624,7 +1624,7 @@
     if(n>=10) return '$'+n.toFixed(2); if(n>=1) return '$'+n.toFixed(3); return '$'+n.toFixed(4); }
   function fmtNum(n,d){ return Number(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d}); }
   function coinAmt(n){ return Number(n).toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:8}); }
-  function trimAmt(n){ if(!isFinite(n)||n<=0) return ''; return parseFloat(n.toFixed(8)).toString(); }
+  function trimAmt(n){ n=Number(n); if(!isFinite(n)||n<=0) return ''; return parseFloat(n.toFixed(8)).toString(); }
   function now(){ return new Date(); }
   function tstamp(d){ const p=x=>String(x).padStart(2,'0'); return p(d.getDate())+'/'+p(d.getMonth()+1)+' '+p(d.getHours())+':'+p(d.getMinutes()); }
   function fmtQty(n){ if(n>=1000) return (n/1000).toFixed(2)+'K'; if(n>=1) return n.toFixed(2); return n.toFixed(3); }
