@@ -34,23 +34,11 @@ const TICKERS = {
   sol: 'sol/sol',
 };
 
-// BlockBee's /qrcode/ endpoint returns JSON ({ status, qr_code, payment_uri })
-// where qr_code is a base64 PNG — NOT a raw image. Putting the endpoint URL in
-// an <img src> shows nothing. Fetch it here and return a ready-to-embed data
-// URI instead. Best-effort: on any failure we return null and the frontend
-// falls back to its own QR generator, so a QR hiccup never blocks the deposit.
-async function fetchQrDataUri(ticker, address) {
-  try {
-    const u = `${BLOCKBEE_BASE}/${ticker}/qrcode/?address=${encodeURIComponent(address)}&size=300`;
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 8000);
-    let j = null;
-    try {
-      const resp = await fetch(u, { signal: ac.signal });
-      j = await resp.json();
-    } finally { clearTimeout(timer); }
-    if (j && j.qr_code) return `data:image/png;base64,${j.qr_code}`;
-  } catch (e) { /* fall through to null */ }
+// QR handling: BlockBee's /qrcode/ endpoint embeds the coin's logo in the
+// centre of the QR, which we do NOT want. So we intentionally return null here
+// and let the frontend render a plain, logo-free QR from the address via its
+// own QR generator. Kept as a function so both code paths call the same thing.
+async function fetchQrDataUri(_ticker, _address) {
   return null;
 }
 
@@ -142,6 +130,14 @@ async function createAddress(req, res) {
   const currency = String(body.currency || 'usdttrc20').toLowerCase();
   const ticker = TICKERS[currency];
   if (!ticker) return res.status(400).json({ error: 'Unsupported coin' });
+
+  // Temporarily disabled networks: kept in TICKERS (so existing records still
+  // resolve) but refused for new deposits. Mirrors the disabled flag in the
+  // frontend's DEPOSIT_COINS so a direct API call cannot bypass the UI.
+  const DISABLED = new Set(['usdtmatic', 'usdtarb']);
+  if (DISABLED.has(currency)) {
+    return res.status(403).json({ error: 'This network is temporarily unavailable. Please choose another network.' });
+  }
 
   // One fixed address per user per coin. BlockBee addresses are reusable — a
   // later send to the same address raises a fresh callback — so we create once
