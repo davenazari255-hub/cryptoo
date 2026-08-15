@@ -22,17 +22,16 @@ const BLOCKBEE_BASE = 'https://api.blockbee.io';
 // Keys match the `t` values the frontend's DEPOSIT_COINS list sends; values are
 // BlockBee's ticker format ({coin}_{chain} for tokens).
 const TICKERS = {
-  usdttrc20: 'usdt_trc20',
-  usdterc20: 'usdt_erc20',
-  usdtbsc: 'usdt_bep20',
-  usdtmatic: 'usdt_polygon',
-  usdtarb: 'usdt_arbitrum',
+  usdttrc20: 'trc20/usdt',
+  usdterc20: 'erc20/usdt',
+  usdtbsc: 'bep20/usdt',
+  usdtmatic: 'polygon/usdt',
+  usdtarb: 'arbitrum/usdt',
   btc: 'btc',
   eth: 'eth',
-  bnbbsc: 'bnb',
+  bnbbsc: 'bep20/bnb',
   trx: 'trx',
-  sol: 'sol',
-  ton: 'ton',
+  sol: 'sol/sol',
 };
 
 // ── storage: refuse to issue an address if storage is down, so we never hand
