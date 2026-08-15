@@ -3790,50 +3790,43 @@
 
   function openDeposit(){ if(depPoll){ clearInterval(depPoll); depPoll=null; }
     if(!hasTgAuth()){ openSheet(sheetHead('Deposit Crypto')+'<div class="dep-tip" style="border-color:#ff5a5a44;"><i class="ti ti-alert-triangle" style="color:#ff5a5a;"></i><span>Real deposits require opening the app from your Telegram bot so your account can be verified. Please launch KolonoEX inside Telegram.</span></div>'); return; }
-    // Paymento hosted-checkout flow: the user enters a USD amount and is sent
-    // to Paymento's secure gateway to pay. Minimum is as low as $1 (USDT TRC20).
+    // In-app address/QR deposit flow (BlockBee). Choose a coin/network, get a
+    // deposit address + QR shown right here in the app — no redirect, no
+    // external page, and the app's own URL is never exposed to the user.
     openSheet(sheetHead('Deposit Crypto')
-    +'<div class="dep-tip"><i class="ti ti-bolt"></i><span>Enter an amount and pay on the secure Paymento gateway. Minimum <b style="color:#cfd6e6;">$1</b> — it is credited automatically once the payment confirms.</span></div>'
-    +'<div class="input-row" style="margin-bottom:6px;"><input id="dep-amt" inputmode="decimal" placeholder="Amount"><span class="u">USD</span></div>'
-    +'<div style="font-size:11px;color:#7a8299;margin:0 0 14px;">Min $1 \u00b7 paid in USDT (TRC20) on the gateway</div>'
-    +'<button class="buy-btn" onclick="genDeposit()">Continue to payment</button>'); }
+    +'<div class="dep-tip"><i class="ti ti-bolt"></i><span>Choose a coin to get your deposit address. Send <b style="color:#cfd6e6;">any amount</b> at or above the coin\'s minimum — it is credited automatically once received.</span></div>'
+    +'<div style="font-size:12px;color:#7a8299;margin-bottom:8px;">Select coin & network</div>'
+    +DEPOSIT_COINS.map(depCoinRow).join('')); }
 
   let depBusy=false;
-  // Paymento hosted-checkout deposit. Reads the USD amount from #dep-amt,
-  // creates a Paymento payment via /api/paymento-create, and opens the secure
-  // gateway (Telegram openLink). The webhook credits the balance on confirm.
-  async function genDeposit(){ if(depBusy) return;
-    const amt=parseFloat(v('dep-amt'))||0;
-    if(amt<1){ toast('Minimum deposit is $1','err'); return; }
-    depBusy=true;
-    openSheet(sheetHead('Deposit Crypto')+'<div style="text-align:center;padding:46px 0;color:#7a8299;"><i class="ti ti-loader-2" style="font-size:30px;display:inline-block;animation:depSpin 1s linear infinite;"></i><div style="margin-top:12px;font-size:13px;">Creating your payment…</div></div>');
+  // BlockBee in-app deposit: creates a deposit address for the chosen coin via
+  // /api/blockbee-create and shows the address + QR right here. No redirect,
+  // no external page, the app URL is never exposed. The webhook credits on
+  // confirmation and /api/blockbee-status reports progress for the poll.
+  async function genDeposit(idx){ if(depBusy) return; depBusy=true; const coin=DEPOSIT_COINS[idx]||DEPOSIT_COINS[0];
+    openSheet(sheetHead('Deposit '+coin.sym)+'<div style="text-align:center;padding:46px 0;color:#7a8299;"><i class="ti ti-loader-2" style="font-size:30px;display:inline-block;animation:depSpin 1s linear infinite;"></i><div style="margin-top:12px;font-size:13px;">Generating your '+coin.sym+' address…</div></div>');
     try{
       let r;
-      try{ r=await fetch('/api/paymento-create',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ amountUsd:amt, currency:'usdttrc20', initData:tgInitData() }) }); }
+      try{ r=await fetch('/api/blockbee-create',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ currency:coin.t, initData:tgInitData() }) }); }
       catch(e){ console.error('deposit fetch failed:',e); toast('Cannot reach /api — is the site on Vercel?','err'); openDeposit(); return; }
       let text='', data=null;
       try{ text=await r.text(); data=JSON.parse(text); }catch(e){}
+      // 503 is the server saying it cannot record this deposit right now. That
+      // is not an error to flash and dismiss — trying again is exactly what must
+      // not happen while storage is down.
       if(r.status===503){
-        openSheet(sheetHead('Deposit Crypto')
+        openSheet(sheetHead('Deposit '+coin.sym)
           +'<div style="text-align:center;padding:26px 14px 30px;">'
           +'<i class="ti ti-tool" style="font-size:34px;color:#ffae4e;"></i>'
           +'<div style="margin:14px 0 8px;font-size:15px;font-weight:700;color:#e8edf7;">Deposits are paused</div>'
           +'<div style="font-size:12.5px;line-height:1.7;color:#7a8299;max-width:260px;margin:0 auto;">'
-          +esc((data&&data.error)||'We cannot record a deposit right now, so we will not create a payment.')
+          +esc((data&&data.error)||'We cannot record a deposit right now, so we will not issue an address.')
           +'</div>'
           +'<div style="margin-top:16px;font-size:11.5px;color:#5d6577;">Your balance and past deposits are unaffected.</div>'
           +'</div>');
         return; }
-      if(!r.ok || !data || !data.gatewayUrl){ console.error('deposit response',r.status,text); toast((data&&data.error)||('Server error '+r.status),'err'); openDeposit(); return; }
-      // Send the user to Paymento's secure gateway to complete payment.
-      openLinkSmart(data.gatewayUrl);
-      openSheet(sheetHead('Deposit Crypto')
-        +'<div style="text-align:center;padding:30px 14px 24px;">'
-        +'<i class="ti ti-external-link" style="font-size:34px;color:#4eeaa0;"></i>'
-        +'<div style="margin:14px 0 8px;font-size:15px;font-weight:700;color:#e8edf7;">Complete your payment</div>'
-        +'<div style="font-size:12.5px;line-height:1.7;color:#7a8299;max-width:270px;margin:0 auto;">A secure Paymento payment page has opened for <b style="color:#cfd6e6;">$'+fmtNum(amt,2)+'</b>. Once your payment confirms, your balance is credited automatically.</div>'
-        +'</div>'
-        +'<button class="buy-btn" onclick="openLinkSmart(\''+escAttr(data.gatewayUrl)+'\')">Reopen payment page</button>');
+      if(!r.ok || !data || !data.address){ console.error('deposit response',r.status,text); toast((data&&data.error)||('Server error '+r.status),'err'); openDeposit(); return; }
+      showDepositAddress(coin, data);
     } finally { depBusy=false; } }
 
   // Prices for deposit coins the trading feed does not carry (TRX, TON). Filled
@@ -3869,34 +3862,25 @@
     return trimAmt(ceilSig(raw, raw < 0.001 ? 1 : 2))+' '+coin.sym; }
 
   function showDepositAddress(coin, d){
-    const qr='https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=0&data='+encodeURIComponent(d.address);
-    const addr=escAttr(d.address); const min=d.minUsd||5;
-    // Every coin states its minimum in its own unit. The server sends a round
-    // USD policy figure; converting it here keeps it live as the price moves,
-    // instead of freezing a number into the stored address record.
-    const minCoin = depMinLabel(coin, min);
-    const extra = d.payinExtraId ? '<div class="dep-addr-box" style="margin-top:8px;"><div class="dab-lab"><span>⚠ Memo / Tag (required)</span><i class="ti ti-copy" style="color:#4eeaa0;cursor:pointer;font-size:15px;" onclick="copyText(\''+escAttr(d.payinExtraId)+'\')"></i></div><div class="dab-val" style="color:#ffc24e;">'+escAttr(d.payinExtraId)+'</div></div>' : '';
+    // BlockBee serves a QR PNG of the address directly; fall back to a public
+    // QR generator if it is missing for any reason.
+    const qr = d.qr || ('https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=0&data='+encodeURIComponent(d.address));
+    const addr=escAttr(d.address);
+    // BlockBee returns the exact per-coin minimum in the coin's own unit
+    // (minCoin). Show it directly; if absent, fall back to a dash.
+    const minCoin = (d.minCoin!=null) ? (trimAmt(d.minCoin)+' '+coin.sym) : '—';
     openSheet(sheetHeadBack('Deposit '+coin.sym,'openDeposit()')
     +'<div style="text-align:center;margin-bottom:14px;"><div class="dep-qr"><img src="'+qr+'" alt="QR" style="width:190px;height:190px;display:block;"></div></div>'
     +'<div style="text-align:center;margin-bottom:14px;"><span class="dep-net-pill">'+coin.name+' · <b>'+coin.net+'</b> network</span></div>'
     +'<div class="dep-addr-box"><div class="dab-lab"><span>Deposit address</span><span class="dep-badge">MIN <span class="dep-min-lab">'+minCoin+'</span></span></div><div class="dab-val">'+addr+'</div></div>'
-    +extra
     +'<button class="dep-copy" onclick="copyText(\''+addr+'\')"><i class="ti ti-copy"></i>Copy Address</button>'
     +'<div class="dep-tip" style="margin-top:12px;border-color:#ffae4e33;"><i class="ti ti-shield-check" style="color:#ffae4e;"></i><span>Send only <b style="color:#cfd6e6;">'+coin.sym+'</b> over the <b style="color:#cfd6e6;">'+coin.net+'</b> network. Other coins/networks may be lost. Minimum deposit <b style="color:#cfd6e6;" class="dep-min-lab">'+minCoin+'</b>.</span></div>'
     +'<div style="display:flex;align-items:center;justify-content:space-between;margin:12px 2px 0;"><span style="font-size:11px;color:#7a8299;"><span class="live-dot"></span>Live · checking automatically</span>'
     +'<span class="rec-refresh" id="dep-refresh" onclick="depCheckNow()"><i class="ti ti-refresh"></i>Refresh</span></div>'
-    +'<div class="dep-status" id="dep-status" style="margin-top:8px;"><span class="dot"></span><span id="dep-status-txt">'
-    + (d.reused ? 'This address is yours \u00b7 send any time' : 'Waiting for payment\u2026') + '</span></div>');
-    // A reused address belongs to a payment that settled long ago, so polling it
-    // would report "finished" before this deposit has even landed. The balance
-    // sync already credits from the server, so lean on that instead.
-    if(d.reused) stopDepositPoll(); else startDepositPoll(d.paymentId, min);
-    // TRX and TON are not on the trading feed, so their price may not be known
-    // yet. Fetch it and repaint the two places the minimum appears.
-    if(coin.sym!=='USDT' && !depCoinPrice(coin.sym)){
-      fetchDepPx(coin.sym).then((v)=>{ if(!v) return;
-        const lab=depMinLabel(coin, min);
-        document.querySelectorAll('.dep-min-lab').forEach(el=>{ el.textContent=lab; }); }); } }
+    +'<div class="dep-status" id="dep-status" style="margin-top:8px;"><span class="dot"></span><span id="dep-status-txt">Waiting for payment\u2026</span></div>');
+    // Poll our own status endpoint by ADDRESS — the webhook records progress
+    // there. Works for both a fresh and a reused address.
+    startDepositPoll(d.address); }
 
   // Polls payment status for live UI feedback; the actual credit is done
   // server-side by the IPN webhook, then pulled in via syncBalance().
@@ -3917,16 +3901,15 @@
         t.textContent='\u2713 Credited to your balance';
         const box=document.getElementById('dep-status'); if(box) box.className='dep-status done'; } };
     depPoll=setInterval(()=>{ if(!document.getElementById('dep-status')){ clearInterval(depPoll); depPoll=null; return; } if(document.hidden) return; tick(); }, 15000); }
-  function startDepositPoll(paymentId, minUsd){ if(depPoll){ clearInterval(depPoll); depPoll=null; }
-    const MAP={ waiting:'Waiting for payment…', confirming:'Confirming on-chain…', confirmed:'Confirmed, processing…', sending:'Crediting…', partially_paid:'Amount below $'+minUsd+' — not credited', finished:'Payment received — crediting…', failed:'Payment failed', refunded:'Refunded', expired:'Payment expired' };
+  function startDepositPoll(address){ if(depPoll){ clearInterval(depPoll); depPoll=null; }
+    const MAP={ waiting:'Waiting for payment…', pending:'Payment seen — confirming on-chain…', confirmed:'Payment received — crediting…' };
     const setStat=(txt,cls)=>{ const box=document.getElementById('dep-status'), t=document.getElementById('dep-status-txt'); if(t) t.textContent=txt; if(box){ box.className='dep-status'+(cls?' '+cls:''); } };
     const check=async()=>{ if(!document.getElementById('dep-status')){ if(depPoll){ clearInterval(depPoll); depPoll=null; } return; }
-      try{ const r=await fetch('/api/check-payment',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), paymentId }) }); const d=await r.json(); if(!r.ok) return;
+      try{ const r=await fetch('/api/blockbee-status',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), address }) }); const d=await r.json(); if(!r.ok) return;
         const st=d.status;
-        if(st==='finished'){ if(depPoll){ clearInterval(depPoll); depPoll=null; } setStat('Payment received — crediting…','done');
+        if(st==='confirmed'){ if(depPoll){ clearInterval(depPoll); depPoll=null; } setStat('Payment received — crediting…','done');
           await syncBalance(); setStat('✓ Credited to your balance','done');
-        } else if(st==='failed'||st==='refunded'||st==='expired'||st==='partially_paid'){ if(depPoll){ clearInterval(depPoll); depPoll=null; } setStat(MAP[st]||st,'err');
-        } else { setStat(MAP[st]||st); }
+        } else { setStat(MAP[st]||'Waiting for payment…'); }
       }catch(e){} };
     depCheckFn=check; check(); depPoll=setInterval(check, 15000); }
   // ── Withdraw (multi-coin, manual admin approval) ──
