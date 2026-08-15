@@ -135,6 +135,18 @@ module.exports = async function handler(req, res) {
   const body = req.body || {};
   const secretOk = !!secret && body.secret === secret;
   const tgOk = !!body.initData && isTelegramAdmin(body.initData);
+  
+  // Public endpoint for checking maintenance status
+  if (body.action === 'getMaintenanceStatus' && body.public) {
+    try {
+      const raw = await upstash(['GET', 'config:maintenance']);
+      const state = parseJSON(raw) || { enabled: false, endTime: null };
+      return res.status(200).json(state);
+    } catch (err) {
+      return res.status(200).json({ enabled: false, endTime: null });
+    }
+  }
+  
   if (!secretOk && !tgOk) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -521,6 +533,30 @@ function cleanBanners(list) {
       await upstash(['LTRIM', `cmd:${rec.userId}`, 0, 99]);
 
       return res.status(200).json({ ok: true, withdrawal: rec });
+    }
+
+    // ── Maintenance Mode Management ──
+    if (body.action === 'getMaintenanceStatus') {
+      const raw = await upstash(['GET', 'config:maintenance']);
+      const state = parseJSON(raw) || { enabled: false, endTime: null };
+      return res.status(200).json(state);
+    }
+
+    if (body.action === 'setMaintenance') {
+      const enabled = body.enabled === true;
+      const endTime = body.endTime && typeof body.endTime === 'string' ? body.endTime : null;
+      
+      // Validate endTime format if provided
+      if (endTime) {
+        const date = new Date(endTime);
+        if (isNaN(date.getTime())) {
+          return res.status(400).json({ error: 'Invalid endTime format' });
+        }
+      }
+      
+      const state = { enabled, endTime };
+      await upstash(['SET', 'config:maintenance', JSON.stringify(state)]);
+      return res.status(200).json({ ok: true, ...state });
     }
 
     return res.status(400).json({ error: 'Unknown action' });
