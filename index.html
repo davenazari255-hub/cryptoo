@@ -1198,7 +1198,7 @@
         <div class="invite-banner" onclick="openInvite()">
           <div class="ib-glow"></div>
           <div class="ib-ic"><i class="ti ti-users-plus"></i></div>
-          <div class="ib-txt"><div class="ib-t">Invite Friends</div><div class="ib-s">Earn <b>$0.5</b> for every friend who joins</div></div>
+          <div class="ib-txt"><div class="ib-t">Invite Friends</div><div class="ib-s">Earn <b>$0.05</b> + 3% of their deposits</div></div>
           <i class="ti ti-chevron-right ib-chev"></i>
         </div>
         <div style="display:flex;justify-content:space-between;margin-bottom:8px;margin-top:18px;">
@@ -1584,6 +1584,7 @@
   const DEFAULT_TASKS=[
     {id:'welcome',  icon:'ti-gift',             title:'Welcome Bonus',     desc:'Sign in to KolonoEX',                 reward:10, metric:'always',  target:0,      go:'home'},
     {id:'deposit',  icon:'ti-wallet',           title:'Net Deposit',       desc:'Deposit to unlock tiered rewards',    reward:10, metric:'deposit', target:100,    go:'assets'},
+    {id:'depositmatch', icon:'ti-gift',         title:'Deposit & Double Up', desc:'Get a bonus coupon equal to your total deposit — up to 50 USDT', reward:50, metric:'depositMatch', target:0, go:'assets'},
     {id:'spot',     icon:'ti-arrows-exchange',  title:'First Spot Trade',  desc:'Trade 100 USDT volume in Spot',       reward:5,  metric:'spotVol', target:100,    go:'trade'},
     {id:'futures',  icon:'ti-trending-up',      title:'First Futures Trade',desc:'Trade 20,000 USDT volume in Futures',reward:15, metric:'futVol',  target:20000,  go:'futures'},
     {id:'tgchannel',icon:'ti-brand-telegram',   title:'Join our Telegram', desc:'Join the @KolonoEX channel',          reward:0.5,metric:'tgChannel',target:0,      go:'social', link:'https://t.me/KolonoEX'},
@@ -1603,6 +1604,7 @@
   function taskMetricValue(metric){
     switch(metric){
       case 'deposit': return state.depositTotal||0;
+      case 'depositMatch': return state.depositTotal||0;
       case 'spotVol': return state.spotVol||0;
       case 'futVol':  return state.futVol||0;
       case 'referral':return state.referralCount||0;
@@ -2090,7 +2092,12 @@
   function updateFutInfo(){ const avail=futAvail(); setText('fut-avail',fmtNum(avail,2)+(ui.useBonus?' Bonus':' USDT')); setText('fut-maxl',Math.floor(avail*ui.levLong)+' Cont'); setText('fut-maxs',Math.floor(avail*ui.levShort)+' Cont'); recalcFutMargins(); setBonusBtn(); }
   function setBonusBtn(){ const btn=document.getElementById('fut-bonus-btn'); if(!btn) return; btn.classList.toggle('active',ui.useBonus);
     btn.innerHTML='<i class="ti ti-ticket"></i> '+(ui.useBonus?'Bonus Margin ON':'Use Bonus')+' ('+fmtNum(state.bonus||0,2)+' USDT)'; }
+  // Minimum real Futures balance required before a user may spend bonus margin.
+  // Turning the bonus on with an empty Futures wallet is blocked so bonus can
+  // only be used alongside a genuine deposit into Futures.
+  const BONUS_MIN_FUT = 1;
   function toggleBonus(){ if(!ui.useBonus && (state.bonus||0)<=0){ toast('No bonus — claim it in Assets ▸ Bonus','info'); return; }
+    if(!ui.useBonus && (state.futUSDT||0) < BONUS_MIN_FUT){ toast('Transfer at least '+BONUS_MIN_FUT+' USDT to Futures to use your bonus','info'); return; }
     ui.useBonus=!ui.useBonus; setBonusBtn(); updateFutInfo(); toast(ui.useBonus?'Bonus margin enabled':'Switched to wallet margin', ui.useBonus?'ok':'info'); }
   function placeFut(side){ const k=ui.futPair,live=px(k); if(!live){ toast('Live price not ready','err'); return; }
     if(ui.futMode==='close'){ closeFutSide(side); return; }
@@ -2756,7 +2763,9 @@
       if(r.ok && d && d.joined){ state.social=state.social||{}; state.social.tgChannel=true; save(); renderTasks(); toast('Joined ✓ — tap Claim','ok'); }
       else { toast('You haven\'t joined the channel yet','err'); }
     }catch(e){ toast('Network error, try again','err'); } }
-  function useBonusInFutures(){ if((state.bonus||0)<=0){ toast('Claim a bonus first','info'); return; } ui.useBonus=true; switchPage('futures',null); setBonusBtn(); toast('Bonus margin enabled in Futures','ok'); }
+  function useBonusInFutures(){ if((state.bonus||0)<=0){ toast('Claim a bonus first','info'); return; }
+    if((state.futUSDT||0) < BONUS_MIN_FUT){ switchPage('futures',null); toast('Transfer at least '+BONUS_MIN_FUT+' USDT to Futures to use your bonus','info'); return; }
+    ui.useBonus=true; switchPage('futures',null); setBonusBtn(); toast('Bonus margin enabled in Futures','ok'); }
   function tfBal(acc){ return acc==='spot'?(state.balances.USDT||0):(state.futUSDT||0); }
   function accName(acc){ return acc==='spot'?'Spot Account':'Futures Account'; }
   function openTransfer(){ if(!ui.tfFrom) ui.tfFrom='spot'; if(ui.tfFrom===ui.tfTo) ui.tfTo=ui.tfFrom==='spot'?'futures':'spot'; renderTransferSheet(); }
@@ -3530,7 +3539,7 @@
   // with /newapp (here: 'app' → link t.me/bot/app?startapp=...). Leave '' only
   // if you use the bot's MAIN Mini App (link t.me/bot?startapp=...).
   const MINI_APP_SHORT='app';
-  const REF_BONUS=0.5;
+  const REF_BONUS=0.05;
   // Admin Telegram numeric IDs (server enforces the real check; this only
   // controls whether the in-app admin shortcut is shown).
   // Seed only. The authoritative list lives in the ADMIN_IDS environment

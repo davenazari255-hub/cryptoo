@@ -486,7 +486,7 @@
 
     /* ── Task management ── */
     let TASKS_CACHE = [];
-    const METRICS = ['always', 'deposit', 'spotVol', 'futVol', 'referral', 'tgChannel', 'xFollow'];
+    const METRICS = ['always', 'deposit', 'depositMatch', 'spotVol', 'futVol', 'referral', 'tgChannel', 'xFollow'];
     const GOES = ['home', 'assets', 'trade', 'futures', 'invite', 'social'];
     async function loadTasks() {
       $('view').innerHTML = '<div class="empty">Loading…</div>';
@@ -494,7 +494,7 @@
       catch (e) { $('view').innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
     }
     function renderTasksEditor() {
-      let h = '<div class="mini" style="margin-bottom:10px;">Edit the home-screen tasks. <b>metric</b> drives progress: always (instant), deposit, spotVol, futVol, referral, tgChannel (verifies channel join — bot must be channel admin), xFollow (open X & follow). <b>target</b> is the goal (0 = instant). <b>reward</b> is the bonus in USDT. <b>link</b> + go=<code>social</code> is the URL the Go button opens (Telegram/X).</div>';
+      let h = '<div class="mini" style="margin-bottom:10px;">Edit the home-screen tasks. <b>metric</b> drives progress: always (instant), deposit, depositMatch (grants a coupon equal to the total amount the user deposited, capped at the reward value), spotVol, futVol, referral, tgChannel (verifies channel join — bot must be channel admin), xFollow (open X & follow). <b>target</b> is the goal (0 = instant). <b>reward</b> is the bonus in USDT. <b>link</b> + go=<code>social</code> is the URL the Go button opens (Telegram/X).</div>';
       h += TASKS_CACHE.map((t, i) => taskEditCard(t, i)).join('');
       h += '<div class="acts" style="margin-top:8px;"><button class="btn sec" onclick="addTaskRow()"><i class="ti ti-plus"></i> Add task</button>'
         + '<button class="btn" onclick="saveTasks()"><i class="ti ti-device-floppy"></i> Save all</button>'
