@@ -513,60 +513,114 @@ function cleanBanners(list) {
       const mode = body.mode === 'full' ? 'full' : 'tasks';
       const ids = ((await upstash(['SMEMBERS', 'users'])) || []).filter(Boolean);
 
-      // Build the 3 commands each user needs, then ship them in batched
-      // /pipeline requests instead of ~3 sequential round trips PER user.
-      // Old path: 22k users * 3 = 66k serial requests → many minutes → the
-      // serverless function times out and the reset never finishes.
-      // New path: USERS_PER_BATCH users per pipeline call, batches fired in
-      // parallel waves → a few dozen requests total, seconds instead of minutes.
+      // ── Why the old reset "said done" but left balances behind ──────────────
+      // Every user's wallet lives in TWO places, not one:
+      //   1. server keys  → bal:, bonus:, dep:*, vol:*, coupons:, pot:, …
+      //   2. profile:<id>  → a JSON snapshot the app RE-UPLOADS on every sync,
+      //      holding usdt / futUSDT / bonus / realBalance / equity / holdings /
+      //      positions / openOrders / txs.
+      // The previous reset only DEL'd the server keys and never touched
+      // profile:, so the moment the user reopened the app, sync.js merged the
+      // stale profile snapshot straight back — balance and bonus "returned".
+      // Deleting profile: outright is wrong too: it holds identity (name,
+      // username, joinedAt) we must keep. So we DEL the money/task keys AND
+      // rewrite profile: in place, zeroing only the financial fields.
+      //
+      // Two things are deliberately PRESERVED so a reset can't be undone or
+      // wipe things you asked to keep:
+      //   • referrals — ref:by:, ref:partner:, ref:count:, ref:list:,
+      //     ref:earned:, partner:* are never touched here.
+      //   • rw:migrated: — the one-time "adopt localStorage bonus" marker. If it
+      //     were cleared, the next sync would re-import the user's old client
+      //     bonus and refund it. Leaving it set keeps the zero permanent.
+      //
+      // Performance: instead of ~3 serial requests PER user (22k users → 66k
+      // round trips → function timeout), each user's commands are batched into
+      // /pipeline requests fired in parallel waves — seconds, not minutes.
+
+      // Financial fields to zero/empty inside the profile snapshot. Anything not
+      // listed here (userId, username, name, joinedAt, flags, …) is preserved.
+      const zeroProfileMoney = (prof) => {
+        const p = (prof && typeof prof === 'object') ? prof : {};
+        return {
+          ...p,
+          usdt: 0, futUSDT: 0, bonus: 0, realBalance: 0, equity: 0,
+          holdings: [], positions: [], openOrders: [], txs: [], closedCount: 0,
+        };
+      };
+
+      // The server keys wiped on a FULL reset. Note the keys NOT here:
+      // ref:* / partner:* (referrals), rw:migrated: (migration guard),
+      // banned: and wd:* (moderation + withdrawal history) — all kept.
+      const fullDelKeys = (id) => [
+        `bal:${id}`, `bonus:${id}`, `dep:total:${id}`, `dep:real:${id}`,
+        `ledger:${id}`, `seen:${id}`, `payout:earned:${id}`,
+        `task:claimed:${id}`, `checkin:${id}`, `task:tgchannel:${id}`,
+        `vol:spot:${id}`, `vol:fut:${id}`,
+        `coupons:${id}`, `coupon:used:${id}`, `pot:${id}`, `rpot:${id}`, `dep:tiers:${id}`,
+      ];
+      // A tasks-only reset clears progress but keeps money keys (bal:, bonus:,
+      // dep:*) and, crucially, does NOT touch the profile snapshot at all.
+      const tasksDelKeys = (id) => [
+        `task:claimed:${id}`, `checkin:${id}`, `task:tgchannel:${id}`,
+        `vol:spot:${id}`, `vol:fut:${id}`,
+        `coupons:${id}`, `coupon:used:${id}`, `pot:${id}`, `rpot:${id}`, `dep:tiers:${id}`,
+      ];
+
       const cmdResetType = mode === 'full' ? 'resetAccount' : 'resetTasks';
-      const buildUserCommands = (id) => (mode === 'full'
-        ? [
-            ['DEL', `bal:${id}`, `dep:total:${id}`, `dep:real:${id}`, `ledger:${id}`, `seen:${id}`,
-              `task:claimed:${id}`, `checkin:${id}`, `bonus:${id}`, `vol:spot:${id}`, `vol:fut:${id}`,
-              `coupons:${id}`, `coupon:used:${id}`, `pot:${id}`, `rpot:${id}`, `dep:tiers:${id}`,
-              `payout:earned:${id}`],
-            ['LPUSH', `cmd:${id}`, JSON.stringify({ type: cmdResetType })],
-            ['LTRIM', `cmd:${id}`, 0, 99],
-          ]
-        : [
-            ['DEL', `task:claimed:${id}`, `checkin:${id}`,
-              `vol:spot:${id}`, `vol:fut:${id}`, `task:tgchannel:${id}`,
-              `coupons:${id}`, `coupon:used:${id}`, `pot:${id}`, `rpot:${id}`, `dep:tiers:${id}`],
-            ['LPUSH', `cmd:${id}`, JSON.stringify({ type: cmdResetType })],
-            ['LTRIM', `cmd:${id}`, 0, 99],
-          ]);
 
       // Tunables. USERS_PER_BATCH keeps each pipeline payload well under
-      // Upstash's 10 MB request limit (500 users ≈ a few hundred KB), and
-      // WAVE limits how many pipeline requests are in flight at once so we
-      // stay friendly to the connection pool / function memory.
-      const USERS_PER_BATCH = 500;
-      const WAVE = 10;
+      // Upstash's 10 MB request limit; WAVE caps how many pipeline requests are
+      // in flight at once. Full mode also reads profiles (one MGET per batch),
+      // so we use a smaller batch there to keep each request comfortably small.
+      const USERS_PER_BATCH = mode === 'full' ? 300 : 500;
+      const WAVE = 8;
 
-      const batches = [];
-      for (let i = 0; i < ids.length; i += USERS_PER_BATCH) {
-        const slice = ids.slice(i, i + USERS_PER_BATCH);
+      // Process one batch of user ids: (full) read their profiles, then pipeline
+      // the DEL + rewritten profile + reset command + trim; (tasks) just the
+      // DEL + command + trim. Returns the number of users handled.
+      async function processBatch(slice) {
+        let profiles = [];
+        if (mode === 'full') {
+          profiles = (await upstash(['MGET', ...slice.map((id) => `profile:${id}`)])) || [];
+        }
         const commands = [];
-        for (const id of slice) commands.push(...buildUserCommands(id));
-        batches.push({ users: slice.length, commands });
+        slice.forEach((id, i) => {
+          if (mode === 'full') {
+            commands.push(['DEL', ...fullDelKeys(id)]);
+            // Only rewrite a profile that already exists — no need to
+            // materialise an empty snapshot for a user who never had one.
+            const existing = parseJSON(profiles[i]);
+            if (existing) {
+              commands.push(['SET', `profile:${id}`, JSON.stringify(zeroProfileMoney(existing))]);
+            }
+          } else {
+            commands.push(['DEL', ...tasksDelKeys(id)]);
+          }
+          commands.push(['LPUSH', `cmd:${id}`, JSON.stringify({ type: cmdResetType })]);
+          commands.push(['LTRIM', `cmd:${id}`, 0, 99]);
+        });
+        await upstashPipeline(commands);
+        return slice.length;
       }
+
+      const slices = [];
+      for (let i = 0; i < ids.length; i += USERS_PER_BATCH) slices.push(ids.slice(i, i + USERS_PER_BATCH));
 
       let count = 0;
       let failedBatches = 0;
-      for (let i = 0; i < batches.length; i += WAVE) {
-        const wave = batches.slice(i, i + WAVE);
-        const results = await Promise.allSettled(wave.map((b) => upstashPipeline(b.commands)));
-        results.forEach((r, j) => {
-          // One failed pipeline request costs its whole batch, not the run.
-          if (r.status === 'fulfilled') count += wave[j].users;
-          else failedBatches += 1;
+      for (let i = 0; i < slices.length; i += WAVE) {
+        const wave = slices.slice(i, i + WAVE);
+        const results = await Promise.allSettled(wave.map((s) => processBatch(s)));
+        results.forEach((r) => {
+          if (r.status === 'fulfilled') count += r.value;
+          else failedBatches += 1; // one failed batch never aborts the whole run
         });
       }
 
       return res.status(200).json({
         ok: failedBatches === 0, mode, count, total: ids.length,
-        batches: batches.length, failedBatches,
+        batches: slices.length, failedBatches,
       });
     }
 
