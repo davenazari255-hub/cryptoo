@@ -1670,6 +1670,11 @@
   // combined unrealized PnL and liquidation price come out right — both are
   // derived from entry, notional and margin.
   function addOrMergePosition(np){
+    // Bonus positions never merge. Each one is settled by the server against the
+    // entry price the server itself stamped, so a local weighted-average entry
+    // would describe a position the server has no record of. Wallet positions
+    // are pure paper trading and still merge as before.
+    if(np.src==='bonus'){ state.positions.push(np); return np; }
     const cur=(state.positions||[]).find(p=>p.pair===np.pair && p.side===np.side && p.src===np.src);
     if(!cur){ state.positions.push(np); return np; }
     const n1=cur.notional||0, n2=np.notional||0, tot=n1+n2;

@@ -447,6 +447,81 @@ async function recordReferral(upstashFn, userId, startParam, newUserName) {
   await upstashFn(['LTRIM', `cmd:${referrer}`, 0, 99]);
 }
 
+// ── Server-priced bonus futures engine ────────────────────────────────
+// Bonus trading is the ONE path where paper trading becomes real, withdrawable
+// money (see action=bonusTransfer), so the profit figure must not come from the
+// client. It used to, and the only thing between a forged localStorage value and
+// the payout queue was a cap that clamped the transfer to the bonus granted —
+// which is exactly what silently ate users' winnings.
+//
+// The cap is gone. In its place both ends of every bonus trade are priced here:
+// the entry when the position opens, the exit when it closes, each from Binance,
+// the same "never trust a client-supplied price" rule api/withdraw.js follows.
+// The client still chooses the pair, side, size and moment — what a trader
+// chooses — and the server owns every number derived from them.
+const BONUS_SYMBOLS = {
+  BTC: 'BTCUSDT', ETH: 'ETHUSDT', BNB: 'BNBUSDT', SOL: 'SOLUSDT', XRP: 'XRPUSDT',
+  DOGE: 'DOGEUSDT', ADA: 'ADAUSDT', AVAX: 'AVAXUSDT', DOT: 'DOTUSDT', LINK: 'LINKUSDT',
+  LTC: 'LTCUSDT', ARB: 'ARBUSDT', OP: 'OPUSDT', AAVE: 'AAVEUSDT', UNI: 'UNIUSDT',
+  ATOM: 'ATOMUSDT', INCH: '1INCHUSDT', COMP: 'COMPUSDT', CRV: 'CRVUSDT', AXS: 'AXSUSDT',
+};
+const BONUS_FEE = 0.0001;    // mirrors FEE in index.html
+const BONUS_MAX_LEV = 125;   // mirrors the leverage sliders
+const BONUS_MAX_POS = 20;    // open bonus positions per account
+
+// One-time ceiling on profit carried over from before the server priced trades.
+// See the carry-over block in action=bonusTransfer for why it exists.
+const LEGACY_PROFIT_CAP = 100;
+
+const r8 = (x) => Math.round((parseFloat(x) || 0) * 1e8) / 1e8;
+const r2 = (x) => Math.round((parseFloat(x) || 0) * 100) / 100;
+
+async function binancePrice(pair) {
+  const symbol = BONUS_SYMBOLS[pair];
+  if (!symbol) return null;
+  try {
+    const r = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${encodeURIComponent(symbol)}`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    const p = parseFloat(d && d.price);
+    return isFinite(p) && p > 0 ? p : null;
+  } catch { return null; }
+}
+
+// Margin and unspent fees held by open positions — locked, not spent, and
+// released when the position closes.
+const bonusLockedOf = (list) => r8((list || []).reduce(
+  (s, p) => s + (parseFloat(p.margin) || 0) + (parseFloat(p.fee) || 0), 0));
+
+// The whole bonus account in one round trip.
+//   granted  what coupon activations credited        (bonus:)
+//   used     realised losses + every fee paid        (bused:)
+//   profit   server-verified winnings, transferable  (bprofit:)
+//   pool     what is left to trade with
+async function bonusBook(userId) {
+  const [grantRaw, usedRaw, profitRaw, posRaw] = (await upstash(['MGET',
+    `bonus:${userId}`, `bused:${userId}`, `bprofit:${userId}`, `bpos:${userId}`])) || [];
+  const parsed = parseJSON(posRaw);
+  const positions = Array.isArray(parsed) ? parsed : [];
+  const granted = Math.max(0, parseFloat(grantRaw) || 0);
+  const used = Math.max(0, parseFloat(usedRaw) || 0);
+  const profit = Math.max(0, parseFloat(profitRaw) || 0);
+  const locked = bonusLockedOf(positions);
+  return { granted, used, profit, positions, locked,
+    pool: Math.max(0, r8(granted - used - locked)) };
+}
+
+// Realised PnL of a position at `exit`. A loss can never exceed the margin —
+// past that point the position is liquidated, not in debt.
+function bonusPnl(pos, exit) {
+  const entry = parseFloat(pos.entry) || 0;
+  const notional = parseFloat(pos.notional) || 0;
+  const margin = parseFloat(pos.margin) || 0;
+  if (!(entry > 0) || !(notional > 0)) return 0;
+  const dir = pos.side === 'short' ? -1 : 1;
+  return r8(Math.max(-margin, ((exit - entry) / entry) * notional * dir));
+}
+
 // Keep the stored snapshot bounded so Redis values stay small.
 function sanitizeProfile(p) {
   if (!p || typeof p !== 'object') return {};
@@ -653,35 +728,165 @@ module.exports = async function handler(req, res) {
         pot: potOut.pot, potCoupon: potOut.coupon, potThreshold: POT_THRESHOLD, coupons, now: Date.now() });
     }
 
+    // ── Read the bonus account as the server sees it ──
+    // The client renders this rather than its own arithmetic, so the figure on
+    // the Bonus card is the same one a transfer will honour.
+    if (body.action === 'bonusBook') {
+      const book = await bonusBook(userId);
+      return res.status(200).json({ ok: true, granted: book.granted, used: r2(book.used),
+        profit: r2(book.profit), pool: r2(book.pool), positions: book.positions, now: Date.now() });
+    }
+
+    // ── Open a bonus position — priced here, not by the client ──
+    if (body.action === 'bonusOpen') {
+      const pair = String(body.pair || '').toUpperCase().slice(0, 8);
+      const side = body.side === 'short' ? 'short' : 'long';
+      const lev = Math.min(BONUS_MAX_LEV, Math.max(1, Math.floor(parseFloat(body.lev) || 0)));
+      const notional = r8(parseFloat(body.notional) || 0);
+      if (!BONUS_SYMBOLS[pair]) return res.status(400).json({ error: 'Unknown pair' });
+      if (!(notional > 0)) return res.status(400).json({ error: 'Enter an amount' });
+
+      const book = await bonusBook(userId);
+      if (book.positions.length >= BONUS_MAX_POS) {
+        return res.status(400).json({ error: 'Too many open bonus positions' });
+      }
+      const margin = r8(notional / lev), fee = r8(notional * BONUS_FEE);
+      if (margin + fee > book.pool + 1e-9) {
+        return res.status(400).json({ error: 'Insufficient bonus margin', pool: r2(book.pool) });
+      }
+
+      const entry = await binancePrice(pair);
+      if (!entry) return res.status(503).json({ error: 'Price unavailable — try again' });
+
+      const now = Date.now();
+      // margin and fee are locked by storing them on the position; nothing is
+      // charged to `bused` until the position settles.
+      const pos = { id: 'bp_' + now.toString(36) + Math.floor(Math.random() * 1e6).toString(36),
+        pair, side, lev, notional, margin, fee, entry: r8(entry), at: now };
+      await upstash(['SET', `bpos:${userId}`, JSON.stringify(book.positions.concat([pos]))]);
+
+      const after = await bonusBook(userId);
+      return res.status(200).json({ ok: true, position: pos, pool: r2(after.pool),
+        profit: r2(after.profit), now });
+    }
+
+    // ── Close a bonus position, settle it, bank the verified profit ──
+    if (body.action === 'bonusClose') {
+      const posId = String(body.posId || '').slice(0, 40);
+      if (!posId) return res.status(400).json({ error: 'posId required' });
+
+      const book = await bonusBook(userId);
+      const pos = book.positions.find((p) => p && p.id === posId);
+      if (!pos) return res.status(404).json({ error: 'Position not found' });
+
+      const exit = await binancePrice(pos.pair);
+      if (!exit) return res.status(503).json({ error: 'Price unavailable — try again' });
+
+      // Removing the position is the one-shot gate: a double-tap arriving after
+      // this finds nothing to settle, so a win cannot be banked twice.
+      const rest = book.positions.filter((p) => p && p.id !== posId);
+      await upstash(['SET', `bpos:${userId}`, JSON.stringify(rest)]);
+
+      const pnl = bonusPnl(pos, exit);
+      const closeFee = r8(pos.notional * BONUS_FEE);
+      const liquidated = pnl <= -(parseFloat(pos.margin) || 0) + 1e-9;
+
+      // Both fees always, and the loss when there was one, are consumed from the
+      // pool for good. A win leaves the pool entirely for `bprofit`, so it can
+      // never be eaten by a later losing trade.
+      await upstash(['INCRBYFLOAT', `bused:${userId}`,
+        r8((parseFloat(pos.fee) || 0) + closeFee + (pnl < 0 ? -pnl : 0))]);
+
+      let profit = book.profit;
+      if (pnl > 0) {
+        const np = parseFloat(await upstash(['INCRBYFLOAT', `bprofit:${userId}`, pnl]));
+        profit = r2(np);
+        await upstash(['SET', `bprofit:${userId}`, String(profit)]);   // re-anchor float drift
+      }
+
+      await upstash(['LPUSH', `ledger:${userId}`, JSON.stringify({
+        usd: r2(pnl), coin: 'BTRADE',
+        note: (liquidated ? 'Liquidated ' : 'Closed ') + pos.side + ' ' + pos.pair
+          + ' @ ' + r8(exit) + ' (entry ' + pos.entry + ')', at: Date.now() })]);
+      await upstash(['LTRIM', `ledger:${userId}`, 0, 99]);
+
+      const after = await bonusBook(userId);
+      return res.status(200).json({ ok: true, posId, pnl: r2(pnl), exit: r8(exit),
+        entry: pos.entry, liquidated, pool: r2(after.pool), profit: r2(after.profit),
+        positions: after.positions, now: Date.now() });
+    }
+
     // ── Transfer bonus profit out, and clear the bonus ──
     // The client cleared its own copy and the next sync handed the whole bonus
     // straight back, because the server still held it. Clearing has to happen
     // here to stick.
     if (body.action === 'bonusTransfer') {
-      const want = Math.round((parseFloat(body.amount) || 0) * 100) / 100;
+      const want = r2(parseFloat(body.amount) || 0);
       if (!(want > 0)) return res.status(400).json({ error: 'Enter an amount' });
 
-      const bonusNow = parseFloat(await upstash(['GET', `bonus:${userId}`])) || 0;
-      if (!(bonusNow > 0)) return res.status(400).json({ error: 'No bonus to transfer' });
+      const book = await bonusBook(userId);
+      // Clearing the bonus would pull the margin out from under an open
+      // position, so they have to be settled first — and settling them is what
+      // turns their winnings into verified profit.
+      if (book.positions.length) {
+        return res.status(400).json({
+          error: 'Close your ' + book.positions.length + ' open bonus position'
+            + (book.positions.length > 1 ? 's' : '') + ' first',
+          positions: book.positions });
+      }
 
-      // Profit transfers used to be capped at the bonus actually granted
-      // (`Math.min(want, bonusNow)`), which is what users were reporting: win 10
-      // USDT on a 3 USDT bonus, transfer 10, receive 3 — the rest vanished with
-      // no explanation. The whole point of a trading bonus is that the profit is
-      // the user's, so the full amount they earned is credited.
+      // The ceiling is no longer the bonus granted — it is the profit this server
+      // priced and settled itself. A 3 USDT bonus that won 10 transfers all 10.
+      let verified = book.profit;
+
+      // One-time carry-over for accounts that traded before the server started
+      // pricing bonus trades. Their winnings only ever existed in localStorage so
+      // there is nothing to verify against, and refusing them outright would
+      // repeat the bug this replaces. Honoured once per account, bounded, and
+      // written to the ledger as coin 'LEGACY' so it is auditable instead of
+      // silently trusted.
+      if (verified <= 0 && (await upstash(['SET', `bseed:${userId}`, '1', 'NX'])) === 'OK') {
+        const claimed = r2(parseFloat(body.legacyProfit) || 0);
+        const carry = Math.min(LEGACY_PROFIT_CAP, Math.max(0, claimed));
+        if (carry > 0) {
+          await upstash(['SET', `bprofit:${userId}`, String(carry)]);
+          verified = carry;
+          await upstash(['LPUSH', `ledger:${userId}`, JSON.stringify({
+            usd: carry, coin: 'LEGACY',
+            note: 'Pre-verification bonus profit carried over (client claimed ' + claimed + ')',
+            at: Date.now() })]);
+          await upstash(['LTRIM', `ledger:${userId}`, 0, 99]);
+        }
+      }
+
+      if (!(verified > 0)) {
+        return res.status(400).json({ error: 'No transferable bonus profit yet', transferable: 0 });
+      }
+      if (want > verified + 1e-9) {
+        // Says the real figure rather than quietly paying less, which is how the
+        // original shortfall went unexplained for so long.
+        return res.status(400).json({
+          error: 'Transferable profit is ' + verified.toFixed(2) + ' USDT',
+          transferable: verified });
+      }
+
       const credited = want;
-
-      await upstash(['SET', `bonus:${userId}`, '0']);
       const newBal = parseFloat(await upstash(['INCRBYFLOAT', `bal:${userId}`, credited]));
       // Spendable, not just visible: the withdrawal gate is deposits + earned,
       // so without this the money would sit in the balance and never come out.
       await upstash(['INCRBYFLOAT', `payout:earned:${userId}`, credited]);
 
+      // Transferring clears the whole bonus account, principal and profit alike,
+      // which is what the client warns about before calling this.
+      await upstash(['DEL', `bonus:${userId}`, `bused:${userId}`,
+        `bprofit:${userId}`, `bpos:${userId}`]);
+
       await upstash(['LPUSH', `ledger:${userId}`, JSON.stringify({
         usd: credited, coin: 'BONUS', note: 'Bonus profit transferred to Spot', at: Date.now() })]);
       await upstash(['LTRIM', `ledger:${userId}`, 0, 99]);
 
-      return res.status(200).json({ ok: true, balance: newBal, credited, cleared: bonusNow });
+      return res.status(200).json({ ok: true, balance: newBal, credited,
+        cleared: r2(book.granted), transferable: verified });
     }
 
     // ── one round trip for every plain string this poll needs ──────────
@@ -713,6 +918,9 @@ module.exports = async function handler(req, res) {
       `ref:partner:${userId}`,    // 17  the partner who referred them, if any
       `ref:by:${userId}`,         // 18  the user who referred them, if any
       `support:meta:${userId}`,   // 19  unread support replies, for the badge
+      `bused:${userId}`,          // 20  bonus losses + fees consumed
+      `bprofit:${userId}`,        // 21  server-verified bonus profit
+      `bpos:${userId}`,           // 22  open bonus positions
     ];
     const S = (await upstash(['MGET', ...STR_KEYS])) || [];
     const num = (i) => parseFloat(S[i]) || 0;
@@ -832,7 +1040,15 @@ module.exports = async function handler(req, res) {
     // The server owns the calendar day (UTC). The client must not derive it
     // locally — a client in UTC+03:30 computes a different day between 00:00
     // and 03:29 local, which made an already-claimed check-in look claimable.
+    // The bonus account as the server holds it. The client used to derive the
+    // pool and the transferable profit from its own trade history, which is why
+    // the number on the Bonus card could disagree with what a transfer paid.
+    const bonusPositions = (() => { const p = parseJSON(S[22]); return Array.isArray(p) ? p : []; })();
     return res.status(200).json({ banned: false, balance, commands, referral, depositTotal, tasks, partner, taskClaimed, checkin, bonusServer,
+      bonusUsed: Math.max(0, num(20)),
+      bonusProfitServer: Math.max(0, num(21)),
+      bonusPositions,
+      bonusPool: Math.max(0, r2(bonusServer - Math.max(0, num(20)) - bonusLockedOf(bonusPositions))),
       isAdmin: adminIds().has(String(user.id)),
       // The headphones badge. This used to be its own /api/support poll every
       // 30s from every open app — three commands each, forever, for users who
