@@ -179,10 +179,15 @@ async function createAddress(req, res) {
 
   // json=1 -> webhook body is JSON; post=1 -> sent as POST; pending=1 -> also
   // notify on mempool detection so the UI can show "seen, confirming".
+  // convert=1 -> BlockBee includes the FIAT conversion of the received amount
+  // (value_coin_convert / value_forwarded_coin_convert) in the callback. Without
+  // it, non-stable coins (BTC/ETH/TRX/BNB/SOL) arrive with no USD figure, so the
+  // webhook credited $0 and the deposit never reached the balance. This makes
+  // every coin — not just USDT — creditable in USD.
   const url = `${BLOCKBEE_BASE}/${ticker}/create/`
     + `?apikey=${encodeURIComponent(apiKey)}`
     + `&callback=${encodeURIComponent(callbackUrl)}`
-    + `&pending=1&post=1&json=1`;
+    + `&pending=1&post=1&json=1&convert=1`;
 
   // Guard the BlockBee call with an explicit timeout. Without this, a slow or
   // hung connection to BlockBee would leave the serverless function pending and

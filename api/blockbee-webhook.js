@@ -242,20 +242,49 @@ module.exports = async function handler(req, res) {
   const pending = String(payload.pending != null ? payload.pending : q.pending) === '1';
   const txid = payload.txid_in || payload.txid || q.txid_in || null;
 
-  // USD value. BlockBee gives value in the coin (value_coin) after the sender
-  // pays; for USDT-family coins 1 unit ≈ $1. value_forwarded_coin is net of the
-  // BlockBee fee. We credit the gross the user actually sent (value_coin), the
-  // same "credit what arrived" policy the old ipn.js used.
+  // USD value. BlockBee gives the received amount in the coin (value_coin),
+  // before fees; we credit the gross the user actually sent (the same
+  // "credit what arrived" policy the old ipn.js used).
   const valueCoin = parseFloat(
     payload.value_coin != null ? payload.value_coin
     : payload.value != null ? payload.value
     : 0
   ) || 0;
-  // USDT/stable coins are ~1:1 with USD. For non-stable coins BlockBee does not
-  // send a USD figure here, so this is only trustworthy for USDT tickers — the
-  // deposit UI is USDT-first. Guard: only treat as USD when the coin is USDT.
+
+  // Convert the received amount to USD so ANY coin can be credited, not just
+  // USDT. Sources, in order of trust:
+  //   1. value_coin_convert.USD — BlockBee's own fiat conversion, present when
+  //      the address was created with convert=1 (see blockbee-create.js). Most
+  //      accurate. It may arrive as a JSON string or an already-parsed object.
+  //   2. value_coin * price      — `price` is the coin's USD price at webhook
+  //      time and is always sent, so this covers older addresses created before
+  //      convert=1 was added.
+  //   3. USDT fallback (~1:1)    — if neither is available but the coin is a
+  //      USDT ticker, 1 unit ≈ $1, matching the previous behaviour.
+  // Was: `const usd = isUsdt ? valueCoin : 0;` — which credited $0 for every
+  // non-USDT coin, so those deposits silently never reached the balance.
+  const parseConvert = (v) => {
+    if (v == null) return null;
+    let obj = v;
+    if (typeof v === 'string') { try { obj = JSON.parse(v); } catch { return null; } }
+    if (!obj || typeof obj !== 'object') return null;
+    // Keys may be upper or lower case depending on BlockBee.
+    const n = parseFloat(obj.USD != null ? obj.USD : obj.usd);
+    return isFinite(n) && n > 0 ? n : null;
+  };
   const isUsdt = /usdt/i.test(String(coin));
-  const usd = isUsdt ? valueCoin : 0;
+  const priceUsd = parseFloat(payload.price != null ? payload.price : q.price) || 0;
+  const convertUsd = parseConvert(payload.value_coin_convert);
+
+  let usd = 0;
+  if (convertUsd != null) {
+    usd = convertUsd;                                   // 1. BlockBee fiat conversion
+  } else if (priceUsd > 0 && valueCoin > 0) {
+    usd = valueCoin * priceUsd;                         // 2. amount × live price
+  } else if (isUsdt) {
+    usd = valueCoin;                                    // 3. USDT ~1:1 fallback
+  }
+  usd = Math.round((usd || 0) * 100) / 100;
 
   // Record the latest event for the status poll (both pending and confirmed).
   try {
