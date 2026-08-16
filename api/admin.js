@@ -83,6 +83,61 @@ async function tgSend(userId, text) {
   } catch (e) { /* ignore */ }
 }
 
+// ── Image helpers for broadcasts (mirrors api/support.js) ─────────────────────
+// api/ files are independent Vercel bundles with no shared imports, so the same
+// small photo helpers are inlined here. Strategy for a mass broadcast: upload
+// the image bytes to Telegram ONCE, keep the returned file_id, then re-send that
+// file_id to every recipient — no re-uploading megabytes per user.
+const IMG_MAX_BYTES = 5 * 1024 * 1024;
+const chatIdOf = (id) => (String(id).startsWith('tg_') ? String(id).slice(3) : String(id));
+// Signed image proxy URL, identical scheme to api/support.js so the broadcast's
+// in-app notification can show the same Telegram-hosted image via /api/support
+// without storing the raw (large) base64 bytes in every user's cmd: list.
+function imgKey() { return process.env.ADMIN_SECRET || process.env.TELEGRAM_BOT_TOKEN || 'kolonoex'; }
+function imgSig(fileId) { return crypto.createHmac('sha256', imgKey()).update(String(fileId)).digest('hex').slice(0, 20); }
+function imgUrl(fileId) { return `/api/support?action=img&id=${encodeURIComponent(fileId)}&t=${imgSig(fileId)}`; }
+function parseDataUrl(s) {
+  const m = /^data:(image\/(?:jpeg|jpg|png|webp));base64,([A-Za-z0-9+/=\s]+)$/.exec(String(s || ''));
+  if (!m) return null;
+  let buf; try { buf = Buffer.from(m[2].replace(/\s+/g, ''), 'base64'); } catch { return null; }
+  if (!buf.length || buf.length > IMG_MAX_BYTES) return null;
+  return { buf, mime: m[1] === 'image/jpg' ? 'image/jpeg' : m[1] };
+}
+// Upload bytes once; returns the largest file_id Telegram gives back (or null).
+async function tgUploadPhoto(chatId, buf, mime, caption) {
+  const token = process.env.TELEGRAM_BOT_TOKEN; if (!token || !chatId) return null;
+  try {
+    const fd = new FormData();
+    fd.append('chat_id', chatIdOf(chatId));
+    if (caption) { fd.append('caption', String(caption).slice(0, 1024)); fd.append('parse_mode', 'HTML'); }
+    fd.append('photo', new Blob([buf], { type: mime || 'image/jpeg' }), 'photo.jpg');
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, { method: 'POST', body: fd });
+    const d = await r.json();
+    const ph = d && d.ok && d.result && d.result.photo;
+    return ph && ph.length ? ph[ph.length - 1].file_id : null;
+  } catch { return null; }
+}
+// Re-send an already-uploaded photo to another chat by file_id — no bytes sent.
+async function tgSendPhotoId(chatId, fileId, caption) {
+  const token = process.env.TELEGRAM_BOT_TOKEN; if (!token || !chatId || !fileId) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatIdOf(chatId), photo: fileId, caption: caption ? String(caption).slice(0, 1024) : undefined, parse_mode: 'HTML' }),
+    });
+  } catch { /* ignore */ }
+}
+// Plain text bot message (no "Open app" button); used for broadcast text pushes.
+async function tgSendPlain(chatId, text) {
+  const token = process.env.TELEGRAM_BOT_TOKEN; if (!token || !chatId || !text) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatIdOf(chatId), text: String(text).slice(0, 4096), parse_mode: 'HTML', disable_web_page_preview: true }),
+    });
+  } catch { /* ignore */ }
+}
+
 // ── shared partner-commission block ───────────────────────────────────────────
 // This block is duplicated verbatim in api/admin.js, because every file in api/
 // is its own Vercel bundle and cross-directory imports were unreliable here.
@@ -621,6 +676,151 @@ function cleanBanners(list) {
       return res.status(200).json({
         ok: failedBatches === 0, mode, count, total: ids.length,
         batches: slices.length, failedBatches,
+      });
+    }
+
+    // ── Broadcast an announcement to many users at once ──────────────────────
+    // Sends an in-app notification (drained by sync.js on next open) and/or a
+    // Telegram bot push, optionally with an image, to an audience selected by
+    // activity/join time. Two phases:
+    //   • preview:true  → resolve the audience and just return the count, so the
+    //     admin sees "will reach N users" before committing. Nothing is sent.
+    //   • send          → deliver for real.
+    //
+    // Audience filters (all optional, ANDed together), evaluated against each
+    // user's profile snapshot:
+    //   • activeSince : keep users whose lastSeen >= this epoch ms ("entered the
+    //                   app since <date/time>", exactly what was asked for)
+    //   • joinedSince : keep users whose joinedAt >= this epoch ms (new signups)
+    //   • activeBefore: keep users whose lastSeen <  this epoch ms (dormant)
+    // With no filter, the audience is everyone in the `users` set.
+    //
+    // Performance mirrors resetAll: profiles are read with batched MGET and the
+    // in-app notifications are written with batched /pipeline LPUSH+LTRIM. The
+    // image is uploaded to Telegram ONCE; every recipient then gets that file_id
+    // (no re-upload). Telegram pushes are throttled in small parallel waves to
+    // respect rate limits — the in-app notification is the guaranteed channel,
+    // the bot push is best-effort on top.
+    if (body.action === 'broadcast') {
+      const title = String(body.title || '').slice(0, 120).trim();
+      const text = String(body.text || '').slice(0, 3500).trim();
+      const preview = body.preview === true;
+      const sendInApp = body.inApp !== false;              // default on
+      const sendTelegram = body.telegram === true;         // default off (opt-in)
+      const hasImage = !!body.image;
+
+      if (!preview && !title && !text && !hasImage) {
+        return res.status(400).json({ error: 'Provide a title, text, or image' });
+      }
+      if (!preview && !sendInApp && !sendTelegram) {
+        return res.status(400).json({ error: 'Pick at least one channel (in-app or Telegram)' });
+      }
+
+      // Parse the optional image up front so a bad one fails before we fan out.
+      let img = null;
+      if (hasImage) {
+        img = parseDataUrl(body.image);
+        if (!img) return res.status(400).json({ error: 'Invalid or oversized image (max 5 MB, jpg/png/webp)' });
+      }
+
+      // Filters. Values are epoch ms; 0/undefined means "no bound".
+      const activeSince = Number(body.activeSince) > 0 ? Number(body.activeSince) : 0;
+      const joinedSince = Number(body.joinedSince) > 0 ? Number(body.joinedSince) : 0;
+      const activeBefore = Number(body.activeBefore) > 0 ? Number(body.activeBefore) : 0;
+      const includeBanned = body.includeBanned === true; // default: skip banned
+
+      const allIds = ((await upstash(['SMEMBERS', 'users'])) || []).filter(Boolean);
+
+      // Resolve the audience by reading profiles in batches (and ban flags, when
+      // we're excluding banned users). Keep only the ids that pass every filter.
+      const RESOLVE_BATCH = 500;
+      const audience = [];
+      for (let i = 0; i < allIds.length; i += RESOLVE_BATCH) {
+        const slice = allIds.slice(i, i + RESOLVE_BATCH);
+        const needFilter = activeSince || joinedSince || activeBefore;
+        const [profiles, bans] = await Promise.all([
+          (needFilter) ? upstash(['MGET', ...slice.map((id) => `profile:${id}`)]) : Promise.resolve(null),
+          (!includeBanned) ? upstash(['MGET', ...slice.map((id) => `banned:${id}`)]) : Promise.resolve(null),
+        ]);
+        slice.forEach((id, j) => {
+          if (bans && bans[j]) return; // skip banned
+          if (needFilter) {
+            const p = parseJSON(profiles[j]) || {};
+            const lastSeen = Number(p.lastSeen) || 0;
+            const joinedAt = Number(p.joinedAt) || 0;
+            if (activeSince && !(lastSeen >= activeSince)) return;
+            if (activeBefore && !(lastSeen && lastSeen < activeBefore)) return;
+            if (joinedSince && !(joinedAt >= joinedSince)) return;
+          }
+          audience.push(id);
+        });
+      }
+
+      // Preview: report the audience size (and total) without sending anything.
+      if (preview) {
+        return res.status(200).json({ ok: true, preview: true, audience: audience.length, total: allIds.length });
+      }
+
+      // ── Deliver ──
+      // If there's an image, upload it to Telegram ONCE up front to obtain a
+      // file_id. That same file_id is re-sent to every Telegram recipient, and
+      // its signed proxy URL (via /api/support?action=img) is embedded in the
+      // in-app notification — so the raw base64 is never stored per user.
+      let fileId = null;
+      if (img) {
+        const firstAdmin = [...adminIds()][0];
+        fileId = await tgUploadPhoto(firstAdmin, img.buf, img.mime, null);
+      }
+      const inAppImg = fileId ? imgUrl(fileId) : undefined;
+
+      // 1) In-app notification via batched pipeline (guaranteed channel).
+      let inAppCount = 0;
+      const notif = JSON.stringify({
+        type: 'message', kind: 'announcement',
+        title: title || 'Announcement', text, img: inAppImg, at: Date.now(),
+      });
+      if (sendInApp) {
+        const NOTIF_BATCH = 500, WAVE = 8;
+        const slices = [];
+        for (let i = 0; i < audience.length; i += NOTIF_BATCH) slices.push(audience.slice(i, i + NOTIF_BATCH));
+        for (let i = 0; i < slices.length; i += WAVE) {
+          const wave = slices.slice(i, i + WAVE);
+          const results = await Promise.allSettled(wave.map((s) => {
+            const commands = [];
+            for (const id of s) {
+              commands.push(['LPUSH', `cmd:${id}`, notif]);
+              commands.push(['LTRIM', `cmd:${id}`, 0, 99]);
+            }
+            return upstashPipeline(commands);
+          }));
+          results.forEach((r, k) => { if (r.status === 'fulfilled') inAppCount += wave[i + k - i] ? wave[k].length : 0; });
+        }
+      }
+
+      // 2) Telegram push (best-effort). Re-sends the file_id minted above (if
+      // any) to everyone; text-only broadcasts send plain text. Small parallel
+      // waves keep us under Telegram's rate limit.
+      let telegramCount = 0;
+      if (sendTelegram) {
+        const caption = [title ? `<b>${escHtml(title)}</b>` : '', escHtml(text)].filter(Boolean).join('\n\n');
+        const TG_WAVE = 25; // small waves stay under Telegram's ~30 msg/s ceiling
+        for (let i = 0; i < audience.length; i += TG_WAVE) {
+          const wave = audience.slice(i, i + TG_WAVE);
+          const results = await Promise.allSettled(wave.map((id) => (
+            fileId ? tgSendPhotoId(id, fileId, caption || undefined)
+                   : tgSendPlain(id, caption || title || text)
+          )));
+          telegramCount += results.filter((r) => r.status === 'fulfilled').length;
+          // A short breather between waves to be gentle on the rate limit.
+          if (i + TG_WAVE < audience.length) await new Promise((r) => setTimeout(r, 1000));
+        }
+      }
+
+      return res.status(200).json({
+        ok: true, audience: audience.length, total: allIds.length,
+        inAppSent: sendInApp ? inAppCount : 0,
+        telegramSent: sendTelegram ? telegramCount : 0,
+        hadImage: !!img,
       });
     }
 
