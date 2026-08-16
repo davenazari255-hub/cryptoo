@@ -794,6 +794,9 @@
     .fold-pill { font-size:9.5px; font-weight:800; letter-spacing:.05em; padding:1.5px 6px;
       border-radius:100px; background:var(--green); color:#08130d; }
     .fold-pill.amber { background:var(--gold-2); }
+    /* "NEW task" marker on the Tasks fold head — clears once the fold is opened. */
+    .tk-new-dot{ display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--red); margin-left:6px; vertical-align:middle; box-shadow:0 0 0 3px rgba(255,90,90,.18); }
+    .tk-new-pill{ font-size:9px;font-weight:800;letter-spacing:.04em;color:#fff;background:var(--red);padding:1px 6px;border-radius:6px;margin-left:7px;vertical-align:middle; }
 
     /* check-in header, collapsed or not */
     .fold.ci-fold { background:linear-gradient(135deg,#13241b,var(--surface-2) 70%);
@@ -1624,6 +1627,7 @@
     }
   }
   function taskCond(t){
+    if(t.metric==='stars') return false;   // fulfilled by the Stars payment webhook — never claimable client-side
     if(t.metric==='tgChannel') return !!(state.social&&state.social.tgChannel);   // verified by server
     if(t.metric==='xFollow')   return !!(state.social&&state.social.xFollow);      // honor: visited the X follow page
     if(!t.target||t.metric==='always') return true; return taskMetricValue(t.metric)>=t.target; }
@@ -2337,6 +2341,10 @@
       +rows); }
   // ── Home tasks ──
   function taskStatus(t){ if(state.taskClaimed[t.id]) return 'done'; return taskCond(t)?'ready':'locked'; }
+  // "New task" badge: track which task ids the user has already seen (localStorage).
+  // markTasksSeen() is called whenever the Tasks fold opens, clearing the badge.
+  function markTasksSeen(){ try{ localStorage.setItem('tk_seen_ids', JSON.stringify(TASKS.map(function(t){return t.id;}))); }catch(e){} }
+  function newTaskCount(){ try{ var seen=JSON.parse(localStorage.getItem('tk_seen_ids')||'[]'); if(!Array.isArray(seen)) seen=[]; return TASKS.filter(function(t){ return seen.indexOf(t.id)<0; }).length; }catch(e){ return 0; } }
   // ── collapsible Home sections ──────────────────────────────────────
   // Closed by default: the home screen was a stack of tall cards. The state is
   // remembered so a user who opens a section keeps it open.
@@ -2348,6 +2356,8 @@
   function toggleFold(k, ev){
     if(ev) ev.stopPropagation();
     folds[k] = !folds[k]; saveFolds(); hapticSelect();
+    // Opening the Tasks fold clears the "NEW" badge by marking every current task seen.
+    if(k === 'tk' && folds.tk) markTasksSeen();
     if(k === 'ci') renderCheckin(); else renderTasks(); }
 
   // ── Reward pot ─────────────────────────────────────────────────────
@@ -2669,7 +2679,8 @@
       +'<div class="fold-head" onclick="toggleFold(\'tk\')">'
       +  '<div class="ic"><i class="ti ti-checklist"></i></div>'
       +  '<div class="tx"><div class="t">Tasks \u00b7 Earn Bonus'
-      +    (leftN > 0 ? '<span class="fold-pill">' + leftN + '</span>' : '') + '</div>'
+      +    (leftN > 0 ? '<span class="fold-pill">' + leftN + '</span>' : '')
+      +    ((!openTk && newTaskCount() > 0) ? '<span class="tk-new-pill">NEW</span>' : '') + '</div>'
       +    '<div class="s">' + tkSub + '</div></div>'
       +  '<span style="font-size:11px;color:#7a8299;flex-shrink:0;">' + done + '/' + counted.length + '</span>'
       +  '<i class="ti ti-chevron-down fold-chev"></i>'
@@ -2687,6 +2698,7 @@
       if(st==='done'){ btn='<button class="task-btn done">Claimed ✓</button>'; }
       else if(st==='ready'){ btn='<button class="task-btn claim" onclick="claimTask(\''+t.id+'\')">Claim</button>'; }
       else if(t.metric==='tgChannel' && state.social && state.social.tgChannelVisited){ btn='<button class="task-btn go" onclick="verifySocialTask(\''+t.id+'\')">Verify</button>'; }
+      else if(t.go==='stars' || t.metric==='stars'){ btn='<button class="task-btn claim" onclick="buyStars(\''+t.id+'\')"><i class="ti ti-star" style="font-size:12px;margin-right:4px;"></i>Buy with Stars</button>'; }
       else { btn='<button class="task-btn go" onclick="'+goAction+'">Go</button>'; }
       // Progress bar toward a numeric target (stays at 100% after claim).
       let prog='';
@@ -2733,6 +2745,25 @@
       renderTasks(); setBonusBtn(); renderAssets();
     }catch(e){ toast('Network error','err'); }
     finally{ claimBusy=false; } }
+
+  // Buy the 15 USDT bonus with Telegram Stars. Asks the server for a one-time
+  // invoice link, then opens it via Telegram.WebApp.openInvoice. Crediting is
+  // handled server-side by the bot webhook — this only starts the payment.
+  async function buyStars(id){
+    if(!hasTgAuth()){ toast('Open the app from Telegram to buy','err'); return; }
+    try{
+      const r=await fetch('/api/sync',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ initData:tgInitData(), action:'starsInvoice', taskId:id }) });
+      const d=await r.json();
+      if(!r.ok || !d.link){ toast((d&&d.error)||'Could not start payment','err'); return; }
+      if(window.Telegram && Telegram.WebApp && Telegram.WebApp.openInvoice){
+        Telegram.WebApp.openInvoice(d.link, function(status){
+          if(status==='paid'){ toast('Payment received — your 15 USDT bonus coupon is on the way','ok'); setTimeout(function(){ if(typeof syncBalance==='function') syncBalance(); else renderTasks(); }, 1500); }
+          else if(status==='failed'){ toast('Payment failed','err'); }
+          else if(status==='cancelled'){ toast('Payment cancelled','info'); }
+        });
+      } else { toast('Open in Telegram to pay with Stars','err'); }
+    }catch(e){ toast('Could not start payment','err'); }
+  }
 
   // Mirror the server's claim ledger into local state (server is the truth).
   function applyServerClaims(list){ const m={}; (list||[]).forEach(id=>{ m[id]=true; }); state.taskClaimed=m; save(); }
@@ -3062,7 +3093,7 @@
       case 'partner':  openPartner(); break;
       case 'coupons':  openCoupons(); break;
       case 'invite':   openInvite();  break;
-      case 'tasks':    goPage('home'); folds.tk = true; saveFolds(); renderTasks(); break;
+      case 'tasks':    goPage('home'); folds.tk = true; saveFolds(); markTasksSeen(); renderTasks(); break;
       case 'assets':   goPage('assets'); break;
       case 'trade':    goPage('trade'); break;
       case 'futures':  goPage('futures'); break;
@@ -3785,7 +3816,11 @@
       if(Array.isArray(d.depositLadder)) depLadder=d.depositLadder;
       if(Array.isArray(d.depTiers)){ const sig=d.depTiers.slice().sort().join(',');
         if(sig!==depSig){ depSig=sig; depTiers=d.depTiers; renderTasks(); } }
-      if(Array.isArray(d.tasks) && d.tasks.length){ const sig=JSON.stringify(d.tasks); if(sig!==tasksSig){ tasksSig=sig; TASKS=mergeTasks(d.tasks); renderTasks(); } }
+      if(Array.isArray(d.tasks) && d.tasks.length){ const sig=JSON.stringify(d.tasks); if(sig!==tasksSig){ tasksSig=sig; TASKS=mergeTasks(d.tasks);
+        // First-ever population: seed tk_seen_ids with the current tasks so existing
+        // users don't see every task flagged NEW — only genuinely new future tasks show it.
+        if(localStorage.getItem('tk_seen_ids')===null) markTasksSeen();
+        renderTasks(); } }
       // Partner status (this user's own application/approval).
       if(d.partner!==undefined){
         // api/sync sends the raw partner:me record. The stats the panel shows
