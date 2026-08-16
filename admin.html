@@ -199,6 +199,7 @@
       <div class="tab" id="tab-tasks" onclick="setTab('tasks')"><i class="ti ti-checklist" style="font-size:14px;margin-right:5px;vertical-align:-2px;"></i>Tasks</div>
       <div class="tab" id="tab-banners" onclick="setTab('banners')"><i class="ti ti-photo" style="font-size:14px;margin-right:5px;vertical-align:-2px;"></i>Banners</div>
       <div class="tab" id="tab-partners" onclick="setTab('partners')"><i class="ti ti-diamond" style="font-size:14px;margin-right:5px;vertical-align:-2px;"></i>Partners</div>
+      <div class="tab" id="tab-announce" onclick="setTab('announce')"><i class="ti ti-speakerphone" style="font-size:14px;margin-right:5px;vertical-align:-2px;"></i>Announce</div>
       <div class="tab" id="tab-maintenance" onclick="setTab('maintenance')"><i class="ti ti-tool" style="font-size:14px;margin-right:5px;vertical-align:-2px;"></i>Maintenance</div>
     </div></div>
     <div class="bar">
@@ -242,8 +243,8 @@
       catch (e) { $('gate-err').textContent = e.message; }
     }
     function logout() { sessionStorage.removeItem('kx_admin'); location.reload(); }
-    function setTab(t) { TAB = t; ['users','wd','dep','sup','tasks','banners','partners','maintenance'].forEach(x => $('tab-' + x).classList.toggle('on', t === x)); if (t !== 'sup') stopThreadPoll(); refresh(); }
-    function refresh() { TAB === 'users' ? loadUsers() : TAB === 'wd' ? loadWithdrawals() : TAB === 'dep' ? loadDeposits() : TAB === 'sup' ? loadConversations() : TAB === 'tasks' ? loadTasks() : TAB === 'banners' ? loadBanners() : TAB === 'maintenance' ? loadMaintenance() : loadPartners(); }
+    function setTab(t) { TAB = t; ['users','wd','dep','sup','tasks','banners','partners','announce','maintenance'].forEach(x => $('tab-' + x).classList.toggle('on', t === x)); if (t !== 'sup') stopThreadPoll(); refresh(); }
+    function refresh() { TAB === 'users' ? loadUsers() : TAB === 'wd' ? loadWithdrawals() : TAB === 'dep' ? loadDeposits() : TAB === 'sup' ? loadConversations() : TAB === 'tasks' ? loadTasks() : TAB === 'banners' ? loadBanners() : TAB === 'announce' ? loadAnnounce() : TAB === 'maintenance' ? loadMaintenance() : loadPartners(); }
 
     /* ── Deposits report ── */
     async function loadDeposits() {
@@ -954,6 +955,158 @@
 
     /* ── Maintenance Mode ── */
     let MAINTENANCE_STATE = null;
+    /* ── Announcements / Broadcast ──────────────────────────────────────────
+       Compose an announcement (title + text + optional image) and send it to a
+       chosen audience. Two channels: an in-app notification (always available)
+       and an optional Telegram bot push. Audience can be everyone, or filtered
+       by "active since" / "joined since" a chosen date-time, with quick presets.
+       A Preview button resolves the audience size before you commit. */
+    let ANN_IMG = null; // { dataUrl, name } — the pending image, if any
+
+    function loadAnnounce() {
+      $('count').textContent = 'Broadcast';
+      renderAnnounce();
+    }
+
+    function renderAnnounce() {
+      let h = '<div class="mini" style="margin-bottom:12px;line-height:1.6;">Send an announcement to your users. The <b>in-app notification</b> shows up inside the app on their next sync (within ~1 min). The optional <b>Telegram push</b> also messages them in the bot chat. You can target everyone, or only users active/joined since a chosen time.</div>';
+
+      h += '<div class="card">';
+      // Message
+      h += '<div class="sec-title">Message</div>';
+      h += '<div class="pfield"><label>Title</label>';
+      h += '<input id="ann-title" maxlength="120" placeholder="e.g. New feature is live 🎉"></div>';
+      h += '<div class="pfield"><label>Text</label><div class="hint">Basic HTML like &lt;b&gt;bold&lt;/b&gt; is supported.</div>';
+      h += '<textarea id="ann-text" rows="4" maxlength="3500" placeholder="Write your announcement…" style="width:100%;background:var(--bg-2);border:1px solid var(--line-2);color:var(--text);border-radius:9px;padding:10px 12px;font-size:14px;outline:none;resize:vertical;"></textarea></div>';
+
+      // Image
+      h += '<div class="sec-title">Image (optional)</div>';
+      h += '<div id="ann-img-wrap">' + annImgHtml() + '</div>';
+      h += '<input id="ann-file" type="file" accept="image/*" style="display:none;" onchange="pickAnnImg(this)">';
+
+      // Channels
+      h += '<div class="sec-title">Channels</div>';
+      h += '<label class="mini" style="display:flex;align-items:center;gap:8px;margin:4px 0;color:var(--text);cursor:pointer;"><input type="checkbox" id="ann-inapp" checked style="width:16px;height:16px;accent-color:#4eeaa0;"> In-app notification</label>';
+      h += '<label class="mini" style="display:flex;align-items:center;gap:8px;margin:4px 0;color:var(--text);cursor:pointer;"><input type="checkbox" id="ann-tg" style="width:16px;height:16px;accent-color:#4eeaa0;"> Telegram bot push <span style="color:var(--text-3);">(slower for large audiences)</span></label>';
+
+      // Audience
+      h += '<div class="sec-title">Audience</div>';
+      h += '<div class="pfield"><label>Target</label>';
+      h += '<select id="ann-target" onchange="onAnnTargetChange()" style="width:100%;background:var(--bg-2);border:1px solid var(--line-2);color:var(--text);border-radius:9px;padding:10px 12px;font-size:14px;outline:none;">';
+      h += '<option value="all">Everyone</option>';
+      h += '<option value="activeSince">Active since… (entered the app)</option>';
+      h += '<option value="joinedSince">Joined since… (new users)</option>';
+      h += '<option value="activeBefore">Inactive since… (dormant users)</option>';
+      h += '</select></div>';
+      h += '<div id="ann-when" class="pfield" style="display:none;"><label>Date &amp; time</label>';
+      h += '<input type="datetime-local" id="ann-datetime" style="width:100%;background:var(--bg-2);border:1px solid var(--line-2);color:var(--text);border-radius:9px;padding:10px 12px;font-size:14px;outline:none;">';
+      h += '<div class="mini" style="margin-top:8px;">Quick presets:</div>';
+      h += '<div class="acts" style="margin-top:6px;">';
+      h += '<button class="btn sec" style="padding:6px 11px;font-size:12px;" onclick="annPreset(1)">Last 1h</button>';
+      h += '<button class="btn sec" style="padding:6px 11px;font-size:12px;" onclick="annPreset(24)">Last 24h</button>';
+      h += '<button class="btn sec" style="padding:6px 11px;font-size:12px;" onclick="annPreset(72)">Last 3d</button>';
+      h += '<button class="btn sec" style="padding:6px 11px;font-size:12px;" onclick="annPreset(168)">Last 7d</button>';
+      h += '<button class="btn sec" style="padding:6px 11px;font-size:12px;" onclick="annPreset(720)">Last 30d</button>';
+      h += '</div></div>';
+
+      // Result / actions
+      h += '<div id="ann-result" class="mini" style="margin-top:14px;"></div>';
+      h += '<div class="acts" style="margin-top:12px;">';
+      h += '<button class="btn sec" id="ann-preview-btn" onclick="doAnnounce(true)"><i class="ti ti-users-group"></i> Preview audience</button>';
+      h += '<button class="btn" id="ann-send-btn" onclick="doAnnounce(false)"><i class="ti ti-send"></i> Send announcement</button>';
+      h += '</div>';
+      h += '</div>';
+
+      $('view').innerHTML = h;
+    }
+
+    function annImgHtml() {
+      if (ANN_IMG) {
+        return '<div style="position:relative;display:inline-block;">'
+          + '<img src="' + ANN_IMG.dataUrl + '" style="max-width:100%;max-height:200px;border-radius:10px;border:0.5px solid var(--line-2);display:block;">'
+          + '<button class="btn red" style="margin-top:8px;padding:6px 11px;font-size:12px;" onclick="clearAnnImg()"><i class="ti ti-trash"></i> Remove image</button>'
+          + '</div>';
+      }
+      return '<button class="btn sec" onclick="$(\'ann-file\').click()"><i class="ti ti-photo-plus"></i> Add image</button>'
+        + '<div class="mini" style="margin-top:6px;">JPG / PNG / WebP · up to 5 MB</div>';
+    }
+
+    function pickAnnImg(input) {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      if (file.size > 5 * 1024 * 1024) { alert('Image is too large (max 5 MB).'); input.value = ''; return; }
+      const fr = new FileReader();
+      fr.onload = () => { ANN_IMG = { dataUrl: String(fr.result), name: file.name }; $('ann-img-wrap').innerHTML = annImgHtml(); };
+      fr.readAsDataURL(file);
+    }
+    function clearAnnImg() { ANN_IMG = null; $('ann-img-wrap').innerHTML = annImgHtml(); const f = $('ann-file'); if (f) f.value = ''; }
+
+    function onAnnTargetChange() {
+      const t = $('ann-target').value;
+      $('ann-when').style.display = (t === 'all') ? 'none' : 'block';
+    }
+    function annPreset(hoursAgo) {
+      const d = new Date(Date.now() - hoursAgo * 3600 * 1000);
+      // datetime-local wants local time without timezone/seconds
+      const off = d.getTimezoneOffset() * 60000;
+      $('ann-datetime').value = new Date(d - off).toISOString().slice(0, 16);
+    }
+
+    async function doAnnounce(preview) {
+      const title = $('ann-title').value.trim();
+      const text = $('ann-text').value.trim();
+      const inApp = $('ann-inapp').checked;
+      const telegram = $('ann-tg').checked;
+      const target = $('ann-target').value;
+
+      if (!preview) {
+        if (!title && !text && !ANN_IMG) return alert('Add a title, text, or an image first.');
+        if (!inApp && !telegram) return alert('Pick at least one channel.');
+      }
+
+      // Build audience filter from the selected target + datetime.
+      const payload = { action: 'broadcast', preview, title, text, inApp, telegram };
+      if (ANN_IMG) payload.image = ANN_IMG.dataUrl;
+      if (target !== 'all') {
+        const val = $('ann-datetime').value;
+        if (!val) return alert('Pick a date & time for this audience (or choose Everyone).');
+        const ms = new Date(val).getTime();
+        if (!ms) return alert('Invalid date & time.');
+        payload[target] = ms; // activeSince | joinedSince | activeBefore
+      }
+
+      const pBtn = $('ann-preview-btn'), sBtn = $('ann-send-btn');
+      const resEl = $('ann-result');
+      pBtn.disabled = sBtn.disabled = true;
+      resEl.style.color = 'var(--text-3)';
+      resEl.textContent = preview ? 'Resolving audience…' : 'Sending… this can take a moment for large audiences.';
+
+      try {
+        if (!preview) {
+          // Confirm with the resolved count from a fresh preview first.
+          const pre = await api({ ...payload, preview: true });
+          if (!confirm('This will send to ' + pre.audience + ' of ' + pre.total + ' users'
+            + (telegram ? ' (in-app + Telegram)' : ' (in-app)') + '. Continue?')) {
+            resEl.textContent = ''; pBtn.disabled = sBtn.disabled = false; return;
+          }
+        }
+        const d = await api(payload);
+        if (preview) {
+          resEl.style.color = 'var(--blue)';
+          resEl.innerHTML = '<i class="ti ti-users-group"></i> This will reach <b>' + d.audience + '</b> of ' + d.total + ' users.';
+        } else {
+          resEl.style.color = 'var(--green)';
+          resEl.innerHTML = '<i class="ti ti-circle-check"></i> Sent to <b>' + d.audience + '</b> users'
+            + ' — in-app: ' + d.inAppSent + (telegram ? (', Telegram: ' + d.telegramSent) : '') + (d.hadImage ? ' · with image' : '') + '.';
+        }
+      } catch (e) {
+        resEl.style.color = 'var(--red)';
+        resEl.textContent = e.message;
+      } finally {
+        pBtn.disabled = sBtn.disabled = false;
+      }
+    }
+
     async function loadMaintenance() {
       $('view').innerHTML = '<div class="empty">Loading…</div>';
       try {

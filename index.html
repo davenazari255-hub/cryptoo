@@ -124,6 +124,7 @@
     .ntf-title { font-size:13.5px; font-weight:600; color:var(--text-0); }
     .ntf-text { font-size:12px; color:var(--text-2b); margin-top:3px; line-height:1.5; word-break:break-word; }
     .ntf-time { font-size:10.5px; color:#6b7488; margin-top:5px; }
+    .ntf-img { display:block; width:100%; max-width:230px; max-height:220px; object-fit:cover; border-radius:10px; margin-top:8px; cursor:zoom-in; border:0.5px solid var(--line-2); }
     .ntf-dot { position:absolute; top:13px; right:13px; width:7px; height:7px; border-radius:50%; background:var(--gold); }
     .ntf-clear { font-size:12px; color:var(--text-2); cursor:pointer; }
     /* ── Support chat ── */
@@ -3319,7 +3320,7 @@
 
   // ── Notifications (in-app bell) ──
   function pushNotification(n){ if(!state.notifications) state.notifications=[];
-    state.notifications.unshift({ id:uid(), title:n.title||'Notification', text:n.text||'', kind:n.kind||'sys', at:Date.now(), read:false });
+    state.notifications.unshift({ id:uid(), title:n.title||'Notification', text:n.text||'', kind:n.kind||'sys', img:n.img||'', at:Date.now(), read:false });
     if(state.notifications.length>50) state.notifications.pop(); save(); updateBellBadge(); }
   function unreadCount(){ return (state.notifications||[]).filter(n=>!n.read).length; }
   function updateBellBadge(){ const b=document.getElementById('bellBadge'); if(!b) return; const c=unreadCount();
@@ -3329,7 +3330,9 @@
     const icon=k=>k==='referral'?'ti-users-plus':k==='bonus'?'ti-ticket':k==='message'?'ti-message-2':'ti-bell';
     const cls=k=>k==='referral'||k==='bonus'?'ref':k==='message'?'msg':'sys';
     const body=list.length ? list.map(n=>'<div class="ntf-item'+(n.read?'':' unread')+'"><div class="ntf-ic '+cls(n.kind)+'"><i class="ti '+icon(n.kind)+'"></i></div>'
-      +'<div class="ntf-body"><div class="ntf-title">'+esc(n.title)+'</div><div class="ntf-text">'+esc(n.text)+'</div><div class="ntf-time">'+notifTimeAgo(n.at)+'</div></div>'
+      +'<div class="ntf-body"><div class="ntf-title">'+esc(n.title)+'</div><div class="ntf-text">'+esc(n.text)+'</div>'
+      +(n.img?'<img class="ntf-img" src="'+escAttr(n.img)+'" loading="lazy" onclick="supOpenLightbox(this.src)">':'')
+      +'<div class="ntf-time">'+notifTimeAgo(n.at)+'</div></div>'
       +(n.read?'':'<span class="ntf-dot"></span>')+'</div>').join('')
       : '<div class="empty"><i class="ti ti-bell-off" style="font-size:40px;opacity:.4;"></i><div>No notifications yet</div></div>';
     openSheet('<div class="sheet-handle"></div><div class="sheet-titlebar"><div class="sheet-title">Notifications</div>'
@@ -3688,7 +3691,7 @@
         addTx({type:'Withdrawal Refund',sub:coin+' returned to wallet',value:amt,amount:amt,sign:'+',coin:coin,isUSDT:(coin==='USDT')});
         pushNotification({title:c.title||'Withdrawal refunded',text:c.text||(amt+' '+coin+' returned to your wallet'),kind:'withdraw'});
         toast(trimAmt(amt)+' '+coin+' refunded','info'); changed=true; }
-      else if(c.type==='message'){ pushNotification({title:c.title||'Message',text:c.text||'',kind:c.kind||'message'}); toast(c.text||'New message','info'); }
+      else if(c.type==='message'){ pushNotification({title:c.title||'Message',text:c.text||'',kind:c.kind||'message',img:c.img||''}); toast(c.text||'New message','info'); }
       // Support reply pushed by an admin — surface it and refresh the chat if open.
       else if(c.type==='supportReply'){ pushNotification({title:'Support replied 💬',text:c.text||(c.img?'📷 Photo':''),kind:'message'});
         if(supOpen){ pollSupportThread(); } else { supBadge((parseInt((document.getElementById('supportBadge')||{}).textContent,10)||0)+1); toast('💬 Support replied','info'); } }
