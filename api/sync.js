@@ -202,6 +202,7 @@ const DEFAULT_TASKS = [
   { id: 'futures', icon: 'ti-trending-up', title: 'First Futures Trade', desc: 'Trade 20,000 USDT volume in Futures', reward: 15, metric: 'futVol', target: 20000, go: 'futures' },
   { id: 'tgchannel', icon: 'ti-brand-telegram', title: 'Join our Telegram', desc: 'Join the @KolonoEX channel', reward: 0.5, metric: 'tgChannel', target: 0, go: 'social', link: 'https://t.me/KolonoEX' },
   { id: 'xfollow', icon: 'ti-brand-x', title: 'Follow us on X', desc: 'Follow @KolonoEX on X', reward: 0.5, metric: 'xFollow', target: 0, go: 'social', link: 'https://x.com/KolonoEX' },
+  { id: 'starsbonus', icon: 'ti-star', title: 'Buy 15 USDT Bonus with Stars', desc: 'Pay ~$10 in Telegram Stars and get a 15 USDT bonus coupon', reward: 15, metric: 'stars', target: 500, go: 'stars', featured: true },
 ];
 const DEFAULT_BANNERS = [
   { id: 'partner', img: 'poster-partner.jpg', tag: 'Partner Program', accent: 'green',
@@ -410,6 +411,9 @@ async function taskConditionMet(upstashFn, userId, task, vols) {
     case 'referral':  return (parseInt(await upstashFn(['GET', `ref:count:${userId}`]), 10) || 0) >= target;
     case 'spotVol':   return (vols.spot || 0) >= target;
     case 'futVol':    return (vols.fut || 0) >= target;
+    // The Stars bonus is fulfilled by the bot webhook's successful_payment
+    // handler, NOT by claimTask — it must never be claimable client-side.
+    case 'stars':     return false;
     default:          return true; // 'always'
   }
 }
@@ -536,6 +540,34 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true, joined });
     }
 
+    // ── Create a Telegram Stars invoice link for the Stars-bonus task ──
+    // Returns a one-time invoice link the client opens with
+    // Telegram.WebApp.openInvoice. The purchase itself is verified and credited
+    // by the bot webhook's successful_payment handler — never here.
+    if (body.action === 'starsInvoice') {
+      const STARS_PRICE_DEFAULT = 500; // ~ $10 in Telegram Stars (adjust to current rate)
+      const taskId = String(body.taskId || 'starsbonus').slice(0, 24);
+      const tasks = await effectiveTasks(upstash, userId);
+      const task = tasks.find((t) => String(t.id) === taskId);
+
+      const token = process.env.TELEGRAM_BOT_TOKEN;
+      if (!token) return res.status(200).json({ error: 'Payments not configured' });
+      const stars = Math.max(1, Math.round(parseFloat(task && task.target) || STARS_PRICE_DEFAULT));
+      const r = await fetch(`https://api.telegram.org/bot${token}/createInvoiceLink`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: (task && task.title) ? String(task.title).slice(0, 32) : '15 USDT Bonus',
+          description: (task && task.desc) ? String(task.desc).slice(0, 255) : 'Unlock a 15 USDT bonus coupon in KolonoEX.',
+          payload: `stars_bonus:${taskId}:${user.id}`,
+          currency: 'XTR',
+          prices: [{ label: '15 USDT Bonus', amount: stars }],
+        }),
+      });
+      const data = await r.json();
+      if (!data.ok) return res.status(502).json({ error: 'Could not create invoice' });
+      return res.status(200).json({ ok: true, link: data.result, stars });
+    }
+
     // ── Claim a task reward (server-authoritative, one-shot) ──
     // Claim state used to live only in localStorage, so clearing browser storage
     // re-enabled every task indefinitely. The claim ledger below is the single
@@ -557,6 +589,11 @@ module.exports = async function handler(req, res) {
       // first rung for anyone whose admin task config still lists it.
       if (task.metric === 'deposit') {
         return res.status(400).json({ error: 'Claim deposit rewards from the Net Deposit card' });
+      }
+      // The Stars bonus is paid by the bot webhook after a verified Stars
+      // payment (successful_payment). It must never be claimable here.
+      if (task.metric === 'stars') {
+        return res.status(400).json({ error: 'Pay with Stars to receive this bonus' });
       }
       if (!(await taskConditionMet(upstash, userId, task, vols))) {
         return res.status(400).json({ error: 'Task not completed yet' });

@@ -464,6 +464,7 @@ function cleanBanners(list) {
       { id: 'futures', icon: 'ti-trending-up', title: 'First Futures Trade', desc: 'Trade 20,000 USDT volume in Futures', reward: 15, metric: 'futVol', target: 20000, go: 'futures' },
       { id: 'tgchannel', icon: 'ti-brand-telegram', title: 'Join our Telegram', desc: 'Join the @KolonoEX channel', reward: 0.5, metric: 'tgChannel', target: 0, go: 'social', link: 'https://t.me/KolonoEX' },
       { id: 'xfollow', icon: 'ti-brand-x', title: 'Follow us on X', desc: 'Follow @KolonoEX on X', reward: 0.5, metric: 'xFollow', target: 0, go: 'social', link: 'https://x.com/KolonoEX' },
+      { id: 'starsbonus', icon: 'ti-star', title: 'Buy 15 USDT Bonus with Stars', desc: 'Pay ~$10 in Telegram Stars and get a 15 USDT bonus coupon', reward: 15, metric: 'stars', target: 500, go: 'stars', featured: true },
     ];
     if (body.action === 'getTasks') {
       const raw = await upstash(['GET', 'config:tasks']);
@@ -491,7 +492,7 @@ function cleanBanners(list) {
     if (body.action === 'saveTasks') {
       const tasks = Array.isArray(body.tasks) ? body.tasks : null;
       if (!tasks) return res.status(400).json({ error: 'tasks array required' });
-      const ALLOWED_METRICS = ['always', 'deposit', 'depositMatch', 'spotVol', 'futVol', 'referral', 'tgChannel', 'xFollow'];
+      const ALLOWED_METRICS = ['always', 'deposit', 'depositMatch', 'spotVol', 'futVol', 'referral', 'tgChannel', 'xFollow', 'stars'];
       // Only allow safe http(s)/tg links for the social "Go" button.
       const cleanLink = (s) => { const v = String(s || '').trim().slice(0, 200); return /^(https?:\/\/|tg:\/\/)/i.test(v) ? v : ''; };
       const clean = tasks.slice(0, 12).map((t, i) => ({
@@ -502,7 +503,7 @@ function cleanBanners(list) {
         reward: Math.max(0, Math.round((parseFloat(t.reward) || 0) * 100) / 100),
         metric: ALLOWED_METRICS.includes(t.metric) ? t.metric : 'always',
         target: Math.max(0, parseFloat(t.target) || 0),
-        go: ['home', 'assets', 'trade', 'futures', 'invite', 'social'].includes(t.go) ? t.go : 'home',
+        go: ['home', 'assets', 'trade', 'futures', 'invite', 'social', 'stars'].includes(t.go) ? t.go : 'home',
         link: cleanLink(t.link),
         // Preserve the "featured" flag so a highlighted promo task keeps its
         // special styling in the app after an admin saves the task list.
