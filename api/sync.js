@@ -294,7 +294,7 @@ async function invitedBy(upstashFn, userId, preRef, preCode) {
 // deletion stick. Only these ids are re-injected when missing, so the
 // deposit-match promo can never silently disappear behind an older saved list,
 // while ordinary tasks the admin removes stay removed.
-const ALWAYS_PRESENT_IDS = ['depositmatch'];
+const ALWAYS_PRESENT_IDS = ['depositmatch', 'starsbonus'];
 
 function mergeMissingDefaults(saved) {
   const list = Array.isArray(saved) ? saved.slice() : [];

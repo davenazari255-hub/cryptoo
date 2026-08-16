@@ -474,7 +474,7 @@ function cleanBanners(list) {
       // even behind an older saved list. Every OTHER task the admin deleted must
       // stay deleted — so we do NOT re-add the rest of DEFAULT_TASKS. This
       // mirrors ALWAYS_PRESENT_IDS in api/sync.js.
-      const ALWAYS_PRESENT_IDS = ['depositmatch'];
+      const ALWAYS_PRESENT_IDS = ['depositmatch', 'starsbonus'];
       let out;
       if (Array.isArray(tasks) && tasks.length) {
         out = tasks.slice();
