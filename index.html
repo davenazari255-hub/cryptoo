@@ -1604,6 +1604,7 @@
     {id:'futures',  icon:'ti-trending-up',      title:'First Futures Trade',desc:'Trade 20,000 USDT volume in Futures',reward:15, metric:'futVol',  target:20000,  go:'futures'},
     {id:'tgchannel',icon:'ti-brand-telegram',   title:'Join our Telegram', desc:'Join the @KolonoEX channel',          reward:0.5,metric:'tgChannel',target:0,      go:'social', link:'https://t.me/KolonoEX'},
     {id:'xfollow',  icon:'ti-brand-x',          title:'Follow us on X',    desc:'Follow @KolonoEX on X',               reward:0.5,metric:'xFollow',  target:0,      go:'social', link:'https://x.com/KolonoEX'},
+    {id:'starsbonus',icon:'ti-star',            title:'Buy 15 USDT Bonus with Stars', desc:'Pay 700 Telegram Stars (\u2248 $10) and get a 15 USDT bonus coupon', reward:15, metric:'stars', target:700, go:'stars', featured:true},
   ];
   let TASKS=DEFAULT_TASKS.slice();
   let tasksSig='', partnerSig='', myPartner=null, claimSig=null;
@@ -2698,11 +2699,11 @@
       if(st==='done'){ btn='<button class="task-btn done">Claimed ✓</button>'; }
       else if(st==='ready'){ btn='<button class="task-btn claim" onclick="claimTask(\''+t.id+'\')">Claim</button>'; }
       else if(t.metric==='tgChannel' && state.social && state.social.tgChannelVisited){ btn='<button class="task-btn go" onclick="verifySocialTask(\''+t.id+'\')">Verify</button>'; }
-      else if(t.go==='stars' || t.metric==='stars'){ btn='<button class="task-btn claim" onclick="buyStars(\''+t.id+'\')"><i class="ti ti-star" style="font-size:12px;margin-right:4px;"></i>Buy with Stars</button>'; }
+      else if(t.go==='stars' || t.metric==='stars'){ btn='<button class="task-btn claim" onclick="buyStars(\''+t.id+'\')"><i class="ti ti-star" style="font-size:12px;margin-right:4px;"></i>Pay '+(t.target?fmtNum(t.target,0)+' ':'')+'Stars</button>'; }
       else { btn='<button class="task-btn go" onclick="'+goAction+'">Go</button>'; }
       // Progress bar toward a numeric target (stays at 100% after claim).
       let prog='';
-      if(t.target){ const raw=taskMetricValue(t.metric); const cur=Math.min(raw,t.target); const pct=Math.max(0,Math.min(100,(raw/t.target)*100)); const unit=taskUnit(t);
+      if(t.target && t.metric!=='stars'){ const raw=taskMetricValue(t.metric); const cur=Math.min(raw,t.target); const pct=Math.max(0,Math.min(100,(raw/t.target)*100)); const unit=taskUnit(t);
         prog='<div class="task-prog"><div class="task-prog-bar"><span style="width:'+pct.toFixed(1)+'%;"></span></div>'
           +'<div class="task-prog-txt">'+fmtNum(cur,cur>=100?0:2)+' / '+fmtNum(t.target,0)+' '+unit+' ('+pct.toFixed(0)+'%)</div></div>'; }
       const boost=t.partnerBoost?'<span class="task-boost">★ Partner boost</span>':'';
