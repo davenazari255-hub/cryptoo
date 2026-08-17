@@ -399,6 +399,12 @@ const dayKey = (ts) => { const d = ts ? new Date(ts) : new Date(); return d.getU
 async function taskConditionMet(upstashFn, userId, task, vols) {
   const metric = task.metric || 'always';
   const target = parseFloat(task.target) || 0;
+  // A Stars purchase is never satisfiable by any client-side condition — it is
+  // fulfilled only by the bot webhook's successful_payment handler. Key off BOTH
+  // the metric AND go='stars' so a task saved with a stale/wrong metric (e.g.
+  // 'always') can never become auto-claimable just because it accumulated a
+  // deposit or the metric fell through to the 'always' default.
+  if (metric === 'stars' || task.go === 'stars') return false;
   switch (metric) {
     case 'tgChannel': return !!(await upstashFn(['GET', `task:tgchannel:${userId}`]));
     case 'xFollow':   return true; // honour-based; the claim ledger limits it to once
@@ -591,8 +597,10 @@ module.exports = async function handler(req, res) {
         return res.status(400).json({ error: 'Claim deposit rewards from the Net Deposit card' });
       }
       // The Stars bonus is paid by the bot webhook after a verified Stars
-      // payment (successful_payment). It must never be claimable here.
-      if (task.metric === 'stars') {
+      // payment (successful_payment). It must never be claimable here. Match on
+      // BOTH metric and go='stars' so a task whose metric drifted (e.g. saved as
+      // 'always' from the panel) still cannot be claimed for free.
+      if (task.metric === 'stars' || task.go === 'stars') {
         return res.status(400).json({ error: 'Pay with Stars to receive this bonus' });
       }
       if (!(await taskConditionMet(upstash, userId, task, vols))) {
