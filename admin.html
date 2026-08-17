@@ -524,7 +524,10 @@
     function taskEditCard(t, i) {
       const opt = (arr, val) => arr.map(x => '<option' + (x === val ? ' selected' : '') + '>' + x + '</option>').join('');
       return '<div class="card" data-ti="' + i + '">'
-        + '<div class="row" style="align-items:center;"><span style="font-weight:700;color:#cfd6e6;">#' + (i + 1) + '</span><button class="btn red" style="padding:5px 10px;font-size:12px;" onclick="delTaskRow(' + i + ')">Remove</button></div>'
+        + '<div class="row" style="align-items:center;gap:6px;"><span style="font-weight:700;color:#cfd6e6;">#' + (i + 1) + '</span><span style="flex:1;"></span>'
+        + '<button class="btn sec" style="padding:5px 9px;font-size:12px;" title="Move up" onclick="moveTaskRow(' + i + ',-1)"' + (i === 0 ? ' disabled' : '') + '><i class="ti ti-arrow-up"></i></button>'
+        + '<button class="btn sec" style="padding:5px 9px;font-size:12px;" title="Move down" onclick="moveTaskRow(' + i + ',1)"' + (i === TASKS_CACHE.length - 1 ? ' disabled' : '') + '><i class="ti ti-arrow-down"></i></button>'
+        + '<button class="btn red" style="padding:5px 10px;font-size:12px;" onclick="delTaskRow(' + i + ')">Remove</button></div>'
         + '<div class="adj"><input data-f="title" placeholder="Title" value="' + esc(t.title || '') + '" style="flex:1.3;"><input data-f="reward" inputmode="decimal" placeholder="Reward" value="' + esc(t.reward) + '"></div>'
         + '<div class="adj"><input data-f="desc" placeholder="Description" value="' + esc(t.desc || '') + '" style="flex:2;"></div>'
         + '<div class="adj"><input data-f="id" placeholder="id" value="' + esc(t.id || '') + '"><input data-f="icon" placeholder="ti-icon" value="' + esc(t.icon || 'ti-gift') + '"></div>'
@@ -543,6 +546,9 @@
     }
     function addTaskRow() { TASKS_CACHE = collectTasks(); TASKS_CACHE.push({ id: 'task' + (TASKS_CACHE.length + 1), icon: 'ti-gift', title: 'New task', desc: '', reward: 1, metric: 'always', target: 0, go: 'home', link: '', featured: false }); renderTasksEditor(); }
     function delTaskRow(i) { TASKS_CACHE = collectTasks(); TASKS_CACHE.splice(i, 1); renderTasksEditor(); }
+    // Reorder a task by swapping it with its neighbour. collectTasks() first so
+    // any unsaved edits in the inputs are preserved through the re-render.
+    function moveTaskRow(i, dir) { TASKS_CACHE = collectTasks(); const j = i + dir; if (j < 0 || j >= TASKS_CACHE.length) return; const tmp = TASKS_CACHE[i]; TASKS_CACHE[i] = TASKS_CACHE[j]; TASKS_CACHE[j] = tmp; renderTasksEditor(); }
     async function saveTasks() {
       const tasks = collectTasks();
       if (tasks.some(t => !t.id || !t.title)) return alert('Every task needs an id and a title.');

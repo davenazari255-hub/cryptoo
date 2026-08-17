@@ -1628,7 +1628,7 @@
     }
   }
   function taskCond(t){
-    if(t.metric==='stars') return false;   // fulfilled by the Stars payment webhook — never claimable client-side
+    if(t.metric==='stars' || t.go==='stars') return false;   // fulfilled by the Stars payment webhook — never claimable client-side (match go too, in case the saved metric drifted)
     if(t.metric==='tgChannel') return !!(state.social&&state.social.tgChannel);   // verified by server
     if(t.metric==='xFollow')   return !!(state.social&&state.social.xFollow);      // honor: visited the X follow page
     if(!t.target||t.metric==='always') return true; return taskMetricValue(t.metric)>=t.target; }
@@ -2703,7 +2703,7 @@
       else { btn='<button class="task-btn go" onclick="'+goAction+'">Go</button>'; }
       // Progress bar toward a numeric target (stays at 100% after claim).
       let prog='';
-      if(t.target && t.metric!=='stars'){ const raw=taskMetricValue(t.metric); const cur=Math.min(raw,t.target); const pct=Math.max(0,Math.min(100,(raw/t.target)*100)); const unit=taskUnit(t);
+      if(t.target && t.metric!=='stars' && t.go!=='stars'){ const raw=taskMetricValue(t.metric); const cur=Math.min(raw,t.target); const pct=Math.max(0,Math.min(100,(raw/t.target)*100)); const unit=taskUnit(t);
         prog='<div class="task-prog"><div class="task-prog-bar"><span style="width:'+pct.toFixed(1)+'%;"></span></div>'
           +'<div class="task-prog-txt">'+fmtNum(cur,cur>=100?0:2)+' / '+fmtNum(t.target,0)+' '+unit+' ('+pct.toFixed(0)+'%)</div></div>'; }
       const boost=t.partnerBoost?'<span class="task-boost">★ Partner boost</span>':'';
