@@ -506,8 +506,8 @@
 
     /* ── Task management ── */
     let TASKS_CACHE = [];
-    const METRICS = ['always', 'deposit', 'depositMatch', 'spotVol', 'futVol', 'referral', 'tgChannel', 'xFollow'];
-    const GOES = ['home', 'assets', 'trade', 'futures', 'invite', 'social'];
+    const METRICS = ['always', 'deposit', 'depositMatch', 'spotVol', 'futVol', 'referral', 'tgChannel', 'xFollow', 'stars'];
+    const GOES = ['home', 'assets', 'trade', 'futures', 'invite', 'social', 'stars'];
     async function loadTasks() {
       $('view').innerHTML = '<div class="empty">Loading…</div>';
       try { const d = await api({ action: 'getTasks' }); TASKS_CACHE = d.tasks || []; $('count').textContent = TASKS_CACHE.length + ' tasks'; renderTasksEditor(); }
