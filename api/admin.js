@@ -464,7 +464,7 @@ function cleanBanners(list) {
       { id: 'futures', icon: 'ti-trending-up', title: 'First Futures Trade', desc: 'Trade 20,000 USDT volume in Futures', reward: 15, metric: 'futVol', target: 20000, go: 'futures' },
       { id: 'tgchannel', icon: 'ti-brand-telegram', title: 'Join our Telegram', desc: 'Join the @KolonoEX channel', reward: 0.5, metric: 'tgChannel', target: 0, go: 'social', link: 'https://t.me/KolonoEX' },
       { id: 'xfollow', icon: 'ti-brand-x', title: 'Follow us on X', desc: 'Follow @KolonoEX on X', reward: 0.5, metric: 'xFollow', target: 0, go: 'social', link: 'https://x.com/KolonoEX' },
-      { id: 'starsbonus', icon: 'ti-star', title: 'Buy 15 USDT Bonus with Stars', desc: 'Pay ~$10 in Telegram Stars and get a 15 USDT bonus coupon', reward: 15, metric: 'stars', target: 500, go: 'stars', featured: true },
+      { id: 'starsbonus', icon: 'ti-star', title: 'Buy 15 USDT Bonus with Stars', desc: 'Pay 700 Telegram Stars (\u2248 $10) and get a 15 USDT bonus coupon', reward: 15, metric: 'stars', target: 700, go: 'stars', featured: true },
     ];
     if (body.action === 'getTasks') {
       const raw = await upstash(['GET', 'config:tasks']);
